@@ -90,8 +90,36 @@ contract Voting is Ownable {
 
     /// @notice Casts a vote using a zero-knowledge proof
     function vote(bytes memory _proof, bytes32 _nullifierHash, bytes32 _root, bytes32 _vote, bytes32 _depth) public {
-        /// TODO: implement voting logic in Phase 6
-        revert("Not implemented yet");
+        if (_root == bytes32(0)) {
+            revert Voting__EmptyTree();
+        }
+
+        if (_root != bytes32(s_tree.root())) {
+            revert Voting__InvalidRoot();
+        }
+
+        bytes32[] memory publicInputs = new bytes32[](4);
+        publicInputs[0] = _nullifierHash;
+        publicInputs[1] = _root;
+        publicInputs[2] = _vote;
+        publicInputs[3] = _depth;
+
+        if (!i_verifier.verify(_proof, publicInputs)) {
+            revert Voting__InvalidProof();
+        }
+
+        if (s_nullifierHashes[_nullifierHash]) {
+            revert Voting__NullifierHashAlreadyUsed(_nullifierHash);
+        }
+        s_nullifierHashes[_nullifierHash] = true;
+
+        if (_vote == bytes32(uint256(1))) {
+            s_yesVotes++;
+        } else {
+            s_noVotes++;
+        }
+
+        emit VoteCast(_nullifierHash, msg.sender, _vote == bytes32(uint256(1)), block.timestamp, s_yesVotes, s_noVotes);
     }
 
     /////////////////////////
