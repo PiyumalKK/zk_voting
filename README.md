@@ -128,4 +128,79 @@ The Debug page auto-generates a UI for the deployed Voting contract. It has two 
 
 > ⚠️ All addresses above are examples from the default Hardhat accounts. Your actual addresses may differ depending on your setup.
 
+---
+
+### Phase 2: Voter Registration with LeanIMT ✅
+
+**Goal:** Implement the `register()` function so allowlisted voters can submit a cryptographic commitment to the on-chain Merkle tree.
+
+**What was done:**
+1. Activated registration state variables in `Voting.sol`:
+   - `s_hasRegistered` — tracks whether an address has already registered (prevents double-registration)
+   - `s_commitments` — tracks used commitment values (prevents duplicate commitments across addresses)
+   - `s_tree` — `LeanIMTData` struct from `@zk-kit/lean-imt.sol` (the on-chain Merkle tree)
+
+2. Implemented `register(uint256 _commitment)`:
+   - Checks caller is on the allowlist AND has not already registered
+   - Checks commitment has not been used before
+   - Marks commitment and address as used
+   - Inserts commitment into the Lean Incremental Merkle Tree
+   - Emits `NewLeaf(index, commitment)` event
+
+3. Updated `getVotingData()` to also return `treeRoot` and `treeDepth`
+4. Updated `getVoterData()` to also return `hasRegistered` status
+
+5. Updated deploy script to deploy the required libraries:
+   - `PoseidonT3` — ZK-friendly hash function library (3.7M gas)
+   - `LeanIMT` — Merkle tree library linked to PoseidonT3 (1M gas)
+   - `Voting` — linked to LeanIMT library (672K gas)
+
+6. Wrote 11 unit tests covering:
+   - Successful registration and event emission
+   - Tree root/depth updates after registration
+   - Multiple registrations with sequential leaf indices
+   - Revert when caller not on allowlist
+   - Revert when caller already registered
+   - Revert when commitment already used
+   - View function returns before/after registration
+
+**How it was verified:**
+```
+npx hardhat compile    → Compiles successfully (warnings only for unimplemented vote())
+npx hardhat test       → 11 passing (741ms)
+```
+
+**Test output with gas report:**
+
+![Phase 2 Test Gas Report](docs/images/phase2-test-gas-report.png)
+
+**Gas costs (from test report):**
+| Operation | Gas |
+|-----------|-----|
+| `addVoters()` | ~72,412 |
+| `register()` (first leaf) | ~142,660 |
+| `register()` (second leaf) | ~181,833 |
+
+**Observed on Debug Contracts page (`localhost:3000/debug`):**
+
+📖 **Read Section** — updated returns:
+| Function | Output |
+|----------|--------|
+| `getVotingData()` | `["Do you support this proposal?", 0, 0, <treeRoot>, <treeDepth>]` |
+| `getVoterData(address)` | `[true/false, true/false]` — (isAllowed, hasRegistered) |
+
+✍️ **Write Section** — `register(uint256)` now works:
+| Function | Input | Effect |
+|----------|-------|--------|
+| `register(uint256)` | any uint256 commitment | Inserts into Merkle tree, marks voter as registered |
+
+**Try it yourself:**
+1. `addVoters` with an address (e.g. `["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]`)
+2. Switch to that account in MetaMask
+3. Call `register` with any number (e.g. `42`) — in the real flow this will be a Poseidon hash
+4. Call `getVoterData` with that address → should show `[true, true]`
+5. Call `getVotingData` → tree root is now non-zero, depth reflects the number of leaves
+
+> ⚠️ All addresses above are examples. Commitment values in production will be Poseidon hashes of (nullifier, secret).
+
 > ⚠️ If you get `OwnableUnauthorizedAccount` error, you're not connected as the owner. Only the deployer (Account #0) can call `addVoters`.
