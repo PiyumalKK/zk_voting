@@ -33,9 +33,9 @@ yarn start     # Start frontend
 
 ---
 
-## Checkpoint Progress
+## Development Progress
 
-### Checkpoint 0: Project Scaffold ✅
+### Phase 0: Project Scaffold ✅
 
 **Goal:** Set up the monorepo with all required dependencies and tooling.
 
@@ -60,3 +60,72 @@ yarn start     # Start frontend
 - `yarn deploy` — YourContract (sample) deploys successfully
 - `yarn start` — Next.js frontend launches and connects to local chain
 - `nargo compile` — Noir circuit compiles successfully in WSL
+
+---
+
+### Phase 1: Voting Contract Structure ✅
+
+**Goal:** Replace the sample contract with a Voting contract skeleton containing all the errors, events, state variables, and placeholder functions needed for the ZK voting system.
+
+**What was done:**
+1. Created `Voting.sol` — the main voting contract with:
+   - **Errors:** `Voting__NotAllowedToVote`, `Voting__CommitmentAlreadyAdded`, `Voting__EmptyTree`, `Voting__InvalidRoot`, `Voting__InvalidProof`, `Voting__NullifierHashAlreadyUsed`
+   - **Events:** `VoterAdded`, `NewLeaf` (registration), `VoteCast` (voting)
+   - **State:** `s_question`, `s_yesVotes`, `s_noVotes`, `s_voters` (allowlist)
+   - **Functions:** `addVoters()` (owner-only allowlist), `register()` (placeholder), `vote()` (placeholder), `getVotingData()`, `getVoterData()`
+   - Commented-out sections for Merkle tree state and verifier + nullifiers — ready to uncomment later
+2. Created `Verifier.sol` — placeholder `HonkVerifier` contract (always returns true). Will be replaced with the real Barretenberg-generated verifier later.
+3. Defined `IVerifier` interface with `verify(bytes, bytes32[])` — the standard interface for ZK proof verification on-chain.
+4. Updated deploy script to deploy `Voting` with owner address and a question string.
+5. Removed old `YourContract.sol`.
+
+**Contract Design Decisions:**
+- Uses OpenZeppelin `Ownable` for access control on `addVoters()`
+- Uses `@zk-kit/lean-imt.sol` LeanIMT for the Merkle tree (imported, activated when we build registration)
+- Constructor takes `_owner` and `_question` (verifier added when we build voting)
+- `vote()` accepts proof bytes + 4 public inputs (nullifierHash, root, vote, depth) matching the circuit layout
+
+**How it was verified:**
+```
+yarn chain     → Hardhat node running on port 8545
+yarn deploy    → Voting contract deployed successfully
+               → "Do you support this proposal?" confirmed as voting question
+               → 534,370 gas used
+yarn start     → Frontend at http://localhost:3000
+```
+
+**Observed on Debug Contracts page (`localhost:3000/debug`):**
+
+The Debug page auto-generates a UI for the deployed Voting contract. It has two sections:
+
+📖 **Read Section** (query on-chain state, no gas needed):
+| Function | Input | Output |
+|----------|-------|--------|
+| `getVotingData()` | none | `["Do you support this proposal?", 0, 0]` — (question, yesVotes, noVotes) |
+| `getVoterData(address)` | any address | `true`/`false` — whether that address is on the allowlist |
+| `s_question` | none | `"Do you support this proposal?"` |
+| `s_yesVotes` | none | `0` |
+| `s_noVotes` | none | `0` |
+| `s_voters(address)` | any address | `true`/`false` |
+| `owner()` | none | deployer address (first Hardhat account) |
+
+✍️ **Write Section** (sends transactions, costs gas):
+| Function | Input | Status |
+|----------|-------|--------|
+| `addVoters(address[])` | array of addresses | ✅ Working — adds addresses to allowlist |
+| `register(uint256)` | commitment value | ❌ Reverts "Not implemented yet" (next phase) |
+| `vote(bytes, bytes32, bytes32, bytes32, bytes32)` | proof + public inputs | ❌ Reverts "Not implemented yet" (later phase) |
+| `renounceOwnership()` | none | inherited from OpenZeppelin |
+| `transferOwnership(address)` | new owner address | inherited from OpenZeppelin |
+
+> Note: Contract address is assigned at deploy time and may change on redeployment. The address shown on the Debug page is always the current deployed instance.
+
+**Try it yourself:**
+1. Make sure you're connected as the **owner** (Hardhat Account #0, e.g. `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`). If using MetaMask, import with private key (example): `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
+2. In the **Write** section → `addVoters` → paste (example): `["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]` → click **Send**
+3. In the **Read** section → `s_voters` → paste same address (example): `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` → click **Read**
+4. It should now show `true` — that address is on the allowlist
+
+> ⚠️ All addresses above are examples from the default Hardhat accounts. Your actual addresses may differ depending on your setup.
+
+> ⚠️ If you get `OwnableUnauthorizedAccount` error, you're not connected as the owner. Only the deployer (Account #0) can call `addVoters`.

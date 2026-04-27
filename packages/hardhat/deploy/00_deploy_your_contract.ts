@@ -2,20 +2,27 @@ import { HardhatRuntimeEnvironment } from "hardhat/types";
 import { DeployFunction } from "hardhat-deploy/types";
 import { Contract } from "ethers";
 
-const deployYourContract: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
+const deployVotingContract: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
   const { deploy } = hre.deployments;
 
-  await deploy("YourContract", {
+  // The owner address for the Voting contract
+  const ownerAddress = deployer;
+
+  // The voting question
+  const question = "Do you support this proposal?";
+
+  // Deploy the Voting contract
+  await deploy("Voting", {
     from: deployer,
-    args: [deployer],
+    args: [ownerAddress, question],
     log: true,
     autoMine: true,
   });
 
-  const yourContract = await hre.ethers.getContract<Contract>("YourContract", deployer);
-  console.log("👋 Initial greeting:", await yourContract.greeting());
+  const voting = await hre.ethers.getContract<Contract>("Voting", deployer);
+  console.log("🗳️  Voting question:", await voting.s_question());
 };
 
-export default deployYourContract;
-deployYourContract.tags = ["YourContract"];
+export default deployVotingContract;
+deployVotingContract.tags = ["Voting"];
