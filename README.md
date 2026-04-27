@@ -128,4 +128,317 @@ The Debug page auto-generates a UI for the deployed Voting contract. It has two 
 
 > ⚠️ All addresses above are examples from the default Hardhat accounts. Your actual addresses may differ depending on your setup.
 
+---
+
+### Phase 2: Voter Registration with LeanIMT ✅
+
+**Goal:** Implement the `register()` function so allowlisted voters can submit a cryptographic commitment to the on-chain Merkle tree.
+
+**What was done:**
+1. Activated registration state variables in `Voting.sol`:
+   - `s_hasRegistered` — tracks whether an address has already registered (prevents double-registration)
+   - `s_commitments` — tracks used commitment values (prevents duplicate commitments across addresses)
+   - `s_tree` — `LeanIMTData` struct from `@zk-kit/lean-imt.sol` (the on-chain Merkle tree)
+
+2. Implemented `register(uint256 _commitment)`:
+   - Checks caller is on the allowlist AND has not already registered
+   - Checks commitment has not been used before
+   - Marks commitment and address as used
+   - Inserts commitment into the Lean Incremental Merkle Tree
+   - Emits `NewLeaf(index, commitment)` event
+
+3. Updated `getVotingData()` to also return `treeRoot` and `treeDepth`
+4. Updated `getVoterData()` to also return `hasRegistered` status
+
+5. Updated deploy script to deploy the required libraries:
+   - `PoseidonT3` — ZK-friendly hash function library (3.7M gas)
+   - `LeanIMT` — Merkle tree library linked to PoseidonT3 (1M gas)
+   - `Voting` — linked to LeanIMT library (672K gas)
+
+6. Wrote 11 unit tests covering:
+   - Successful registration and event emission
+   - Tree root/depth updates after registration
+   - Multiple registrations with sequential leaf indices
+   - Revert when caller not on allowlist
+   - Revert when caller already registered
+   - Revert when commitment already used
+   - View function returns before/after registration
+
+**How it was verified:**
+```
+npx hardhat compile    → Compiles successfully (warnings only for unimplemented vote())
+npx hardhat test       → 11 passing (741ms)
+```
+
+**Test output with gas report:**
+
+![Phase 2 Test Gas Report](docs/images/phase2-test-gas-report.png)
+
+**Gas costs (from test report):**
+| Operation | Gas |
+|-----------|-----|
+| `addVoters()` | ~72,412 |
+| `register()` (first leaf) | ~142,660 |
+| `register()` (second leaf) | ~181,833 |
+
+**Observed on Debug Contracts page (`localhost:3000/debug`):**
+
+📖 **Read Section** — updated returns:
+| Function | Output |
+|----------|--------|
+| `getVotingData()` | `["Do you support this proposal?", 0, 0, <treeRoot>, <treeDepth>]` |
+| `getVoterData(address)` | `[true/false, true/false]` — (isAllowed, hasRegistered) |
+
+✍️ **Write Section** — `register(uint256)` now works:
+| Function | Input | Effect |
+|----------|-------|--------|
+| `register(uint256)` | any uint256 commitment | Inserts into Merkle tree, marks voter as registered |
+
+**Try it yourself:**
+1. `addVoters` with an address (e.g. `["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]`)
+2. Switch to that account in MetaMask
+3. Call `register` with any number (e.g. `42`) — in the real flow this will be a Poseidon hash
+4. Call `getVoterData` with that address → should show `[true, true]`
+5. Call `getVotingData` → tree root is now non-zero, depth reflects the number of leaves
+
+> ⚠️ All addresses above are examples. Commitment values in production will be Poseidon hashes of (nullifier, secret).
+
 > ⚠️ If you get `OwnableUnauthorizedAccount` error, you're not connected as the owner. Only the deployer (Account #0) can call `addVoters`.
+
+---
+
+### Phase 3: ZK Circuit — Commitment Scheme ✅
+
+**Goal:** Write the Noir circuit that proves knowledge of a secret commitment without revealing the underlying values.
+
+**What was done:**
+1. Replaced the default placeholder circuit in `packages/circuits/src/main.nr` with the commitment scheme circuit:
+   - **Public input:** `nullifier_hash` — the value that will be stored on-chain to prevent double-voting
+   - **Private inputs:** `nullifier`, `secret` — known only to the voter
+   - **Constraints:**
+     - Recomputes `hash_1([nullifier])` and asserts it equals the public `nullifier_hash`
+     - Computes `commitment = hash_2([nullifier, secret])` — this is the leaf value registered in the Merkle tree
+
+2. Uses Noir's built-in Poseidon hash functions from `std::hash::poseidon::bn254`:
+   - `hash_1` — single-element Poseidon hash (for nullifier → nullifier_hash)
+   - `hash_2` — two-element Poseidon hash (for nullifier + secret → commitment)
+
+**Circuit Design:**
+```
+┌─────────────────────────────────────┐
+│           ZK Circuit                │
+│                                     │
+│  Private: nullifier, secret         │
+│  Public:  nullifier_hash            │
+│                                     │
+│  assert hash_1(nullifier)           │
+│         == nullifier_hash  ✓        │
+│                                     │
+│  commitment = hash_2(nullifier,     │
+│                       secret)       │
+│  (used for Merkle root in Phase 4)  │
+└─────────────────────────────────────┘
+```
+
+**Why this matters:**
+- The nullifier_hash is stored on-chain when voting — if someone tries to vote twice, the contract detects the duplicate nullifier_hash
+- The secret ensures that even if nullifier is leaked, no one else can forge the commitment
+- The circuit proves the voter knows the preimage of their commitment without revealing it
+
+**How it was verified:**
+```
+nargo compile    → Compiles successfully (no errors)
+                 → Produces target/circuits.json artifact
+```
+
+**What `target/circuits.json` contains:**
+
+| Field | Description |
+|-------|-------------|
+| `noir_version` | Compiler version that produced the artifact (e.g. `1.0.0-beta.3`) |
+| `hash` | Unique identifier for this specific circuit compilation |
+| `abi` | Circuit interface — lists all parameters with their names, types (`field`), and visibility (`public`/`private`). Also includes `return_type` and `error_types` |
+| `bytecode` | Base64-encoded gzipped ACIR (Abstract Circuit Intermediate Representation) — the compiled constraint system |
+
+This JSON is used by:
+- `noir_js` in the browser to execute the circuit and compute a witness
+- `bb` (Barretenberg) to generate and verify proofs
+- The Solidity verifier generator to produce an on-chain verification contract
+
+**Next:** Phase 4 will extend this circuit to also prove that the commitment exists in the on-chain Merkle tree (membership proof).
+
+---
+
+### Phase 4: ZK Circuit — Merkle Root Verification ✅
+
+**Goal:** Extend the circuit to prove the voter's commitment is actually in the on-chain Merkle tree (membership proof).
+
+**What was done:**
+1. Added `binary_merkle_root` dependency from zk-kit.noir to `Nargo.toml`:
+   ```toml
+   binary_merkle_root = { git = "https://github.com/privacy-scaling-explorations/zk-kit.noir", tag = "binary-merkle-root-v0.0.1", directory = "packages/binary-merkle-root" }
+   ```
+
+2. Extended `main.nr` with new inputs and Merkle root logic:
+   - **New public inputs:** `root` (on-chain tree root), `vote` (yes/no choice), `depth` (tree depth)
+   - **New private inputs:** `index` (leaf position), `siblings[16]` (path hashes)
+   - **New constraints:**
+     - Count non-zero siblings to determine actual path length
+     - Assert depth ≤ 16 (max array length safety bound)
+     - Convert `index` to 16 little-endian bits (determines left/right at each level)
+     - Compute Merkle root using `binary_merkle_root(hash_2, commitment, siblings_num, index_bits, siblings)`
+     - Assert computed root equals public `root` input
+     - Bind vote to proof: `vote_field² == vote_field` (ensures it's 0 or 1 and prevents compiler warning)
+
+**Full Circuit ABI (after compilation):**
+
+| Parameter | Type | Visibility | Purpose |
+|-----------|------|------------|---------|
+| `nullifier_hash` | Field | public | On-chain nullifier (prevents double-voting) |
+| `nullifier` | Field | private | Secret value hashed to produce nullifier_hash |
+| `secret` | Field | private | Combined with nullifier to form commitment |
+| `root` | Field | public | On-chain Merkle tree root to verify against |
+| `vote` | bool | public | Voter's choice (bound to proof) |
+| `depth` | u32 | public | Current tree depth |
+| `index` | Field | private | Leaf position in tree (hidden for privacy) |
+| `siblings` | [Field; 16] | private | Merkle path hashes (supports up to 65,536 voters) |
+
+**Circuit Flow:**
+```
+┌──────────────────────────────────────────────────────┐
+│                    ZK Circuit                         │
+│                                                      │
+│  1. Verify nullifier:                                │
+│     assert hash_1(nullifier) == nullifier_hash  ✓    │
+│                                                      │
+│  2. Compute commitment:                              │
+│     commitment = hash_2(nullifier, secret)           │
+│                                                      │
+│  3. Verify Merkle membership:                        │
+│     Walk from commitment up the tree using           │
+│     index_bits + siblings → computed_root            │
+│     assert computed_root == root  ✓                  │
+│                                                      │
+│  4. Bind vote:                                       │
+│     assert vote² == vote  ✓                          │
+└──────────────────────────────────────────────────────┘
+```
+
+**Why the index is private:**
+If the index were public, anyone could see which leaf (registration) is voting — breaking anonymity. Keeping it private means the proof only reveals "I'm in the tree" without showing where.
+
+**Why vote is bound to the proof:**
+Without binding, an attacker could intercept a valid proof and resubmit it with a different vote choice. Since `vote` is a public input baked into the proof, the proof is only valid for that specific vote.
+
+**How it was verified:**
+```
+nargo compile    → Compiles successfully (no errors)
+                 → Artifact size: ~792KB (vs ~58KB in Phase 3 — Merkle logic adds constraints)
+                 → ABI confirms 4 public + 4 private inputs
+```
+
+**What `nargo compile` generates (`target/circuits.json`):**
+
+The compilation produces a single JSON artifact that acts as the circuit's "binary". It contains everything needed to generate proofs and verify them:
+
+| Field | Content | Used By |
+|-------|---------|---------|
+| `noir_version` | Compiler version (e.g. `1.0.0-beta.3`) | Compatibility checks |
+| `hash` | Unique fingerprint of this circuit build | Cache invalidation |
+| `abi` | Full interface — parameter names, types, visibility (`public`/`private`), return type | `noir_js` (to know what inputs to expect), frontend (to format inputs correctly) |
+| `bytecode` | Base64-encoded gzipped ACIR (Abstract Circuit Intermediate Representation) | Everything below |
+
+**How the artifact is used downstream:**
+
+1. **`noir_js` (browser)** — Loads `circuits.json`, takes user inputs, and executes the circuit to produce a **witness** (the full set of variable assignments satisfying all constraints)
+2. **`bb` (Barretenberg)** — Takes the bytecode + witness and generates a cryptographic **proof** (a compact object that proves the witness exists without revealing private inputs)
+3. **`bb write_vk`** — Extracts a **verification key** from the bytecode (a compact summary of the circuit's constraints, generated once per circuit)
+4. **`bb write_solidity_verifier`** — Takes the vk and generates a **Solidity contract** (`Verifier.sol`) that can verify proofs on-chain
+5. **On-chain verifier** — The deployed contract calls `verify(proof, publicInputs)` and returns `true`/`false`
+
+```
+circuits.json (bytecode + ABI)
+    │
+    ├─→ noir_js.execute(inputs) → witness
+    │       │
+    │       └─→ bb.prove(bytecode, witness) → proof
+    │
+    ├─→ bb.write_vk(bytecode) → verification key (vk)
+    │       │
+    │       ├─→ bb.verify(vk, proof) → true/false (off-chain check)
+    │       │
+    │       └─→ bb.write_solidity_verifier(vk) → Verifier.sol
+    │               │
+    │               └─→ deployed on-chain → verify(proof, publicInputs) → true/false
+    │
+    └─→ Frontend loads ABI to format inputs correctly
+```
+
+**Next:** Phase 5 will generate the Solidity verifier contract from this circuit using Barretenberg (`bb`).
+
+---
+
+### Phase 5: Generate Solidity Verifier Contract ✅
+
+**Goal:** Use Barretenberg (`bb`) to generate a real on-chain ZK proof verifier from the compiled circuit.
+
+**What was done:**
+1. Generated the verification key (vk) from the circuit bytecode:
+   ```bash
+   bb write_vk --oracle_hash keccak -b ./target/circuits.json -o ./target/
+   ```
+   - `--oracle_hash keccak` ensures hashing matches Ethereum's Keccak256 standard
+   - Output: `target/vk` (1,760 bytes) — a compact summary of the circuit's constraints
+
+2. Generated the Solidity verifier contract from the vk:
+   ```bash
+   bb write_solidity_verifier -k ./target/vk -o ./target/Verifier.sol
+   ```
+   - Output: `target/Verifier.sol` (1,883 lines) — full on-chain verifier using UltraHonk proving scheme
+
+3. Replaced the placeholder `Verifier.sol` in `packages/hardhat/contracts/` with the real generated contract
+
+4. Verified:
+   - Hardhat compiles successfully
+   - All 11 existing tests still pass
+   - `NUMBER_OF_PUBLIC_INPUTS = 4` matches our circuit (nullifier_hash, root, vote, depth)
+
+**Key properties of the generated verifier:**
+
+| Property | Value |
+|----------|-------|
+| Circuit size | 32,768 gates (N) |
+| Log circuit size | 15 (LOG_N) |
+| Public inputs | 4 |
+| Proving scheme | UltraHonk |
+| Deployment gas | ~4,727,047 (~7.9% of block limit) |
+| Verifier interface | `verify(bytes calldata _proof, bytes32[] calldata _publicInputs) → bool` |
+
+**How the pipeline worked:**
+```
+main.nr → nargo compile → circuits.json (ACIR bytecode)
+                              ↓
+              bb write_vk → vk (verification key, 1.7KB)
+                              ↓
+              bb write_solidity_verifier → Verifier.sol (1,883 lines)
+                              ↓
+              Replaces placeholder in hardhat/contracts/
+                              ↓
+              Hardhat compile → HonkVerifier deployed on-chain
+```
+
+**Important notes:**
+- The vk is embedded directly in the contract — no external data needed at verification time
+- Every time the circuit changes, you must regenerate: compile → vk → Verifier.sol
+- The `IVerifier` interface in the generated contract matches what `Voting.sol` expects
+- The generated contract uses `pragma solidity >=0.8.21` (compatible with our hardhat config)
+
+**How it was verified:**
+```
+bb write_vk          → VK saved (scheme: ultra_honk, circuit size: 19,278)
+bb write_solidity    → Verifier.sol (1,883 lines)
+hardhat compile      → 2 Solidity files compiled successfully
+hardhat test         → 11 passing
+```
+
+**Next:** Phase 6 will implement the `vote()` function in Voting.sol, wiring proof verification with the real verifier contract.
