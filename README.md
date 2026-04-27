@@ -266,3 +266,112 @@ This JSON is used by:
 - The Solidity verifier generator to produce an on-chain verification contract
 
 **Next:** Phase 4 will extend this circuit to also prove that the commitment exists in the on-chain Merkle tree (membership proof).
+
+---
+
+### Phase 4: ZK Circuit — Merkle Root Verification ✅
+
+**Goal:** Extend the circuit to prove the voter's commitment is actually in the on-chain Merkle tree (membership proof).
+
+**What was done:**
+1. Added `binary_merkle_root` dependency from zk-kit.noir to `Nargo.toml`:
+   ```toml
+   binary_merkle_root = { git = "https://github.com/privacy-scaling-explorations/zk-kit.noir", tag = "binary-merkle-root-v0.0.1", directory = "packages/binary-merkle-root" }
+   ```
+
+2. Extended `main.nr` with new inputs and Merkle root logic:
+   - **New public inputs:** `root` (on-chain tree root), `vote` (yes/no choice), `depth` (tree depth)
+   - **New private inputs:** `index` (leaf position), `siblings[16]` (path hashes)
+   - **New constraints:**
+     - Count non-zero siblings to determine actual path length
+     - Assert depth ≤ 16 (max array length safety bound)
+     - Convert `index` to 16 little-endian bits (determines left/right at each level)
+     - Compute Merkle root using `binary_merkle_root(hash_2, commitment, siblings_num, index_bits, siblings)`
+     - Assert computed root equals public `root` input
+     - Bind vote to proof: `vote_field² == vote_field` (ensures it's 0 or 1 and prevents compiler warning)
+
+**Full Circuit ABI (after compilation):**
+
+| Parameter | Type | Visibility | Purpose |
+|-----------|------|------------|---------|
+| `nullifier_hash` | Field | public | On-chain nullifier (prevents double-voting) |
+| `nullifier` | Field | private | Secret value hashed to produce nullifier_hash |
+| `secret` | Field | private | Combined with nullifier to form commitment |
+| `root` | Field | public | On-chain Merkle tree root to verify against |
+| `vote` | bool | public | Voter's choice (bound to proof) |
+| `depth` | u32 | public | Current tree depth |
+| `index` | Field | private | Leaf position in tree (hidden for privacy) |
+| `siblings` | [Field; 16] | private | Merkle path hashes (supports up to 65,536 voters) |
+
+**Circuit Flow:**
+```
+┌──────────────────────────────────────────────────────┐
+│                    ZK Circuit                         │
+│                                                      │
+│  1. Verify nullifier:                                │
+│     assert hash_1(nullifier) == nullifier_hash  ✓    │
+│                                                      │
+│  2. Compute commitment:                              │
+│     commitment = hash_2(nullifier, secret)           │
+│                                                      │
+│  3. Verify Merkle membership:                        │
+│     Walk from commitment up the tree using           │
+│     index_bits + siblings → computed_root            │
+│     assert computed_root == root  ✓                  │
+│                                                      │
+│  4. Bind vote:                                       │
+│     assert vote² == vote  ✓                          │
+└──────────────────────────────────────────────────────┘
+```
+
+**Why the index is private:**
+If the index were public, anyone could see which leaf (registration) is voting — breaking anonymity. Keeping it private means the proof only reveals "I'm in the tree" without showing where.
+
+**Why vote is bound to the proof:**
+Without binding, an attacker could intercept a valid proof and resubmit it with a different vote choice. Since `vote` is a public input baked into the proof, the proof is only valid for that specific vote.
+
+**How it was verified:**
+```
+nargo compile    → Compiles successfully (no errors)
+                 → Artifact size: ~792KB (vs ~58KB in Phase 3 — Merkle logic adds constraints)
+                 → ABI confirms 4 public + 4 private inputs
+```
+
+**What `nargo compile` generates (`target/circuits.json`):**
+
+The compilation produces a single JSON artifact that acts as the circuit's "binary". It contains everything needed to generate proofs and verify them:
+
+| Field | Content | Used By |
+|-------|---------|---------|
+| `noir_version` | Compiler version (e.g. `1.0.0-beta.3`) | Compatibility checks |
+| `hash` | Unique fingerprint of this circuit build | Cache invalidation |
+| `abi` | Full interface — parameter names, types, visibility (`public`/`private`), return type | `noir_js` (to know what inputs to expect), frontend (to format inputs correctly) |
+| `bytecode` | Base64-encoded gzipped ACIR (Abstract Circuit Intermediate Representation) | Everything below |
+
+**How the artifact is used downstream:**
+
+1. **`noir_js` (browser)** — Loads `circuits.json`, takes user inputs, and executes the circuit to produce a **witness** (the full set of variable assignments satisfying all constraints)
+2. **`bb` (Barretenberg)** — Takes the bytecode + witness and generates a cryptographic **proof** (a compact object that proves the witness exists without revealing private inputs)
+3. **`bb write_vk`** — Extracts a **verification key** from the bytecode (a compact summary of the circuit's constraints, generated once per circuit)
+4. **`bb write_solidity_verifier`** — Takes the vk and generates a **Solidity contract** (`Verifier.sol`) that can verify proofs on-chain
+5. **On-chain verifier** — The deployed contract calls `verify(proof, publicInputs)` and returns `true`/`false`
+
+```
+circuits.json (bytecode + ABI)
+    │
+    ├─→ noir_js.execute(inputs) → witness
+    │       │
+    │       └─→ bb.prove(bytecode, witness) → proof
+    │
+    ├─→ bb.write_vk(bytecode) → verification key (vk)
+    │       │
+    │       ├─→ bb.verify(vk, proof) → true/false (off-chain check)
+    │       │
+    │       └─→ bb.write_solidity_verifier(vk) → Verifier.sol
+    │               │
+    │               └─→ deployed on-chain → verify(proof, publicInputs) → true/false
+    │
+    └─→ Frontend loads ABI to format inputs correctly
+```
+
+**Next:** Phase 5 will generate the Solidity verifier contract from this circuit using Barretenberg (`bb`).
