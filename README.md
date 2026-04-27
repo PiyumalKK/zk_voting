@@ -595,9 +595,6 @@ The main voting page orchestrates all components in a sequential flow:
 | Component | Purpose | Status |
 |-----------|---------|--------|
 | `CreateCommitment.tsx` | **Core Phase 7** — generates nullifier + secret using `Fr.random()`, computes Poseidon2 commitment, calls `register()` on-chain | ✅ Complete |
-| `GenerateProof.tsx` | Phase 8 placeholder — scaffolding for browser-side proof generation | Placeholder |
-| `VoteWithBurnerHardhat.tsx` | Phase 9 placeholder — vote submission via burner wallet on local hardhat | Placeholder |
-| `VoteWithBurnerSepolia.tsx` | Phase 10 placeholder — vote submission via ERC-4337 smart account on Sepolia | Placeholder |
 
 #### 4. Created Supporting Infrastructure
 
