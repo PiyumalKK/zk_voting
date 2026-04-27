@@ -565,3 +565,205 @@ bb verify        → Proof verified successfully ✅
 | `packages/circuits/Prover.toml` | Created — circuit inputs for proof generation |
 
 **Next:** Phase 7 will build the frontend commitment creation component (generate nullifier + secret, compute Poseidon hash, call `register()`).
+
+---
+
+### Phase 7: Frontend — Voting UI & Commitment Registration ✅
+
+**Goal:** Build the complete frontend voting interface that connects to the deployed smart contracts, allowing voters to register (create commitment + insert into Merkle tree), select their vote, and prepare for proof generation.
+
+**What was done:**
+
+#### 1. Created the Voting Page Layout (`app/voting/page.tsx`)
+
+The main voting page orchestrates all components in a sequential flow:
+1. Show/Add Voters (admin) → 2. View Stats → 3. Register → 4. Choose Vote → 5. Generate Proof → 6. Vote
+
+#### 2. Created Voting Components (`app/voting/_components/`)
+
+| Component | Purpose |
+|-----------|---------|
+| `VotingStats.tsx` | Reads on-chain state via `getVotingData()` — displays question, owner, contract address, yes/no vote counts with live progress bar |
+| `VoteChoice.tsx` | Yes/No selector using Zustand store (`challengeStore`) — choice is bound to the ZK proof later |
+| `ShowVotersButton.tsx` | Reads `VoterAdded` events, displays all registered voter addresses with status (allowed/revoked, registered/not) |
+| `AddVotersModal.tsx` | Owner-only UI to batch-add voter addresses to the allowlist via `addVoters()` contract call |
+| `LogStorageButton.tsx` | Debug utility — logs localStorage state (commitment, proof, burner wallet) to console |
+| `ClearStorageButton.tsx` | Clears all stored commitment/proof data from localStorage |
+
+#### 3. Created Challenge Components (`app/voting/_challengeComponents/`)
+
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| `CreateCommitment.tsx` | **Core Phase 7** — generates nullifier + secret using `Fr.random()`, computes Poseidon2 commitment, calls `register()` on-chain | ✅ Complete |
+| `GenerateProof.tsx` | Phase 8 placeholder — scaffolding for browser-side proof generation | Placeholder |
+| `VoteWithBurnerHardhat.tsx` | Phase 9 placeholder — vote submission via burner wallet on local hardhat | Placeholder |
+| `VoteWithBurnerSepolia.tsx` | Phase 10 placeholder — vote submission via ERC-4337 smart account on Sepolia | Placeholder |
+
+#### 4. Created Supporting Infrastructure
+
+| File | Purpose |
+|------|---------|
+| `services/store/challengeStore.ts` | Zustand state store — holds `commitmentData`, `proofData`, `voteChoice` across components |
+| `utils/proofStorage.ts` | localStorage utilities — save/load commitment, proof, burner wallet, and transaction result per contract+user |
+| `app/api/circuit/route.ts` | Next.js API route — serves `circuits.json` to the browser for client-side proof generation |
+| `contracts/deployedContracts.ts` | Regenerated ABI — includes full `getVotingData` with all 7 return fields (question, owner, yesVotes, noVotes, nullCount, treeDepth, treeRoot) |
+
+#### 5. UI/UX Redesign — FYP Branding
+
+Transformed the default Scaffold-ETH theme into a modern FYP-branded interface:
+
+| File | Changes |
+|------|---------|
+| `styles/globals.css` | Custom DaisyUI theme (indigo/purple/cyan gradient palette), glass morphism, hover-lift animations, gradient text utilities |
+| `app/page.tsx` | FYP landing page with university + faculty logos, project title, team members, feature cards, tech stack |
+| `components/Header.tsx` | Custom ZK Voting SVG logo, gradient branding, removed Faucet button |
+| `components/Footer.tsx` | GitHub link, removed Faucet/BuidlGuidl/price display, kept Block Explorer |
+| `app/debug/page.tsx` | Removed Scaffold-ETH description banner |
+| `utils/scaffold-eth/getMetadata.ts` | Updated title/favicon to "ZK Voting" branding |
+| `public/zk-logo.svg` + `public/favicon.svg` | Custom shield+checkmark logo (gradient, modern, no text) |
+| `public/uni_logo.png` | University of Ruhuna logo |
+| `public/engineering_logo.png` | Faculty of Engineering logo |
+
+---
+
+#### How Frontend Connects to Blockchain
+
+The frontend communicates with deployed smart contracts through Scaffold-ETH 2's hook system, which wraps wagmi/viem under the hood:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     FRONTEND (Next.js)                           │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Scaffold-ETH Hooks (wagmi + viem wrappers)             │    │
+│  │                                                          │    │
+│  │  useScaffoldReadContract()  → reads on-chain state       │    │
+│  │  useScaffoldWriteContract() → sends transactions         │    │
+│  │  useScaffoldEventHistory()  → listens to past events     │    │
+│  │  useDeployedContractInfo()  → gets ABI + address         │    │
+│  └──────────────────────┬──────────────────────────────────┘    │
+│                         │                                        │
+│  ┌──────────────────────▼──────────────────────────────────┐    │
+│  │  deployedContracts.ts (Generated ABI + addresses)        │    │
+│  │  - Contains full contract ABI (function signatures)      │    │
+│  │  - Contains deployed address per chain ID                │    │
+│  │  - Auto-generated by `yarn deploy`                       │    │
+│  └──────────────────────┬──────────────────────────────────┘    │
+│                         │                                        │
+└─────────────────────────┼────────────────────────────────────────┘
+                          │ JSON-RPC (HTTP/WebSocket)
+                          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 BLOCKCHAIN (Hardhat / Sepolia)                    │
+│                                                                  │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────────┐  │
+│  │  Voting.sol      │  │  HonkVerifier.sol │  │  PoseidonT3   │  │
+│  │  - addVoters()   │  │  - verify()       │  │  - poseidon() │  │
+│  │  - register()    │  │                    │  │               │  │
+│  │  - vote()        │  └──────────────────┘  └───────────────┘  │
+│  │  - getVotingData │                                            │
+│  │  - getVoterData  │  ┌──────────────────┐                     │
+│  └─────────────────┘  │  LeanIMT          │                     │
+│                        │  - _insert()      │                     │
+│                        │  - _root()        │                     │
+│                        └──────────────────┘                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Data flow for voter registration (CreateCommitment.tsx):**
+```
+1. Fr.random() → nullifier (cryptographically random field element)
+2. Fr.random() → secret   (cryptographically random field element)
+3. poseidon2([nullifier, secret]) → commitment (hash)
+4. writeContractAsync("register", [commitment]) → TX sent to blockchain
+5. Blockchain: Voting.register(commitment) → inserts into LeanIMT
+6. Event: NewLeaf(index, commitment) emitted
+7. Frontend: saves {nullifier, secret, commitment, index} to localStorage
+```
+
+**Key connection points:**
+
+| Frontend Hook | Contract Function | What it does |
+|--------------|-------------------|--------------|
+| `useScaffoldReadContract("getVotingData")` | `Voting.getVotingData()` | Reads question, owner, votes, tree root/depth |
+| `useScaffoldReadContract("getVoterData")` | `Voting.getVoterData(addr)` | Checks if address is voter + has registered |
+| `useScaffoldWriteContract("register")` | `Voting.register(commitment)` | Inserts commitment into Merkle tree |
+| `useScaffoldWriteContract("addVoters")` | `Voting.addVoters(addrs, statuses)` | Owner adds voters to allowlist |
+| `useScaffoldEventHistory("NewLeaf")` | `event NewLeaf(index, commitment)` | Tracks all tree insertions (for Merkle proof) |
+| `useScaffoldEventHistory("VoterAdded")` | `event VoterAdded(voter)` | Lists all added voters |
+
+**Why `deployedContracts.ts` is critical:**
+- Generated by `yarn deploy` — contains the ABI and deployed address
+- Without the correct ABI, hooks can't encode/decode function calls
+- Must be regenerated after any contract change (`yarn deploy --reset`)
+
+---
+
+#### CreateCommitment.tsx — The Core Phase 7 Logic
+
+This is the most important component. It implements the cryptographic registration flow:
+
+```typescript
+// 1. Generate random field elements (cryptographically secure)
+const nullifier = BigInt(Fr.random().toString());
+const secret = BigInt(Fr.random().toString());
+
+// 2. Compute Poseidon2 hash (same as Noir circuit uses)
+const commitment = poseidon2([nullifier, secret]);
+
+// 3. Convert to hex for Solidity
+const commitmentHex = toHex(commitment, { size: 32 });
+
+// 4. Send to blockchain
+await writeContractAsync({
+  functionName: "register",
+  args: [BigInt(commitmentHex)],
+});
+
+// 5. Save to localStorage for proof generation later
+saveCommitmentToLocalStorage({ commitment, nullifier, secret, index });
+```
+
+**Why Fr.random():**
+- `Fr` is Barretenberg's finite field element class
+- Generates a random value in the BN254 scalar field (the same field Noir uses)
+- Ensures the values are valid circuit inputs (< field modulus)
+
+**Why Poseidon2:**
+- Same hash function used in the Noir circuit (`hash_2`)
+- `poseidon-lite` library produces identical outputs to Noir's `std::hash::poseidon::bn254::hash_2`
+- This ensures the commitment computed in the browser matches what the circuit will verify
+
+**Why localStorage:**
+- The nullifier and secret are needed later for proof generation (Phase 8)
+- They cannot be recovered from the on-chain commitment (one-way hash)
+- If lost, the voter cannot prove their membership — they cannot vote
+
+---
+
+#### Critical Files Summary
+
+| File | Role | Why it matters |
+|------|------|----------------|
+| `app/voting/page.tsx` | Page orchestrator | Composes all voting components in correct order |
+| `_challengeComponents/CreateCommitment.tsx` | Registration logic | Fr.random() + poseidon2 + register() — the ZK commitment scheme |
+| `_challengeComponents/GenerateProof.tsx` | Proof generation scaffold | Will use noir_js + bb.js to generate ZK proof in browser |
+| `_components/VotingStats.tsx` | Live stats display | Reads getVotingData() — shows votes, root, depth |
+| `_components/VoteChoice.tsx` | Vote selector | Stores choice in Zustand — bound to proof |
+| `services/store/challengeStore.ts` | Cross-component state | Shares commitment/proof/vote data between steps |
+| `utils/proofStorage.ts` | Persistence layer | localStorage for commitment/proof survival across page reloads |
+| `contracts/deployedContracts.ts` | ABI bridge | Auto-generated — connects frontend hooks to contract functions |
+| `app/api/circuit/route.ts` | Circuit delivery | Serves circuits.json for browser proof generation |
+| `styles/globals.css` | Theme/branding | Custom DaisyUI theme with modern FYP aesthetic |
+
+**How it was verified:**
+- Frontend compiles and serves at `localhost:3000`
+- Voting page renders all components correctly
+- Connected wallet shows voter status
+- Owner can add voters via the AddVotersModal
+- CreateCommitment button is enabled when wallet is allowlisted + not yet registered
+- After registration, button shows "✓ Already registered for this vote"
+- VotingStats updates live with tree root/depth after registration
+- localStorage correctly persists commitment data
+
+**Next:** Phase 8 will implement browser-side ZK proof generation using `noir_js` + `@aztec/bb.js` (UltraHonkBackend).

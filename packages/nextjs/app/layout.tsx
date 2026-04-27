@@ -6,8 +6,9 @@ import "~~/styles/globals.css";
 import { getMetadata } from "~~/utils/scaffold-eth/getMetadata";
 
 export const metadata = getMetadata({
-  title: "Scaffold-ETH 2 App",
-  description: "Built with 🏗 Scaffold-ETH 2",
+  title: "ZK Voting | Privacy-Preserving E-Voting",
+  description: "Privacy-Preserving End-to-End Verifiable Blockchain-Based Electronic Voting System",
+  imageRelativePath: "/zk-logo.svg",
 });
 
 const ScaffoldEthApp = ({ children }: { children: React.ReactNode }) => {
