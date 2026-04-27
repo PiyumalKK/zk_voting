@@ -204,3 +204,65 @@ npx hardhat test       → 11 passing (741ms)
 > ⚠️ All addresses above are examples. Commitment values in production will be Poseidon hashes of (nullifier, secret).
 
 > ⚠️ If you get `OwnableUnauthorizedAccount` error, you're not connected as the owner. Only the deployer (Account #0) can call `addVoters`.
+
+---
+
+### Phase 3: ZK Circuit — Commitment Scheme ✅
+
+**Goal:** Write the Noir circuit that proves knowledge of a secret commitment without revealing the underlying values.
+
+**What was done:**
+1. Replaced the default placeholder circuit in `packages/circuits/src/main.nr` with the commitment scheme circuit:
+   - **Public input:** `nullifier_hash` — the value that will be stored on-chain to prevent double-voting
+   - **Private inputs:** `nullifier`, `secret` — known only to the voter
+   - **Constraints:**
+     - Recomputes `hash_1([nullifier])` and asserts it equals the public `nullifier_hash`
+     - Computes `commitment = hash_2([nullifier, secret])` — this is the leaf value registered in the Merkle tree
+
+2. Uses Noir's built-in Poseidon hash functions from `std::hash::poseidon::bn254`:
+   - `hash_1` — single-element Poseidon hash (for nullifier → nullifier_hash)
+   - `hash_2` — two-element Poseidon hash (for nullifier + secret → commitment)
+
+**Circuit Design:**
+```
+┌─────────────────────────────────────┐
+│           ZK Circuit                │
+│                                     │
+│  Private: nullifier, secret         │
+│  Public:  nullifier_hash            │
+│                                     │
+│  assert hash_1(nullifier)           │
+│         == nullifier_hash  ✓        │
+│                                     │
+│  commitment = hash_2(nullifier,     │
+│                       secret)       │
+│  (used for Merkle root in Phase 4)  │
+└─────────────────────────────────────┘
+```
+
+**Why this matters:**
+- The nullifier_hash is stored on-chain when voting — if someone tries to vote twice, the contract detects the duplicate nullifier_hash
+- The secret ensures that even if nullifier is leaked, no one else can forge the commitment
+- The circuit proves the voter knows the preimage of their commitment without revealing it
+
+**How it was verified:**
+```
+nargo compile    → Compiles successfully (no errors)
+                 → Produces target/circuits.json artifact
+```
+
+**What `target/circuits.json` contains:**
+
+| Field | Description |
+|-------|-------------|
+| `noir_version` | Compiler version that produced the artifact (e.g. `1.0.0-beta.3`) |
+| `hash` | Unique identifier for this specific circuit compilation |
+| `abi` | Circuit interface — lists all parameters with their names, types (`field`), and visibility (`public`/`private`). Also includes `return_type` and `error_types` |
+| `bytecode` | Base64-encoded gzipped ACIR (Abstract Circuit Intermediate Representation) — the compiled constraint system |
+
+This JSON is used by:
+- `noir_js` in the browser to execute the circuit and compute a witness
+- `bb` (Barretenberg) to generate and verify proofs
+- The Solidity verifier generator to produce an on-chain verification contract
+
+**Next:** Phase 4 will extend this circuit to also prove that the commitment exists in the on-chain Merkle tree (membership proof).
