@@ -375,3 +375,70 @@ circuits.json (bytecode + ABI)
 ```
 
 **Next:** Phase 5 will generate the Solidity verifier contract from this circuit using Barretenberg (`bb`).
+
+---
+
+### Phase 5: Generate Solidity Verifier Contract ✅
+
+**Goal:** Use Barretenberg (`bb`) to generate a real on-chain ZK proof verifier from the compiled circuit.
+
+**What was done:**
+1. Generated the verification key (vk) from the circuit bytecode:
+   ```bash
+   bb write_vk --oracle_hash keccak -b ./target/circuits.json -o ./target/
+   ```
+   - `--oracle_hash keccak` ensures hashing matches Ethereum's Keccak256 standard
+   - Output: `target/vk` (1,760 bytes) — a compact summary of the circuit's constraints
+
+2. Generated the Solidity verifier contract from the vk:
+   ```bash
+   bb write_solidity_verifier -k ./target/vk -o ./target/Verifier.sol
+   ```
+   - Output: `target/Verifier.sol` (1,883 lines) — full on-chain verifier using UltraHonk proving scheme
+
+3. Replaced the placeholder `Verifier.sol` in `packages/hardhat/contracts/` with the real generated contract
+
+4. Verified:
+   - Hardhat compiles successfully
+   - All 11 existing tests still pass
+   - `NUMBER_OF_PUBLIC_INPUTS = 4` matches our circuit (nullifier_hash, root, vote, depth)
+
+**Key properties of the generated verifier:**
+
+| Property | Value |
+|----------|-------|
+| Circuit size | 32,768 gates (N) |
+| Log circuit size | 15 (LOG_N) |
+| Public inputs | 4 |
+| Proving scheme | UltraHonk |
+| Deployment gas | ~4,727,047 (~7.9% of block limit) |
+| Verifier interface | `verify(bytes calldata _proof, bytes32[] calldata _publicInputs) → bool` |
+
+**How the pipeline worked:**
+```
+main.nr → nargo compile → circuits.json (ACIR bytecode)
+                              ↓
+              bb write_vk → vk (verification key, 1.7KB)
+                              ↓
+              bb write_solidity_verifier → Verifier.sol (1,883 lines)
+                              ↓
+              Replaces placeholder in hardhat/contracts/
+                              ↓
+              Hardhat compile → HonkVerifier deployed on-chain
+```
+
+**Important notes:**
+- The vk is embedded directly in the contract — no external data needed at verification time
+- Every time the circuit changes, you must regenerate: compile → vk → Verifier.sol
+- The `IVerifier` interface in the generated contract matches what `Voting.sol` expects
+- The generated contract uses `pragma solidity >=0.8.21` (compatible with our hardhat config)
+
+**How it was verified:**
+```
+bb write_vk          → VK saved (scheme: ultra_honk, circuit size: 19,278)
+bb write_solidity    → Verifier.sol (1,883 lines)
+hardhat compile      → 2 Solidity files compiled successfully
+hardhat test         → 11 passing
+```
+
+**Next:** Phase 6 will implement the `vote()` function in Voting.sol, wiring proof verification with the real verifier contract.
