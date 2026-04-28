@@ -894,3 +894,116 @@ input: { nullifier_hash, nullifier, secret, root, vote, depth, index, siblings }
 6. Click "Log Local Storage" to see saved proof data
 
 **Next:** Phase 9 will implement the burner wallet voting — create a fresh address, fund it, and call `vote()` with the generated proof.
+
+---
+
+### Phase 9: Burner Wallet Voting on Hardhat ✅
+
+**Goal:** Implement the burner wallet mechanism so votes are cast from a fresh, unlinkable address — breaking the connection between the voter's registration identity and their vote.
+
+**Why a burner wallet?**
+If you vote from the same address you registered with, anyone can see on-chain: "Address X registered, then Address X voted Yes." That completely destroys privacy. The ZK proof guarantees you're eligible without revealing *who* you are — but only if the voting address is different from the registration address.
+
+**What was done:**
+
+#### 1. Implemented `generateBurnerWallet()` in `VoteWithBurnerHardhat.tsx`
+
+```typescript
+const privateKey = generatePrivateKey();         // fresh random key
+const account = privateKeyToAccount(privateKey);  // derive address
+const wallet = { privateKey, address: account.address };
+```
+
+- Uses viem's `generatePrivateKey()` — cryptographically random, never used before
+- Saves to localStorage so the burner persists across page reloads
+- No link to the registration wallet whatsoever
+
+#### 2. Implemented `sendVoteWithBurner()`
+
+Two-step process:
+
+**Step A — Fund the burner (Hardhat only):**
+```typescript
+const testClient = createTestClient({ chain: hardhat, mode: "hardhat", ... });
+await testClient.setBalance({ address: walletAddress, value: parseEther("0.01") });
+```
+- Uses Hardhat's `setBalance` cheat code — only works on local chain
+- On a real network (Sepolia), this is handled by a paymaster instead (Phase 10)
+
+**Step B — Call `vote()` with proof + public inputs:**
+```typescript
+await viemContract.write.vote([
+  uint8ArrayToHexString(proofData.proof),   // ~14KB proof blob
+  proofData.publicInputs[0],                // nullifier_hash
+  proofData.publicInputs[1],                // root
+  proofData.publicInputs[2],                // vote
+  proofData.publicInputs[3],                // depth
+]);
+```
+- Public inputs are in exact circuit order (matching `main.nr`)
+- The proof was generated in Phase 8 and stored in localStorage
+- The `uint8ArrayToHexString` helper converts the proof `Uint8Array` to a `0x`-prefixed hex string
+
+#### Vote Flow Diagram
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                  BURNER WALLET VOTING                     │
+│                                                          │
+│  1. User clicks "Vote with burner wallet"                │
+│     └→ If no burner exists, generateBurnerWallet()       │
+│        └→ generatePrivateKey() → fresh address           │
+│        └→ Save to localStorage                           │
+│                                                          │
+│  2. Fund the burner                                      │
+│     └→ testClient.setBalance(0.01 ETH)                   │
+│     └→ Hardhat cheat code — free gas for local testing   │
+│                                                          │
+│  3. Load proof from localStorage                         │
+│     └→ proofData = { proof, publicInputs[4] }            │
+│                                                          │
+│  4. Call vote() from burner address                      │
+│     └→ viemContract.write.vote(proof, inputs)            │
+│     └→ Contract verifies proof → counts vote             │
+│                                                          │
+│  5. On-chain result:                                     │
+│     └→ VoteCast event emitted                            │
+│     └→ voter = burner address (unlinkable)               │
+│     └→ nullifier_hash burned (no double-voting)          │
+│     └→ yesVotes or noVotes incremented                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+**What an observer sees on-chain:**
+| Visible | Hidden |
+|---------|--------|
+| Burner address `0xABC...` called `vote()` | Who owns `0xABC...` |
+| Vote choice: "Yes" | Which leaf in the Merkle tree |
+| Nullifier hash `0xef56...` | The nullifier/secret preimage |
+| ZK proof blob (14KB) | The voter's real identity |
+| Merkle root + depth | The leaf index |
+
+**Privacy chain:**
+```
+Registration wallet → commitment on-chain (public)
+                    ↕ (NO LINK — different addresses)
+Burner wallet → vote on-chain (public)
+                    ↕ (connected only by ZK proof — private)
+```
+
+#### File Changes
+
+| File | Action | Description |
+|------|--------|-------------|
+| `_components/VoteWithBurnerHardhat.tsx` | Modified | Implemented `generateBurnerWallet()` + `sendVoteWithBurner()` |
+
+**How it was verified:**
+1. `yarn chain` → local blockchain running
+2. `yarn deploy` → contracts deployed
+3. `yarn start` → frontend at localhost:3000
+4. Add voter → Register commitment → Select vote → Generate proof
+5. Click "Vote with burner wallet" → burner created + funded + vote sent
+6. VotingStats updates: Yes = 1 (or No = 1)
+7. Hardhat console shows `Voting#vote` transaction from the burner address
+
+**Next:** Phase 10 will implement Sepolia voting using ERC-4337 account abstraction (Pimlico paymaster) for gasless anonymous voting on a real network.
