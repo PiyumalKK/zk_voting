@@ -588,11 +588,14 @@ The main voting page orchestrates all components in a sequential flow:
 | `LogStorageButton.tsx` | Debug utility — logs localStorage state (commitment, proof, burner wallet) to console |
 | `ClearStorageButton.tsx` | Clears all stored commitment/proof data from localStorage |
 
-#### 3. Created Challenge Components (`app/voting/_challengeComponents/`)
+#### 3. Created Core Voting Components (`app/voting/_components/`)
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
 | `CreateCommitment.tsx` | **Core Phase 7** — generates nullifier + secret using `Fr.random()`, computes Poseidon2 commitment, calls `register()` on-chain | ✅ Complete |
+| `GenerateProof.tsx` | Proof generation (Phase 8 stub) — will use noir_js + bb.js to generate ZK proof in browser | ⏳ Stub |
+| `VoteWithBurnerHardhat.tsx` | Burner wallet voting on Hardhat (Phase 9 stub) | ⏳ Stub |
+| `VoteWithBurnerSepolia.tsx` | Smart account voting on Sepolia (Phase 10 stub) | ⏳ Stub |
 
 #### 4. Created Supporting Infrastructure
 
@@ -741,8 +744,8 @@ saveCommitmentToLocalStorage({ commitment, nullifier, secret, index });
 | File | Role | Why it matters |
 |------|------|----------------|
 | `app/voting/page.tsx` | Page orchestrator | Composes all voting components in correct order |
-| `_challengeComponents/CreateCommitment.tsx` | Registration logic | Fr.random() + poseidon2 + register() — the ZK commitment scheme |
-| `_challengeComponents/GenerateProof.tsx` | Proof generation scaffold | Will use noir_js + bb.js to generate ZK proof in browser |
+| `_components/CreateCommitment.tsx` | Registration logic | Fr.random() + poseidon2 + register() — the ZK commitment scheme |
+| `_components/GenerateProof.tsx` | Proof generation | Uses noir_js + bb.js to generate ZK proof in browser |
 | `_components/VotingStats.tsx` | Live stats display | Reads getVotingData() — shows votes, root, depth |
 | `_components/VoteChoice.tsx` | Vote selector | Stores choice in Zustand — bound to proof |
 | `services/store/challengeStore.ts` | Cross-component state | Shares commitment/proof/vote data between steps |
@@ -762,3 +765,132 @@ saveCommitmentToLocalStorage({ commitment, nullifier, secret, index });
 - localStorage correctly persists commitment data
 
 **Next:** Phase 8 will implement browser-side ZK proof generation using `noir_js` + `@aztec/bb.js` (UltraHonkBackend).
+
+---
+
+### Phase 8: Browser-Side ZK Proof Generation ✅
+
+**Goal:** Replace the dummy proof stub with real ZK proof generation — the browser rebuilds the Merkle tree, creates a witness, and generates a cryptographic proof using UltraHonk, all client-side.
+
+**What was done:**
+
+#### 1. Implemented `generateProof()` in `GenerateProof.tsx`
+
+The function that performs the entire proof pipeline in the browser:
+
+```typescript
+const generateProof = async (
+  _root: bigint, _vote: boolean, _depth: number,
+  _nullifier: string, _secret: string, _index: number,
+  _leaves: any[], _circuitData: any,
+) => { ... }
+```
+
+**8-step pipeline inside the function:**
+
+| Step | What happens | Library used |
+|------|-------------|--------------|
+| 1. Compute nullifier hash | `poseidon1([BigInt(nullifier)])` | `poseidon-lite` |
+| 2. Rebuild Merkle tree | Initialize `LeanIMT` with poseidon2, insert all on-chain leaves | `@zk-kit/lean-imt` |
+| 3. Generate Merkle proof | `calculatedTree.generateProof(index)` → gets siblings | `@zk-kit/lean-imt` |
+| 4. Pad siblings to 16 | Fill remaining slots with `"0"` (circuit expects `[Field; 16]`) | — |
+| 5. Prepare circuit inputs | Build `input` object matching exact `main.nr` parameter order | — |
+| 6. Create witness | `new Noir(circuitData).execute(input)` → runs circuit locally | `@noir-lang/noir_js` |
+| 7. Generate ZK proof | `new UltraHonkBackend(bytecode).generateProof(witness, {keccak: true})` | `@aztec/bb.js` |
+| 8. Format for Solidity | `encodeAbiParameters` to produce hex proof + publicInputs | `viem` |
+
+#### 2. Fixed Duplicate API Fetch
+
+The original code had a bug — it fetched `/api/circuit` twice (first to check `response.ok`, then again inside a try/catch). Cleaned up to a single fetch call.
+
+#### 3. Copied `circuits.json` to `public/`
+
+The API route (`/api/circuit`) serves the compiled circuit to the browser. It first checks `public/circuits.json`, then falls back to `../circuits/target/circuits.json`. Copied the compiled artifact to `public/` for reliable serving.
+
+---
+
+#### How Browser Proof Generation Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    BROWSER (GenerateProof.tsx)                    │
+│                                                                  │
+│  Step 1: Compute nullifierHash                                   │
+│    poseidon1([nullifier]) → nullifierHash                        │
+│                                                                  │
+│  Step 2: Rebuild Merkle tree from on-chain events                │
+│    NewLeaf events → reverse → LeanIMT.insertMany()              │
+│                                                                  │
+│  Step 3: Get Merkle inclusion proof                              │
+│    calculatedTree.generateProof(myIndex) → siblings[]            │
+│    Pad to length 16 with zeros                                   │
+│                                                                  │
+│  Step 4: Prepare circuit inputs                                  │
+│    { nullifier_hash, nullifier, secret, root, vote,             │
+│      depth, index, siblings }                                    │
+│    (exact order matching main.nr)                                │
+│                                                                  │
+│  Step 5: Execute circuit → witness                               │
+│    Noir(circuitData).execute(inputs) → witness                   │
+│    (runs all 4 circuit checks locally to verify inputs work)     │
+│                                                                  │
+│  Step 6: Generate ZK proof                                       │
+│    UltraHonkBackend(bytecode).generateProof(witness)             │
+│    → proof (~14KB) + publicInputs[4]                             │
+│    (heavy crypto — takes a few seconds in browser)               │
+│                                                                  │
+│  Step 7: Format for Solidity                                     │
+│    encodeAbiParameters([proof, publicInputs])                    │
+│    → hex-encoded data ready for vote() call                      │
+│                                                                  │
+│  Step 8: Save to localStorage                                    │
+│    { proof, publicInputs, voteChoice }                           │
+│    → survives page reload, used by VoteWithBurner                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why rebuild the tree in the browser?**
+- The smart contract stores the Merkle tree in an optimized format (frontier only)
+- There's no efficient on-chain function to return Merkle proofs (siblings)
+- So we fetch all `NewLeaf` events, reconstruct the full tree in JS, and generate the proof locally
+- The zk-kit `LeanIMT` library in TypeScript mirrors the Solidity version exactly
+
+**Why reverse the leaf events?**
+- `useScaffoldEventHistory` returns events newest-first
+- The Merkle tree must be built oldest-first (leaf 0 first, then leaf 1, etc.)
+- Without reversing, the tree would have leaves in wrong positions → wrong root
+
+**Circuit input order matters:**
+The `input` object keys must match the parameter names in `main.nr` exactly:
+```
+main.nr:  nullifier_hash, nullifier, secret, root, vote, depth, index, siblings
+input: { nullifier_hash, nullifier, secret, root, vote, depth, index, siblings }
+```
+
+**What the proof contains:**
+| Output | Description |
+|--------|-------------|
+| `proof` | ~14KB `Uint8Array` — the cryptographic proof blob |
+| `publicInputs[0]` | `nullifier_hash` — tracked on-chain to prevent double-voting |
+| `publicInputs[1]` | `root` — the Merkle root the proof was generated against |
+| `publicInputs[2]` | `vote` — the voter's choice (bound to the proof) |
+| `publicInputs[3]` | `depth` — the tree depth at proof generation time |
+
+---
+
+#### File Changes Summary
+
+| File | Action | Description |
+|------|--------|-------------|
+| `_components/GenerateProof.tsx` | Modified | Replaced dummy stub with real 8-step proof generation |
+| `public/circuits.json` | Created | Copied from `circuits/target/` for browser access |
+
+**How it will be verified (after `yarn chain` + `yarn deploy` + `yarn start`):**
+1. Add yourself as voter → Register commitment
+2. Select Yes/No vote choice
+3. Click "Generate proof" → browser computes real ZK proof (takes a few seconds)
+4. Button changes to "Proof already exists"
+5. Check browser console for `witness generated successfully` and `proof generated successfully, size: ~14000 bytes`
+6. Click "Log Local Storage" to see saved proof data
+
+**Next:** Phase 9 will implement the burner wallet voting — create a fresh address, fund it, and call `vote()` with the generated proof.

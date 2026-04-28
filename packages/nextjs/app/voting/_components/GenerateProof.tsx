@@ -1,13 +1,12 @@
 "use client";
 
 import { useState } from "react";
-//// Checkpoint 8 //////
-// import { UltraHonkBackend } from "@aztec/bb.js";
-// // @ts-ignore
-// import { Noir } from "@noir-lang/noir_js";
-// import { LeanIMT } from "@zk-kit/lean-imt";
-// import { encodeAbiParameters, toHex } from "viem";
-// import { poseidon1, poseidon2 } from "poseidon-lite";
+import { UltraHonkBackend } from "@aztec/bb.js";
+// @ts-ignore
+import { Noir } from "@noir-lang/noir_js";
+import { LeanIMT } from "@zk-kit/lean-imt";
+import { encodeAbiParameters, toHex } from "viem";
+import { poseidon1, poseidon2 } from "poseidon-lite";
 import { useAccount } from "wagmi";
 import { useDeployedContractInfo, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
@@ -24,13 +23,74 @@ const generateProof = async (
   _leaves: any[],
   _circuitData: any,
 ) => {
-  //// Checkpoint 8 //////
   try {
-    void [_root, _vote, _depth, _nullifier, _secret, _index, _leaves, _circuitData];
-    return {
-      proof: new Uint8Array([0]),
-      publicInputs: [0n],
+    // Step 1: Compute nullifier hash (matches circuit's hash_1([nullifier]))
+    const nullifierHash = poseidon1([BigInt(_nullifier)]);
+
+    // Step 2: Rebuild the Merkle tree from on-chain leaf events
+    const calculatedTree = new LeanIMT((a: bigint, b: bigint) =>
+      poseidon2([a, b]),
+    );
+    const leaves = _leaves.map((event) => {
+      return event?.args.value;
+    });
+    // Events are newest-first, tree needs oldest-first
+    const leavesReversed = leaves.reverse();
+    calculatedTree.insertMany(leavesReversed as bigint[]);
+
+    // Step 3: Generate Merkle inclusion proof for our leaf
+    const calculatedProof = calculatedTree.generateProof(_index);
+    const sibs = calculatedProof.siblings.map((sib) => {
+      return sib.toString();
+    });
+
+    // Step 4: Pad siblings to fixed length 16 (circuit expects [Field; 16])
+    const lengthDiff = 16 - sibs.length;
+    for (let i = 0; i < lengthDiff; i++) {
+      sibs.push("0");
+    }
+
+    // Step 5: Prepare circuit inputs (exact order matching main.nr)
+    const input = {
+      nullifier_hash: nullifierHash.toString(),
+      nullifier: BigInt(_nullifier).toString(),
+      secret: BigInt(_secret).toString(),
+      root: _root.toString(),
+      vote: _vote,
+      depth: _depth.toString(),
+      index: _index.toString(),
+      siblings: sibs,
     };
+
+    // Step 6: Create witness by executing the circuit locally
+    const noir = new Noir(_circuitData);
+    const { witness } = await noir.execute(input);
+    console.log("witness generated successfully");
+
+    // Step 7: Generate the ZK proof using UltraHonk backend
+    const honk = new UltraHonkBackend(_circuitData.bytecode, { threads: 1 });
+    const originalLog = console.log;
+    console.log = () => {};
+    const { proof, publicInputs } = await honk.generateProof(witness, {
+      keccak: true,
+    });
+    console.log = originalLog;
+    console.log("proof generated successfully, size:", proof.length, "bytes");
+
+    // Step 8: Format for Solidity — encode proof + publicInputs as ABI params
+    const proofHex = toHex(proof);
+    const inputsHex = publicInputs.map((x) =>
+      typeof x === "string"
+        ? (x as `0x${string}`)
+        : toHex(x as Uint8Array, { size: 32 }),
+    );
+    const result = encodeAbiParameters(
+      [{ type: "bytes" }, { type: "bytes32[]" }],
+      [proofHex, inputsHex],
+    );
+    console.log("encoded result for Solidity:", result.slice(0, 66) + "...");
+
+    return { proof, publicInputs };
   } catch (error) {
     console.log(error);
     throw error;
@@ -94,18 +154,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         throw new Error("Failed to fetch circuit data");
       }
 
-      let fetchedCircuitData: any;
-      try {
-        const apiRes = await fetch("/api/circuit");
-        if (!apiRes.ok) throw new Error("API fetch failed");
-        fetchedCircuitData = await apiRes.json();
-      } catch {
-        const staticRes = await fetch("circuits.json");
-        if (!staticRes.ok) {
-          throw new Error("Failed to fetch circuit data");
-        }
-        fetchedCircuitData = await staticRes.json();
-      }
+      const fetchedCircuitData = await response.json();
       setCircuitData(fetchedCircuitData);
 
       const effectiveNullifier = (
