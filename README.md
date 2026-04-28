@@ -1006,4 +1006,4 @@ Burner wallet → vote on-chain (public)
 6. VotingStats updates: Yes = 1 (or No = 1)
 7. Hardhat console shows `Voting#vote` transaction from the burner address
 
-**Next:** Phase 10 will implement Sepolia voting using ERC-4337 account abstraction (Pimlico paymaster) for gasless anonymous voting on a real network.
+**Next:** Phase 10 will implement Sepolia voting using ERC-4337 account abstraction for gasless anonymous voting on a real network.
