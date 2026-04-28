@@ -1,16 +1,16 @@
 "use client";
 
-import { VoteWithBurnerHardhat } from "./_challengeComponents/VoteWithBurnerHardhat";
 import { ShowVotersButton } from "./_components/ShowVotersButton";
+import { VoteWithBurnerHardhat } from "./_components/VoteWithBurnerHardhat";
 import { NextPage } from "next";
 import { hardhat, sepolia } from "viem/chains";
-import { CreateCommitment } from "~~/app/voting/_challengeComponents/CreateCommitment";
-import { GenerateProof } from "~~/app/voting/_challengeComponents/GenerateProof";
-import { VoteWithBurnerSepolia } from "~~/app/voting/_challengeComponents/VoteWithBurnerSepolia";
 import { AddVotersModal } from "~~/app/voting/_components/AddVotersModal";
 import { ClearStorageButton } from "~~/app/voting/_components/ClearStorageButton";
+import { CreateCommitment } from "~~/app/voting/_components/CreateCommitment";
+import { GenerateProof } from "~~/app/voting/_components/GenerateProof";
 import { LogStorageButton } from "~~/app/voting/_components/LogStorageButton";
 import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
+import { VoteWithBurnerSepolia } from "~~/app/voting/_components/VoteWithBurnerSepolia";
 import { VotingStats } from "~~/app/voting/_components/VotingStats";
 import { useScaffoldEventHistory } from "~~/hooks/scaffold-eth";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";

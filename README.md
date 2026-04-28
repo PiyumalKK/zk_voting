@@ -50,7 +50,6 @@ yarn start     # Start frontend
    - `@noir-lang/noir_js` — Noir circuit execution in JavaScript
    - `poseidon-lite` — ZK-friendly Poseidon hash function
    - `@zk-kit/lean-imt` — JS-side Merkle tree (mirrors on-chain tree)
-   - `permissionless` — ERC-4337 smart account abstraction for gasless voting
 6. Installed `nargo v1.0.0-beta.3` and `bb v0.82.2` in WSL Ubuntu
 7. Verified `nargo compile` works on the default circuit
 8. Updated `.gitignore` to exclude `packages/circuits/target/`
@@ -73,7 +72,6 @@ yarn start     # Start frontend
    - **Events:** `VoterAdded`, `NewLeaf` (registration), `VoteCast` (voting)
    - **State:** `s_question`, `s_yesVotes`, `s_noVotes`, `s_voters` (allowlist)
    - **Functions:** `addVoters()` (owner-only allowlist), `register()` (placeholder), `vote()` (placeholder), `getVotingData()`, `getVoterData()`
-   - Commented-out sections for Merkle tree state and verifier + nullifiers — ready to uncomment later
 2. Created `Verifier.sol` — placeholder `HonkVerifier` contract (always returns true). Will be replaced with the real Barretenberg-generated verifier later.
 3. Defined `IVerifier` interface with `verify(bytes, bytes32[])` — the standard interface for ZK proof verification on-chain.
 4. Updated deploy script to deploy `Voting` with owner address and a question string.
