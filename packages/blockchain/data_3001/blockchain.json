@@ -1,0 +1,23 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "timestamp": 1777780413896,
+      "transactions": [
+        {
+          "id": "f2d270873d93a0c4",
+          "type": "ADD_VOTER",
+          "timestamp": 1777780413896,
+          "payload": {
+            "action": "GENESIS",
+            "question": "Do you support this proposal?",
+            "version": "1.0.0"
+          },
+          "hash": "f2d270873d93a0c41f57501f57d69297cd77d49d160ff7ea7f846eb244627c6a"
+        }
+      ],
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe"
+    }
+  ]
+}
