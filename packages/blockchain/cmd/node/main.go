@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-
 	"zk-blockchain/internal/api"
 	"zk-blockchain/internal/core"
 	"zk-blockchain/internal/persistence"
@@ -11,7 +10,7 @@ import (
 func main() {
 	nodeID := os.Getenv("NODE_ID")
 	if nodeID == "" {
-		nodeID = "3001"
+		nodeID = "3002"
 	}
 
 	port := ":" + nodeID
