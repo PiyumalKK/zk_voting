@@ -8,6 +8,7 @@ import (
 
 	"zk-blockchain/internal/core"
 	"zk-blockchain/internal/persistence"
+	"zk-blockchain/internal/network"
 )
 
 // Global blockchain reference (simple for Phase 1)
@@ -30,6 +31,10 @@ func StartServer(port string) {
 	http.HandleFunc("/add-voter", handleAddVoter)
 	http.HandleFunc("/register", handleRegister)
 	http.HandleFunc("/vote", handleVote)
+
+	// node to node communicate
+	http.HandleFunc("/internal/block", handleReceiveBlock)
+	http.HandleFunc("/internal/chain", handleSendChain)
 
 	fmt.Println("🌐 Blockchain Node running on", port)
 	log.Fatal(http.ListenAndServe(port, nil))
@@ -92,6 +97,7 @@ func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	block, err := bc.AddTransaction(tx)
+	network.BroadcastBlock(*block)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -191,4 +197,50 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 	_ = store.SaveBlockchain(bc)
 
 	json.NewEncoder(w).Encode(block)
+}
+
+func handleReceiveBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var block core.Block
+	if err := json.NewDecoder(r.Body).Decode(&block); err != nil {
+		http.Error(w, "invalid block", http.StatusBadRequest)
+		return
+	}
+
+	latest := bc.GetLatestBlock()
+
+	// Validate chain link
+	if block.PrevHash != latest.Hash {
+		http.Error(w, "invalid prev hash", http.StatusBadRequest)
+		return
+	}
+
+	// Validate block hash
+	if !block.VerifyHash() {
+		http.Error(w, "invalid block hash", http.StatusBadRequest)
+		return
+	}
+
+	// Add block (re-create using transactions)
+	_, err := bc.AddBlock(block.Transactions)
+	if err != nil {
+		http.Error(w, "failed to add block", http.StatusInternalServerError)
+		return
+	}
+
+	// Save
+	_ = store.SaveBlockchain(bc)
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "block accepted",
+	})
+}
+
+func handleSendChain(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bc.GetBlocks())
 }

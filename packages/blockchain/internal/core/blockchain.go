@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"sync"
+	
 )
 
 // Blockchain manages an append-only chain of blocks.
@@ -69,7 +70,8 @@ func (bc *Blockchain) AddBlock(transactions []Transaction) (*Block, error) {
 	latestBlock := bc.blocks[len(bc.blocks)-1]
 	newBlock := NewBlock(latestBlock.Index+1, transactions, latestBlock.Hash)
 	bc.blocks = append(bc.blocks, newBlock)
-
+	
+	
 	return newBlock, nil
 }
 

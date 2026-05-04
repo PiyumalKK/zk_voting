@@ -5,12 +5,13 @@ import (
 	"zk-blockchain/internal/api"
 	"zk-blockchain/internal/core"
 	"zk-blockchain/internal/persistence"
+	"zk-blockchain/internal/network"
 )
 
 func main() {
 	nodeID := os.Getenv("NODE_ID")
 	if nodeID == "" {
-		nodeID = "3002"
+		nodeID = "3001"
 	}
 
 	port := ":" + nodeID
@@ -26,6 +27,8 @@ func main() {
 		bc = core.NewBlockchain("Do you support this proposal?")
 		store.SaveBlockchain(bc)
 	}
+
+	network.SyncWithPeers(&bc, store)
 
 	api.InitServer(bc, store)
 	api.StartServer(port)

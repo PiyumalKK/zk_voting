@@ -18,6 +18,42 @@
       ],
       "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
       "hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe"
+    },
+    {
+      "index": 1,
+      "timestamp": 1777783709499,
+      "transactions": [
+        {
+          "id": "21abe16e3ecaf965",
+          "type": "ADD_VOTER",
+          "timestamp": 1777783709497,
+          "payload": {
+            "voter_id": "alice",
+            "allowed": true
+          },
+          "hash": "21abe16e3ecaf96559e3abf89ece8cc2d5a26ce7709eeb36a02a5ebf49e8bba4"
+        }
+      ],
+      "prev_hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe",
+      "hash": "a8b214e831bc2909274e03b0964a1fc8abab0ec98be653480ee6645a0c40db8e"
+    },
+    {
+      "index": 2,
+      "timestamp": 1777808998727,
+      "transactions": [
+        {
+          "id": "d8ec2809692f6823",
+          "type": "ADD_VOTER",
+          "timestamp": 1777808998725,
+          "payload": {
+            "voter_id": "Bob",
+            "allowed": true
+          },
+          "hash": "d8ec2809692f6823f711fca2f557126a4fc7e0a01ae031be18a08b67b064d118"
+        }
+      ],
+      "prev_hash": "a8b214e831bc2909274e03b0964a1fc8abab0ec98be653480ee6645a0c40db8e",
+      "hash": "085e052fba240894c2e465257e0b1a957c9dbe10a10fd404a0bfff947ec6561e"
     }
   ]
 }
