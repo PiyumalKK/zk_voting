@@ -19,9 +19,9 @@ A private, Sybil-resistant voting system using zero-knowledge proofs. Voters can
 ## Getting Started
 
 ```
-yarn chain     # Start local blockchain
-yarn deploy    # Deploy contracts
-yarn start     # Start frontend
+yarn chain    # Start local blockchain
+yarn deploy   # Deploy contracts
+yarn start    # Start frontend
 ```
 
 ## Tools Required
