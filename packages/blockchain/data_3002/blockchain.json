@@ -1,0 +1,59 @@
+{
+  "blocks": [
+    {
+      "index": 0,
+      "timestamp": 1777780413896,
+      "transactions": [
+        {
+          "id": "f2d270873d93a0c4",
+          "type": "ADD_VOTER",
+          "timestamp": 1777780413896,
+          "payload": {
+            "action": "GENESIS",
+            "question": "Do you support this proposal?",
+            "version": "1.0.0"
+          },
+          "hash": "f2d270873d93a0c41f57501f57d69297cd77d49d160ff7ea7f846eb244627c6a"
+        }
+      ],
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe"
+    },
+    {
+      "index": 1,
+      "timestamp": 1777783709499,
+      "transactions": [
+        {
+          "id": "21abe16e3ecaf965",
+          "type": "ADD_VOTER",
+          "timestamp": 1777783709497,
+          "payload": {
+            "voter_id": "alice",
+            "allowed": true
+          },
+          "hash": "21abe16e3ecaf96559e3abf89ece8cc2d5a26ce7709eeb36a02a5ebf49e8bba4"
+        }
+      ],
+      "prev_hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe",
+      "hash": "a8b214e831bc2909274e03b0964a1fc8abab0ec98be653480ee6645a0c40db8e"
+    },
+    {
+      "index": 2,
+      "timestamp": 1777808998761,
+      "transactions": [
+        {
+          "id": "d8ec2809692f6823",
+          "type": "ADD_VOTER",
+          "timestamp": 1777808998725,
+          "payload": {
+            "voter_id": "Bob",
+            "allowed": true
+          },
+          "hash": "d8ec2809692f6823f711fca2f557126a4fc7e0a01ae031be18a08b67b064d118"
+        }
+      ],
+      "prev_hash": "a8b214e831bc2909274e03b0964a1fc8abab0ec98be653480ee6645a0c40db8e",
+      "hash": "2fe55496a9815d8ad39373b8dcadb81062cecddbef16797db7b033d0f0a5f16b"
+    }
+  ]
+}
