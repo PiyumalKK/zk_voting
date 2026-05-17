@@ -27,12 +27,21 @@ const (
 
 // Transaction represents a single operation on the voting blockchain.
 // Each transaction is hashed for tamper detection and linked into a block.
+//
+// The optional Signature field stores an RSA digital signature for admin
+// transactions (ADD_VOTER). When present, it proves that the transaction
+// was created by the legitimate admin (who holds the RSA private key).
+//
+// IMPORTANT: The Signature field is NOT included in the hash computation.
+// The signing flow is: create transaction → compute hash → sign the hash.
+// The signature is computed OVER the hash, not included IN the hash.
 type Transaction struct {
-	ID        string          `json:"id"`        // Short identifier (first 16 chars of hash)
-	Type      TxType          `json:"type"`      // Transaction type
-	Timestamp int64           `json:"timestamp"` // Unix milliseconds
-	Payload   json.RawMessage `json:"payload"`   // Type-specific data
-	Hash      string          `json:"hash"`      // SHA-256 of transaction content
+	ID        string          `json:"id"`                  // Short identifier (first 16 chars of hash)
+	Type      TxType          `json:"type"`                // Transaction type
+	Timestamp int64           `json:"timestamp"`           // Unix milliseconds
+	Payload   json.RawMessage `json:"payload"`             // Type-specific data
+	Hash      string          `json:"hash"`                // SHA-256 of transaction content
+	Signature string          `json:"signature,omitempty"` // RSA digital signature (admin txns only)
 }
 
 // NewTransaction creates a new transaction with a computed SHA-256 hash.

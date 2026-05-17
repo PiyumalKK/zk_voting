@@ -1,5 +1,12 @@
 # Runtime data
 data/
+data_*/
+
+# TLS certificates and private keys (NEVER commit private keys!)
+*.crt
+*.key
+*.pem
+certs/
 
 # Go binaries
 *.exe
