@@ -12,6 +12,12 @@ import (
 )
 
 func main() {
+	// Run simulation mode if SIMULATION=true
+	if os.Getenv("SIMULATION") == "true" {
+		runSimulation()
+		return
+	}
+
 	nodeID := os.Getenv("NODE_ID")
 	if nodeID == "" {
 		nodeID = "3001"

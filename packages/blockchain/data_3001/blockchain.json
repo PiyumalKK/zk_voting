@@ -2,58 +2,76 @@
   "blocks": [
     {
       "index": 0,
-      "timestamp": 1777780413896,
+      "timestamp": 1779080015582,
       "transactions": [
         {
-          "id": "f2d270873d93a0c4",
+          "id": "45dd746e7b15f653",
           "type": "ADD_VOTER",
-          "timestamp": 1777780413896,
+          "timestamp": 1779080015582,
           "payload": {
             "action": "GENESIS",
-            "question": "Do you support this proposal?",
+            "question": "Simulation: Do you support this?",
             "version": "1.0.0"
           },
-          "hash": "f2d270873d93a0c41f57501f57d69297cd77d49d160ff7ea7f846eb244627c6a"
+          "hash": "45dd746e7b15f6533f6c92bd095bebc9973fa77c4b1962d0ffd7bc227c691abb"
         }
       ],
       "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-      "hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe"
+      "hash": "7163e8558fdd3e771671d3e75c6b52538e60ea3d43169c36753d37f7fb2f4074"
     },
     {
       "index": 1,
-      "timestamp": 1777783709499,
+      "timestamp": 1779080016734,
       "transactions": [
         {
-          "id": "21abe16e3ecaf965",
+          "id": "073a76197e83b9d3",
           "type": "ADD_VOTER",
-          "timestamp": 1777783709497,
+          "timestamp": 1779080016734,
           "payload": {
-            "voter_id": "alice",
+            "voter_id": "voter_0",
             "allowed": true
           },
-          "hash": "21abe16e3ecaf96559e3abf89ece8cc2d5a26ce7709eeb36a02a5ebf49e8bba4"
+          "hash": "073a76197e83b9d3c2b8e69f5693792772abc4ace0c67b43ab12faf334aee117"
         }
       ],
-      "prev_hash": "6c8a418ccfbd2d9901258e2f250f1336538433bfc90f09a0edbde70033e7dabe",
-      "hash": "a8b214e831bc2909274e03b0964a1fc8abab0ec98be653480ee6645a0c40db8e"
+      "prev_hash": "7163e8558fdd3e771671d3e75c6b52538e60ea3d43169c36753d37f7fb2f4074",
+      "hash": "d1ff2ac751bd407c808aa2cfd2f2be0e0e6e47bccd6f957e56a6164928a4481c"
     },
     {
       "index": 2,
-      "timestamp": 1777808998727,
+      "timestamp": 1779080016734,
       "transactions": [
         {
-          "id": "d8ec2809692f6823",
+          "id": "4453164b6cca9f5c",
           "type": "ADD_VOTER",
-          "timestamp": 1777808998725,
+          "timestamp": 1779080016734,
           "payload": {
-            "voter_id": "Bob",
+            "voter_id": "voter_1",
             "allowed": true
           },
-          "hash": "d8ec2809692f6823f711fca2f557126a4fc7e0a01ae031be18a08b67b064d118"
+          "hash": "4453164b6cca9f5c926a237051bb748f0ba9f6d0a557013abde2840c01d27da9"
         }
       ],
-      "prev_hash": "a8b214e831bc2909274e03b0964a1fc8abab0ec98be653480ee6645a0c40db8e",
-      "hash": "085e052fba240894c2e465257e0b1a957c9dbe10a10fd404a0bfff947ec6561e"
+      "prev_hash": "d1ff2ac751bd407c808aa2cfd2f2be0e0e6e47bccd6f957e56a6164928a4481c",
+      "hash": "e0eb24c54e622991c72f4d03eedd58884b5cb3db93aa3799566ec27ec21f6697"
+    },
+    {
+      "index": 3,
+      "timestamp": 1779080016734,
+      "transactions": [
+        {
+          "id": "ddd8d3b944d5a7d0",
+          "type": "ADD_VOTER",
+          "timestamp": 1779080016734,
+          "payload": {
+            "voter_id": "voter_2",
+            "allowed": true
+          },
+          "hash": "ddd8d3b944d5a7d0cbdcd48b8b3c550b3acef88e1a67a54cc072c1afaca76f68"
+        }
+      ],
+      "prev_hash": "e0eb24c54e622991c72f4d03eedd58884b5cb3db93aa3799566ec27ec21f6697",
+      "hash": "16d242632c8eff579eee0d871392159b33a015693f52633478c51ef515c91a8d"
     }
   ]
 }
