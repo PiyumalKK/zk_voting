@@ -9,14 +9,15 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 | Mining / PoS          | ❌ No   | Election is authority-administered, not decentralized     |
 | Gas fees / ETH        | ❌ No   | Voters shouldn't need cryptocurrency to vote              |
 | MetaMask / Wallets    | ❌ No   | Adds friction; voters need browser extensions             |
-| EVM execution engine  | ❌ No   | Voting logic is simple; no need for Turing-complete VM    |
+| EVM execution engine  | ✅ Yes  | **Embedded (Stateless)**; used to run the voting contract |
 | Burner wallets        | ❌ No   | Custom API is already identity-free; ZK proof IS the auth |
 
 **What we keep from the existing system:**
 
 - ✅ Noir ZK circuit (`packages/circuits/src/main.nr`) — unchanged
 - ✅ Browser proof generation (`noir_js` + `bb.js`) — unchanged  
-- ✅ Poseidon commitment scheme — same math, Go implementation
+- ✅ Solidity Contract (`packages/hardhat/contracts/Voting.sol`) — **Embedded in Go**
+- ✅ Poseidon/Merkle logic — same logic, executed via EVM bytecode
 - ✅ Verification key (`vk`) — same artifact from circuit compilation
 - ✅ `circuits.json` — same compiled circuit artifact
 
@@ -42,19 +43,19 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 │                   GO BLOCKCHAIN NODE                          │
 │                                                               │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐  │
-│  │  REST API    │  │  Blockchain  │  │  Voting State      │  │
-│  │  Server      │  │  Engine      │  │  Manager           │  │
+│  │  REST API    │  │  Blockchain  │  │  Embedded EVM      │  │
+│  │  Server      │  │  Engine      │  │  (Stateless Geth)  │  │
 │  │             │  │              │  │                    │  │
-│  │  POST /vote │  │  Blocks []   │  │  Voter allowlist   │  │
-│  │  POST /reg  │  │  Hash chain  │  │  Merkle tree       │  │
-│  │  GET /stats │  │  Validation  │  │  Nullifier set     │  │
-│  │  POST /admin│  │  Persistence │  │  Vote tallies      │  │
+│  │  POST /vote ├──┤  Blocks []   ├──┤  Voting.sol        │  │
+│  │  POST /reg  │  │  Hash chain  │  │  Verifier.sol      │  │
+│  │  GET /stats │  │  Persistence │  │  Precompiles (BN)  │  │
 │  └─────────────┘  └──────────────┘  └────────────────────┘  │
 │                                                               │
-│  ┌──────────────────────┐  ┌──────────────────────────────┐  │
-│  │  ZK Verifier         │  │  Poseidon Hasher (Go)        │  │
-│  │  (bb verify CLI)     │  │  go-iden3-crypto/poseidon    │  │
-│  └──────────────────────┘  └──────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  Verification Flow:                                    │  │
+│  │  1. Receive Tx -> 2. Load Contract -> 3. Execute Call  │  │
+│  │  4. If EVM returns Success -> 5. Commit Block          │  │
+│  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,84 +63,77 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 
 ## Development Stages
 
-### Stage 1: Blockchain Foundation ← START HERE
-**Goal:** Core data structures, chain management, persistence.
+### Stage 1: Blockchain Foundation & Production Hardening ← IN PROGRESS
+**Goal:** Build a robust, secure foundation that can handle real-world load and attacks.
 
-**Deliverables:**
+**1.1 Core Engine (COMPLETED)**
 - Block and Transaction data structures with SHA-256 hashing
 - Blockchain engine (add blocks, validate chain, query blocks)
 - Genesis block creation with voting question
-- JSON file persistence (save/load chain)
 - Transaction types: `ADD_VOTER`, `REGISTER`, `VOTE`
-- Unit tests for chain integrity and tamper detection
-- Demo CLI that creates, validates, saves, and loads a chain
 
-**No external dependencies** — only Go standard library.
+**1.2 Robust Storage (UPGRADE)**
+- Replace `blockchain.json` with **BoltDB** (`bbolt`)
+- Move from "rewrite-the-whole-file" to "append-only-blocks" for ACID safety
+- Ensure the node can recover state instantly from the database on startup
 
----
+**1.3 API Security & Authentication (NEW)**
+- **Admin Auth**: Implement RSA signature verification for `/admin` endpoints
+- **Rate Limiting**: Add token-bucket limits to prevent DoS on `/vote` and `/register`
+- **CORS**: Secure cross-origin settings for the Next.js frontend
 
-### Stage 2: Cryptography Layer
-**Goal:** Poseidon hash, Merkle tree, and hash compatibility verification.
+**1.4 Network Hardening (NEW)**
+- **mTLS**: Implement Mutual TLS for all node-to-node (P2P) communication
+- **Identity**: Ensure only nodes with authorized certificates can sync blocks
 
-**Deliverables:**
-- Poseidon hash integration (`go-iden3-crypto/poseidon`)
-- LeanIMT (Lean Incremental Merkle Tree) implementation in Go
-- Hash compatibility test suite:
-  - Test vectors from the JavaScript `poseidon-lite` library
-  - Verify Go produces identical outputs for known inputs
-  - Verify Merkle root matches JS `@zk-kit/lean-imt`
-- Commitment computation: `poseidon2([nullifier, secret])`
-- Nullifier hash computation: `poseidon1([nullifier])`
-
-**Key dependency:** `github.com/iden3/go-iden3-crypto`
-
-**Critical verification:** The hash outputs in Go MUST match:
-1. `poseidon-lite` (JavaScript, used in frontend)
-2. `std::hash::poseidon::bn254` (Noir, used in circuit)
+**1.5 Observability (NEW)**
+- **Structured Logging**: Replace `fmt.Println` with `zerolog` for JSON-based logs
+- **Request Logging**: Add middleware to track every API call and performance latency
 
 ---
 
-### Stage 3: Voting State Machine
-**Goal:** Complete voting logic that mirrors `Voting.sol` behavior.
+### Stage 2: Embedded EVM Integration
+**Goal:** Integrate `go-ethereum/core/vm` and configure cryptographic precompiles.
 
 **Deliverables:**
-- Voter allowlist management (add/remove voters)
-- Registration logic:
-  - Check voter is allowed and hasn't registered
-  - Check commitment hasn't been used
-  - Insert commitment into Merkle tree
-  - Return leaf index
-- Vote counting logic:
-  - Verify nullifier hash hasn't been used (anti-double-vote)
-  - Increment yes/no counters
-  - Record nullifier as spent
-- State rebuilt from chain replay:
-  - On startup, replay all transactions to reconstruct state
-  - This makes the state deterministic from the chain data
-- State query functions:
-  - `GetVotingData()` → question, yesVotes, noVotes, treeRoot, treeDepth
-  - `GetVoterData(id)` → isAllowed, hasRegistered
+- Geth `core/vm` and `core/state` dependency integration
+- EVM Configuration (Setting Hardfork to `Istanbul` to enable BN254 precompiles)
+- Stateless execution wrapper:
+  - Function to initialize an ephemeral state
+  - Function to call a contract at a specific address with calldata
+- Precompile verification test:
+  - Run a small EVM test that calls the pairing precompile (`0x08`) to ensure ZK math works
+
+**Key dependency:** `github.com/ethereum/go-ethereum`
 
 ---
 
-### Stage 4: ZK Proof Verification
-**Goal:** Integrate `bb verify` CLI for proof validation.
+### Stage 3: Contract Bridge & State Replay
+**Goal:** "Deploy" `Voting.sol` and reconstruct state from the blockchain.
 
 **Deliverables:**
-- `bb verify` subprocess wrapper
-- Proof file handling (write to temp, verify, cleanup)
-- Verification key management (embedded asset)
-- Public input extraction and validation
-- Integration with vote processing:
-  - Extract root from proof → compare with current tree root
-  - Extract nullifier hash → check not already used
-  - If `bb verify` returns exit code 0 → proof valid → count vote
-- Concurrency-safe verification (unique temp files per request)
-- Timeout handling (kill long-running `bb` processes)
+- Solidity artifacts integration (loading bytecode/ABI into Go)
+- Contract "Auto-Deployment":
+  - On node startup, the EVM state is initialized with `Voting.sol` at a fixed address
+- State reconstruction:
+  - Loop through existing blocks and "replay" transactions into the EVM
+  - This makes the EVM state deterministic based on the hash chain
+- Transaction Mapping:
+  - `ADD_VOTER` -> EVM call to `addVoters()`
+  - `REGISTER` -> EVM call to `register()`
+  - `VOTE` -> EVM call to `vote()`
 
-**Prerequisite:** `bb` binary must be available (Linux/WSL)
+---
 
-**Performance:** ~200-500ms per proof verification (acceptable for voting)
+### Stage 4: EVM-Powered API & Queries
+**Goal:** Query the current voting stats directly from the EVM state.
+
+**Deliverables:**
+- EVM "Read-Only" calls:
+  - `GetVotingData()` -> Call contract, parse return values (Yes/No votes, Root)
+  - `GetVoterData(address)` -> Check eligibility/registration
+- State caching for performance (avoid re-running the whole chain for every query)
+- Proper parsing of EVM errors (reverts) into friendly JSON responses
 
 ---
 
@@ -147,25 +141,17 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 **Goal:** HTTP API that the frontend can call.
 
 **Deliverables:**
-- HTTP server with proper CORS for browser access
-- Admin authentication (simple API key or JWT)
+- HTTP server with proper CORS
+- Admin authentication (simple API key)
 - Endpoints:
   | Method | Path                | Auth   | Description                    |
   |--------|---------------------|--------|--------------------------------|
-  | POST   | /api/admin/voters   | Admin  | Add voter(s) to allowlist      |
-  | GET    | /api/voters         | None   | List all voters with status    |
+  | POST   | /api/admin/voters   | Admin  | Add voter(s)                   |
   | POST   | /api/register       | Voter  | Submit commitment              |
-  | GET    | /api/voting-data    | None   | Get question, votes, tree info |
-  | GET    | /api/voter/:id      | None   | Get voter status               |
   | POST   | /api/vote           | None   | Submit ZK proof + vote         |
-  | GET    | /api/leaves         | None   | Get all Merkle tree leaves     |
+  | GET    | /api/voting-data    | None   | Get current tally & tree info  |
   | GET    | /api/blocks         | None   | List all blocks                |
-  | GET    | /api/blocks/:index  | None   | Get specific block             |
-  | GET    | /api/circuit        | None   | Serve circuits.json            |
   | GET    | /api/health         | None   | Health check                   |
-- Request/response validation
-- Error handling with proper HTTP status codes
-- Structured JSON error responses
 
 ---
 
@@ -173,35 +159,23 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 **Goal:** End-to-end test that simulates a complete election.
 
 **Deliverables:**
-- Test script that runs the full voting flow:
-  1. Start blockchain node
-  2. Admin adds 5 voters
-  3. Each voter registers a commitment (using Go Poseidon)
-  4. Verify Merkle tree root matches expected value
-  5. Generate test proofs (using `bb` in WSL)
-  6. Submit votes via API
-  7. Verify vote counts
-  8. Verify double-vote rejection (same nullifier)
-  9. Verify chain integrity
-- Load testing with concurrent voters
-- Error case testing (invalid proofs, unauthorized, etc.)
+- Test script:
+  1. Start Go node (Embedded EVM)
+  2. Register voters via API
+  3. Verify EVM state updates (check root)
+  4. Submit valid/invalid ZK proofs
+  5. Verify EVM rejects invalid proofs and double-votes
+  6. Stop/Start node and verify state is perfectly reconstructed from blocks
 
 ---
 
 ### Stage 7: Frontend Connection (Later)
-**Goal:** Connect the existing Next.js frontend to the Go blockchain.
-
-**NOTE:** This stage modifies `packages/nextjs/`. Do NOT start this
-until the team agrees to switch from the Ethereum backend.
+**Goal:** Connect the existing Next.js frontend.
 
 **Deliverables:**
 - API client utility (`packages/nextjs/utils/api.ts`)
-- Replace Scaffold-ETH hooks with custom React hooks
-- Remove wagmi/MetaMask dependency
-- Remove burner wallet logic
-- Add simple admin/voter authentication
+- Replace Scaffold-ETH hooks with custom REST hooks
 - Simple block explorer page
-- Update all voting components to use REST API
 
 ---
 
@@ -212,8 +186,6 @@ packages/blockchain/
 ├── PLAN.md                     # This file
 ├── Makefile                    # Build, test, run commands
 ├── go.mod                      # Go module definition
-├── go.sum                      # Dependency checksums
-├── .gitignore                  # Ignore data dir and binaries
 │
 ├── cmd/
 │   └── node/
@@ -221,40 +193,24 @@ packages/blockchain/
 │
 ├── internal/
 │   ├── core/                   # Blockchain engine
-│   │   ├── types.go            # Transaction types and payloads
-│   │   ├── block.go            # Block structure and hashing
-│   │   ├── blockchain.go       # Chain management and validation
-│   │   ├── blockchain_test.go  # Unit tests
-│   │   └── genesis.go          # Genesis block creation
+│   │   ├── types.go            # Transaction types
+│   │   ├── block.go            # Block structure
+│   │   └── blockchain.go       # Chain management
 │   │
-│   ├── state/                  # Voting state machine (Stage 3)
-│   │   ├── voting.go           # VotingState manager
-│   │   ├── merkle.go           # LeanIMT implementation
-│   │   └── voting_test.go      # State tests
-│   │
-│   ├── crypto/                 # Cryptography (Stage 2)
-│   │   ├── poseidon.go         # Poseidon hash wrapper
-│   │   └── poseidon_test.go    # Hash compatibility tests
-│   │
-│   ├── verifier/               # ZK proof verification (Stage 4)
-│   │   ├── bb.go               # bb CLI subprocess wrapper
-│   │   └── bb_test.go          # Verification tests
+│   ├── evm/                    # Embedded EVM (Stage 2)
+│   │   ├── vm.go               # Geth VM wrapper
+│   │   ├── state.go            # StateDB management
+│   │   └── contract.go         # Voting.sol interaction
 │   │
 │   ├── api/                    # REST API server (Stage 5)
-│   │   ├── server.go           # HTTP server setup
-│   │   ├── handlers.go         # Route handlers
-│   │   ├── middleware.go       # Auth, CORS, logging
-│   │   └── responses.go       # Standard response types
+│   │   └── server.go           # HTTP server setup
 │   │
 │   └── persistence/            # Data storage
-│       └── store.go            # JSON file persistence
+│       └── store.go            # Block storage (JSON)
 │
-├── assets/                     # Static assets
-│   ├── vk                      # Verification key (from circuit)
-│   └── circuits.json           # Compiled circuit (served to browser)
-│
-└── data/                       # Runtime data (gitignored)
-    └── blockchain.json         # Persisted chain
+└── assets/                     # Static assets
+    ├── Voting.bin              # Compiled bytecode of Voting.sol
+    └── Voting.abi              # ABI for query parsing
 ```
 
 ---
@@ -264,21 +220,17 @@ packages/blockchain/
 | Stage | Package                                | Purpose                      |
 |-------|----------------------------------------|------------------------------|
 | 1     | Go stdlib only                         | Core blockchain engine       |
-| 2     | `github.com/iden3/go-iden3-crypto`     | Poseidon hash over BN254     |
-| 4     | Go stdlib `os/exec`                    | bb CLI subprocess            |
+| 2     | `github.com/ethereum/go-ethereum`      | Embedded EVM & Precompiles   |
 | 5     | Go stdlib `net/http`                   | HTTP server                  |
-
-The entire blockchain is built with **minimal external dependencies** —
-only `go-iden3-crypto` for the cryptographic hash function.
 
 ---
 
 ## Current Status
 
 - [x] Stage 1: Blockchain Foundation ← COMPLETED
-- [ ] Stage 2: Cryptography Layer
-- [ ] Stage 3: Voting State Machine
-- [ ] Stage 4: ZK Proof Verification
+- [ ] Stage 2: Embedded EVM Integration
+- [ ] Stage 3: Contract Bridge & State Replay
+- [ ] Stage 4: EVM-Powered API & Queries
 - [ ] Stage 5: REST API Server
 - [ ] Stage 6: Integration Testing
 - [ ] Stage 7: Frontend Connection

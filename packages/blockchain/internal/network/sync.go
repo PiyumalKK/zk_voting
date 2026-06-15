@@ -2,19 +2,24 @@ package network
 
 import (
 	"encoding/json"
-	"net/http"
-
 	"zk-blockchain/internal/core"
+
+	"github.com/rs/zerolog/log"
 )
 
 func SyncWithPeers(bc **core.Blockchain, store interface {
 	SaveBlockchain(*core.Blockchain) error
 }) {
+	if tlsClient == nil {
+		log.Warn().Msg("⚠️ TLS Client not initialized, skipping sync")
+		return
+	}
 
 	for _, peer := range Peers {
-
-		resp, err := http.Get(peer + "/internal/chain")
+		log.Debug().Str("peer", peer).Msg("Attempting to sync with peer")
+		resp, err := tlsClient.Get(peer + "/internal/chain")
 		if err != nil {
+			log.Debug().Err(err).Str("peer", peer).Msg("Failed to connect to peer for sync")
 			continue
 		}
 		defer resp.Body.Close()

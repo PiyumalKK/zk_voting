@@ -3,12 +3,14 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 
+	"github.com/rs/zerolog/log"
+
 	"zk-blockchain/internal/core"
-	"zk-blockchain/internal/persistence"
 	"zk-blockchain/internal/network"
+	"zk-blockchain/internal/persistence"
+	"zk-blockchain/internal/security"
 )
 
 // Global blockchain reference (simple for Phase 1)
@@ -22,22 +24,37 @@ func InitServer(blockchain *core.Blockchain, fs *persistence.FileStore) {
 }
 
 // StartServer starts the HTTP node
-func StartServer(port string) {
-	http.HandleFunc("/health", handleHealth)
-	http.HandleFunc("/chain", handleGetChain)
-	http.HandleFunc("/blocks", handleGetBlocks)
+func StartServer(port, certFile, keyFile, caFile string) {
+	http.HandleFunc("/health", RequestLogger(handleHealth))
+	http.HandleFunc("/chain", RequestLogger(handleGetChain))
+	http.HandleFunc("/blocks", RequestLogger(handleGetBlocks))
 
 	// voting-related (Phase 1 test endpoints)
-	http.HandleFunc("/add-voter", handleAddVoter)
-	http.HandleFunc("/register", handleRegister)
-	http.HandleFunc("/vote", handleVote)
+	// Admin endpoints get Auth
+	http.HandleFunc("/add-voter", RequestLogger(AdminAuthMiddleware(handleAddVoter)))
+	// Public endpoints get Rate Limiting
+	http.HandleFunc("/vote", RequestLogger(RateLimitMiddleware(handleVote)))
+	http.HandleFunc("/register", RequestLogger(RateLimitMiddleware(handleRegister)))
 
 	// node to node communicate
-	http.HandleFunc("/internal/block", handleReceiveBlock)
-	http.HandleFunc("/internal/chain", handleSendChain)
+	http.HandleFunc("/internal/block", RequestLogger(handleReceiveBlock))
+	http.HandleFunc("/internal/chain", RequestLogger(handleSendChain))
 
-	fmt.Println("🌐 Blockchain Node running on", port)
-	log.Fatal(http.ListenAndServe(port, nil))
+	tlsConfig, err := security.LoadTLSConfig(certFile, keyFile, caFile)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to load TLS config")
+	}
+
+	// Initialize the network client for outbound connections
+	network.InitNetworkClient(tlsConfig)
+
+	server := &http.Server{
+		Addr:      port,
+		TLSConfig: tlsConfig,
+	}
+
+	fmt.Println("🔒 Secure Blockchain Node running on", port)
+	log.Fatal().Msgf("%v", server.ListenAndServeTLS("", "")) // Certs are inside TLSConfig
 }
 
 /*
@@ -103,7 +120,9 @@ func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = store.SaveBlockchain(bc)
+	if err := store.SaveBlock(block); err != nil {
+		log.Info().Err(err).Msg("Failed to save block to DB")
+	}
 
 	json.NewEncoder(w).Encode(block)
 }
@@ -147,7 +166,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = store.SaveBlockchain(bc)
+	if err := store.SaveBlock(block); err != nil {
+		log.Info().Err(err).Msg("Failed to save block to DB")
+	}
 
 	json.NewEncoder(w).Encode(block)
 }
@@ -194,7 +215,9 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = store.SaveBlockchain(bc)
+	if err := store.SaveBlock(block); err != nil {
+		log.Info().Err(err).Msg("Failed to save block to DB")
+	}
 
 	json.NewEncoder(w).Encode(block)
 }
@@ -233,7 +256,9 @@ func handleReceiveBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Save
-	_ = store.SaveBlockchain(bc)
+	if err := store.SaveBlock(&block); err != nil {
+		log.Info().Err(err).Msg("Failed to save block to DB")
+	}
 
 	json.NewEncoder(w).Encode(map[string]string{
 		"status": "block accepted",

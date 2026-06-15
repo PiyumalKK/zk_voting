@@ -2,34 +2,61 @@ package main
 
 import (
 	"os"
+	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+
 	"zk-blockchain/internal/api"
 	"zk-blockchain/internal/core"
-	"zk-blockchain/internal/persistence"
 	"zk-blockchain/internal/network"
+	"zk-blockchain/internal/persistence"
 )
 
 func main() {
+	// Set log level to Info for production, Debug for development
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	// Pretty print for local development
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
+
 	nodeID := os.Getenv("NODE_ID")
 	if nodeID == "" {
 		nodeID = "3001"
 	}
 
 	port := ":" + nodeID
+	dataDir := "data_" + nodeID
 
-	store := persistence.NewFileStore("data_" + nodeID)
+	log.Info().Msgf("Starting ZK Voting Node %s...", nodeID)
 
-	var bc *core.Blockchain
+	store, err := persistence.NewFileStore(dataDir)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize database")
+	}
+	defer store.Close()
 
-	if store.Exists() {
-		loaded, _ := store.LoadBlockchain()
-		bc = loaded
-	} else {
+	bc, err := store.LoadBlockchain()
+	if err != nil {
+		log.Info().Err(err).Msg("No existing blockchain found, creating new one")
 		bc = core.NewBlockchain("Do you support this proposal?")
-		store.SaveBlockchain(bc)
+		if err := store.SaveBlockchain(bc); err != nil {
+			log.Fatal().Err(err).Msg("Failed to save genesis block")
+		}
+	}
+
+	// Paths to security assets
+	pubKeyPath := dataDir + "/keys/admin_public.pem"
+	certFile := dataDir + "/certs/server.crt"
+	keyFile := dataDir + "/certs/server.key"
+	caFile := dataDir + "/certs/server.crt" // Assuming self-signed or same CA for dev
+
+	// Initialize Admin Auth
+	if err := api.InitAuth(pubKeyPath); err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize admin authentication")
 	}
 
 	network.SyncWithPeers(&bc, store)
 
 	api.InitServer(bc, store)
-	api.StartServer(port)
+	api.StartServer(port, certFile, keyFile, caFile)
 }
