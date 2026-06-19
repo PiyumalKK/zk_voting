@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"zk-blockchain/internal/core"
+	"zk-blockchain/internal/evm"
 	"zk-blockchain/internal/network"
 	"zk-blockchain/internal/persistence"
 	"zk-blockchain/internal/security"
@@ -16,11 +17,13 @@ import (
 // Global blockchain reference (simple for Phase 1)
 var bc *core.Blockchain
 var store *persistence.FileStore
+var contractCaller *evm.ContractCaller
 
-// InitServer sets up blockchain + storage
-func InitServer(blockchain *core.Blockchain, fs *persistence.FileStore) {
+// InitServer sets up blockchain + storage + EVM
+func InitServer(blockchain *core.Blockchain, fs *persistence.FileStore, caller *evm.ContractCaller) {
 	bc = blockchain
 	store = fs
+	contractCaller = caller
 }
 
 // StartServer starts the HTTP node
