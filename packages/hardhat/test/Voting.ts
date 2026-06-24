@@ -232,4 +232,75 @@ describe("Voting", function () {
       expect(registered).to.equal(false);
     });
   });
+
+  describe("Reset / multi-election", function () {
+    it("starts at election id 0", async function () {
+      expect(await voting.getCurrentElectionId()).to.equal(0n);
+    });
+
+    it("owner can reset from Registration and returns to Setup", async function () {
+      await voting.resetElection();
+      expect(await voting.currentPhase()).to.equal(Phase.Setup);
+      expect(await voting.getCurrentElectionId()).to.equal(1n);
+    });
+
+    it("emits ElectionReset with the new id", async function () {
+      await expect(voting.resetElection()).to.emit(voting, "ElectionReset").withArgs(1n);
+    });
+
+    it("non-owner cannot reset", async function () {
+      await expect(voting.connect(voter1).resetElection()).to.be.revertedWithCustomError(
+        voting,
+        "OwnableUnauthorizedAccount",
+      );
+    });
+
+    it("clears question and candidates after reset", async function () {
+      await voting.resetElection();
+      const data = await voting.getVotingData();
+      expect(data.question).to.equal("");
+      expect(data.candidateCount).to.equal(0n);
+      expect((await voting.getCandidates()).length).to.equal(0);
+    });
+
+    it("clears voter allowlist and registrations after reset", async function () {
+      await voting.connect(voter1).register(COMMITMENT_1);
+      await voting.resetElection();
+      const [voter, registered] = await voting.getVoterData(voter1.address);
+      expect(voter).to.equal(false);
+      expect(registered).to.equal(false);
+    });
+
+    it("resets the Merkle tree to empty after reset", async function () {
+      await voting.connect(voter1).register(COMMITMENT_1);
+      await voting.resetElection();
+      const data = await voting.getVotingData();
+      expect(data.size).to.equal(0n);
+      expect(data.root).to.equal(0n);
+    });
+
+    it("supports a full second election after reset", async function () {
+      await voting.resetElection();
+      await voting.setQuestion("Round 2?");
+      await voting.setCandidates(["A", "B", "C"]);
+      await voting.addVoters([voter1.address], [true]);
+      await voting.startRegistration(REG_DURATION);
+      expect(await voting.currentPhase()).to.equal(Phase.Registration);
+
+      // A commitment reused from election 0 is allowed again in election 1.
+      await expect(voting.connect(voter1).register(COMMITMENT_1)).to.emit(voting, "NewLeaf").withArgs(0, COMMITMENT_1);
+
+      const data = await voting.getVotingData();
+      expect(data.question).to.equal("Round 2?");
+      expect(data.candidateCount).to.equal(3n);
+    });
+
+    it("owner can reset from Ended phase", async function () {
+      await voting.startVoting(VOTE_DURATION);
+      await voting.endElection();
+      expect(await voting.currentPhase()).to.equal(Phase.Ended);
+      await voting.resetElection();
+      expect(await voting.currentPhase()).to.equal(Phase.Setup);
+    });
+  });
 });

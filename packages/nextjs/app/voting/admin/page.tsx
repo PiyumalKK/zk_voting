@@ -172,6 +172,22 @@ const AdminPage = () => {
 
   const handleEndElection = () => run("endElection", () => writeContractAsync({ functionName: "endElection" }));
 
+  const handleResetElection = () => {
+    const ok = window.confirm(
+      "Start a NEW election?\n\nThis permanently clears the current question, candidates, voter allowlist, " +
+        "registrations and votes, and returns the contract to the Setup phase. This cannot be undone.",
+    );
+    if (!ok) return;
+    return run("resetElection", async () => {
+      await writeContractAsync({ functionName: "resetElection" });
+      setQuestionDraft("");
+      setCandidateDrafts(["", ""]);
+      setVoterDrafts([{ address: "", status: true }]);
+      setRegistrationDuration("01:00:00");
+      setVotingDuration("01:00:00");
+    });
+  };
+
   // --- Render ---
   return (
     <Wrapper>
@@ -384,6 +400,27 @@ const AdminPage = () => {
           </p>
         )}
         {ended && <p className="text-xs opacity-60">Election has ended. Results are frozen.</p>}
+      </Section>
+
+      <Section
+        title="5. Start a new election"
+        hint="Clears the current question, candidates, voters, registrations and votes, then returns to Setup. Use this to run another election without redeploying."
+      >
+        {ended ? (
+          <p className="text-xs opacity-70">
+            The election has ended. Start a new one to reset the contract back to a clean Setup phase.
+          </p>
+        ) : (
+          <p className="text-xs opacity-70 text-warning">
+            Warning: the current election is still {phaseLabel.toLowerCase()}. Resetting now will discard all current
+            progress.
+          </p>
+        )}
+        <div className="flex justify-end pt-2">
+          <button className="btn btn-error btn-sm" disabled={busy === "resetElection"} onClick={handleResetElection}>
+            {busy === "resetElection" ? "Resetting..." : "Start new election"}
+          </button>
+        </div>
       </Section>
     </Wrapper>
   );

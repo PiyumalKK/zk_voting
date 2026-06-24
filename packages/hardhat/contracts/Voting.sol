@@ -57,20 +57,30 @@ contract Voting is Ownable {
 
     IVerifier public immutable i_verifier;
 
+    // Monotonic election counter. All per-election state is keyed by this id so
+    // that resetElection() can start a brand-new election by simply bumping it,
+    // which cheaply "clears" every mapping below without costly iteration.
+    uint256 private s_electionId;
+
     string private s_question;
     string[] private s_candidates;
-    mapping(uint256 => uint256) private s_voteCounts;
+    // electionId => candidateIndex => count
+    mapping(uint256 => mapping(uint256 => uint256)) private s_voteCounts;
 
     Phase private s_phase;
     uint256 private s_registrationEndTime;
     uint256 private s_votingEndTime;
 
-    mapping(address => bool) private s_voters;
-    mapping(address => bool) private s_hasRegistered;
-    mapping(uint256 => bool) private s_commitments;
-    mapping(bytes32 => bool) private s_nullifierHashes;
+    // electionId => voter => allowlisted / hasRegistered
+    mapping(uint256 => mapping(address => bool)) private s_voters;
+    mapping(uint256 => mapping(address => bool)) private s_hasRegistered;
+    // electionId => commitment => used
+    mapping(uint256 => mapping(uint256 => bool)) private s_commitments;
+    // electionId => nullifierHash => used
+    mapping(uint256 => mapping(bytes32 => bool)) private s_nullifierHashes;
 
-    LeanIMTData private s_tree;
+    // electionId => Merkle tree
+    mapping(uint256 => LeanIMTData) private s_trees;
 
     //////////////
     /// Events ///
@@ -81,6 +91,7 @@ contract Voting is Ownable {
     event QuestionUpdated(string question);
     event CandidatesUpdated(string[] candidates);
     event PhaseChanged(Phase indexed phase, uint256 deadline);
+    event ElectionReset(uint256 indexed electionId);
     event VoteCast(
         bytes32 indexed nullifierHash,
         address indexed voter,
@@ -158,7 +169,7 @@ contract Voting is Ownable {
     {
         require(voters.length == statuses.length, "Voters and statuses length mismatch");
         for (uint256 i = 0; i < voters.length; i++) {
-            s_voters[voters[i]] = statuses[i];
+            s_voters[s_electionId][voters[i]] = statuses[i];
             emit VoterAdded(voters[i]);
         }
     }
@@ -200,22 +211,39 @@ contract Voting is Ownable {
         emit PhaseChanged(Phase.Ended, block.timestamp);
     }
 
+    /// @notice Stop the current election and start a brand-new one from scratch.
+    ///         Callable by the owner from ANY phase (recovery + restart button).
+    ///         Bumps the electionId, which cheaply clears all per-election state
+    ///         (voters, registrations, commitments, nullifiers, votes, tree),
+    ///         clears the question/candidates, and returns to Setup.
+    function resetElection() external onlyOwner {
+        s_electionId++;
+        delete s_candidates;
+        s_question = "";
+        s_registrationEndTime = 0;
+        s_votingEndTime = 0;
+        s_phase = Phase.Setup;
+        emit ElectionReset(s_electionId);
+        emit PhaseChanged(Phase.Setup, 0);
+    }
+
     //////////////////
     /// Voter API ////
     //////////////////
 
     /// @notice Registers a commitment leaf for an allowlisted address.
     function register(uint256 _commitment) external inPhase(Phase.Registration) {
-        if (!s_voters[msg.sender] || s_hasRegistered[msg.sender]) {
+        uint256 electionId = s_electionId;
+        if (!s_voters[electionId][msg.sender] || s_hasRegistered[electionId][msg.sender]) {
             revert Voting__NotAllowedToVote();
         }
-        if (s_commitments[_commitment]) {
+        if (s_commitments[electionId][_commitment]) {
             revert Voting__CommitmentAlreadyAdded(_commitment);
         }
-        s_commitments[_commitment] = true;
-        s_hasRegistered[msg.sender] = true;
-        s_tree.insert(_commitment);
-        emit NewLeaf(s_tree.size - 1, _commitment);
+        s_commitments[electionId][_commitment] = true;
+        s_hasRegistered[electionId][msg.sender] = true;
+        s_trees[electionId].insert(_commitment);
+        emit NewLeaf(s_trees[electionId].size - 1, _commitment);
     }
 
     /// @notice Casts a vote using a ZK proof. `_vote` is the candidate index
@@ -227,10 +255,11 @@ contract Voting is Ownable {
         bytes32 _vote,
         bytes32 _depth
     ) external inPhase(Phase.Voting) {
+        uint256 electionId = s_electionId;
         if (_root == bytes32(0)) {
             revert Voting__EmptyTree();
         }
-        if (_root != bytes32(s_tree.root())) {
+        if (_root != bytes32(s_trees[electionId].root())) {
             revert Voting__InvalidRoot();
         }
 
@@ -249,12 +278,12 @@ contract Voting is Ownable {
             revert Voting__InvalidProof();
         }
 
-        if (s_nullifierHashes[_nullifierHash]) {
+        if (s_nullifierHashes[electionId][_nullifierHash]) {
             revert Voting__NullifierHashAlreadyUsed(_nullifierHash);
         }
-        s_nullifierHashes[_nullifierHash] = true;
+        s_nullifierHashes[electionId][_nullifierHash] = true;
 
-        uint256 newCount = ++s_voteCounts[candidateIdx];
+        uint256 newCount = ++s_voteCounts[electionId][candidateIdx];
         emit VoteCast(_nullifierHash, msg.sender, candidateIdx, block.timestamp, newCount);
     }
 
@@ -303,13 +332,13 @@ contract Voting is Ownable {
     function getVoteCounts() external view returns (uint256[] memory counts) {
         counts = new uint256[](s_candidates.length);
         for (uint256 i = 0; i < s_candidates.length; i++) {
-            counts[i] = s_voteCounts[i];
+            counts[i] = s_voteCounts[s_electionId][i];
         }
     }
 
     function getVoteCount(uint256 index) external view returns (uint256) {
         if (index >= s_candidates.length) revert Voting__InvalidCandidate(index);
-        return s_voteCounts[index];
+        return s_voteCounts[s_electionId][index];
     }
 
     function getVotingData()
@@ -332,14 +361,19 @@ contract Voting is Ownable {
         phase = currentPhase();
         registrationEndTime = s_registrationEndTime;
         votingEndTime = s_votingEndTime;
-        size = s_tree.size;
-        depth = s_tree.depth;
-        root = s_tree.root();
+        size = s_trees[s_electionId].size;
+        depth = s_trees[s_electionId].depth;
+        root = s_trees[s_electionId].root();
         candidateCount = s_candidates.length;
     }
 
+    /// @notice Returns the current election id. Bumped on every resetElection().
+    function getCurrentElectionId() external view returns (uint256) {
+        return s_electionId;
+    }
+
     function getVoterData(address _voter) external view returns (bool voter, bool registered) {
-        voter = s_voters[_voter];
-        registered = s_hasRegistered[_voter];
+        voter = s_voters[s_electionId][_voter];
+        registered = s_hasRegistered[s_electionId][_voter];
     }
 }

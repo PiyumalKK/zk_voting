@@ -278,6 +278,19 @@ const deployedContracts = {
           anonymous: false,
           inputs: [
             {
+              indexed: true,
+              internalType: "uint256",
+              name: "electionId",
+              type: "uint256",
+            },
+          ],
+          name: "ElectionReset",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
               indexed: false,
               internalType: "uint256",
               name: "index",
@@ -478,6 +491,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "getCurrentElectionId",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -628,6 +654,13 @@ const deployedContracts = {
         {
           inputs: [],
           name: "renounceOwnership",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "resetElection",
           outputs: [],
           stateMutability: "nonpayable",
           type: "function",
