@@ -135,6 +135,11 @@ const deployedContracts = {
               name: "_question",
               type: "string",
             },
+            {
+              internalType: "string[]",
+              name: "_initialCandidates",
+              type: "string[]",
+            },
           ],
           stateMutability: "nonpayable",
           type: "constructor",
@@ -178,6 +183,22 @@ const deployedContracts = {
           type: "error",
         },
         {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "candidateIndex",
+              type: "uint256",
+            },
+          ],
+          name: "Voting__InvalidCandidate",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "Voting__InvalidDuration",
+          type: "error",
+        },
+        {
           inputs: [],
           name: "Voting__InvalidProof",
           type: "error",
@@ -185,6 +206,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "Voting__InvalidRoot",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "Voting__NoCandidates",
           type: "error",
         },
         {
@@ -202,6 +228,51 @@ const deployedContracts = {
           ],
           name: "Voting__NullifierHashAlreadyUsed",
           type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "provided",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "max",
+              type: "uint256",
+            },
+          ],
+          name: "Voting__TooManyCandidates",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "enum Voting.Phase",
+              name: "expected",
+              type: "uint8",
+            },
+            {
+              internalType: "enum Voting.Phase",
+              name: "actual",
+              type: "uint8",
+            },
+          ],
+          name: "Voting__WrongPhase",
+          type: "error",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: false,
+              internalType: "string[]",
+              name: "candidates",
+              type: "string[]",
+            },
+          ],
+          name: "CandidatesUpdated",
+          type: "event",
         },
         {
           anonymous: false,
@@ -246,6 +317,38 @@ const deployedContracts = {
           inputs: [
             {
               indexed: true,
+              internalType: "enum Voting.Phase",
+              name: "phase",
+              type: "uint8",
+            },
+            {
+              indexed: false,
+              internalType: "uint256",
+              name: "deadline",
+              type: "uint256",
+            },
+          ],
+          name: "PhaseChanged",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: false,
+              internalType: "string",
+              name: "question",
+              type: "string",
+            },
+          ],
+          name: "QuestionUpdated",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
               internalType: "bytes32",
               name: "nullifierHash",
               type: "bytes32",
@@ -257,10 +360,10 @@ const deployedContracts = {
               type: "address",
             },
             {
-              indexed: false,
-              internalType: "bool",
-              name: "vote",
-              type: "bool",
+              indexed: true,
+              internalType: "uint256",
+              name: "candidate",
+              type: "uint256",
             },
             {
               indexed: false,
@@ -271,13 +374,7 @@ const deployedContracts = {
             {
               indexed: false,
               internalType: "uint256",
-              name: "totalYes",
-              type: "uint256",
-            },
-            {
-              indexed: false,
-              internalType: "uint256",
-              name: "totalNo",
+              name: "newCount",
               type: "uint256",
             },
           ],
@@ -298,6 +395,19 @@ const deployedContracts = {
           type: "event",
         },
         {
+          inputs: [],
+          name: "MAX_CANDIDATES",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "address[]",
@@ -313,6 +423,90 @@ const deployedContracts = {
           name: "addVoters",
           outputs: [],
           stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "currentPhase",
+          outputs: [
+            {
+              internalType: "enum Voting.Phase",
+              name: "",
+              type: "uint8",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "endElection",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "index",
+              type: "uint256",
+            },
+          ],
+          name: "getCandidate",
+          outputs: [
+            {
+              internalType: "string",
+              name: "",
+              type: "string",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "getCandidates",
+          outputs: [
+            {
+              internalType: "string[]",
+              name: "",
+              type: "string[]",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "index",
+              type: "uint256",
+            },
+          ],
+          name: "getVoteCount",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "getVoteCounts",
+          outputs: [
+            {
+              internalType: "uint256[]",
+              name: "counts",
+              type: "uint256[]",
+            },
+          ],
+          stateMutability: "view",
           type: "function",
         },
         {
@@ -354,13 +548,18 @@ const deployedContracts = {
               type: "address",
             },
             {
+              internalType: "enum Voting.Phase",
+              name: "phase",
+              type: "uint8",
+            },
+            {
               internalType: "uint256",
-              name: "yesVotes",
+              name: "registrationEndTime",
               type: "uint256",
             },
             {
               internalType: "uint256",
-              name: "noVotes",
+              name: "votingEndTime",
               type: "uint256",
             },
             {
@@ -376,6 +575,11 @@ const deployedContracts = {
             {
               internalType: "uint256",
               name: "root",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "candidateCount",
               type: "uint256",
             },
           ],
@@ -424,6 +628,58 @@ const deployedContracts = {
         {
           inputs: [],
           name: "renounceOwnership",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "string[]",
+              name: "_candidates",
+              type: "string[]",
+            },
+          ],
+          name: "setCandidates",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "string",
+              name: "_question",
+              type: "string",
+            },
+          ],
+          name: "setQuestion",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "_durationSec",
+              type: "uint256",
+            },
+          ],
+          name: "startRegistration",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "_durationSec",
+              type: "uint256",
+            },
+          ],
+          name: "startVoting",
           outputs: [],
           stateMutability: "nonpayable",
           type: "function",

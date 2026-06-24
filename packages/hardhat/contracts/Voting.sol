@@ -5,12 +5,26 @@ import {LeanIMT, LeanIMTData} from "@zk-kit/lean-imt.sol/LeanIMT.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IVerifier} from "./Verifier.sol";
 
+/**
+ * @title Voting
+ * @notice Phased ZK voting contract supporting up to MAX_CANDIDATES candidates.
+ *
+ * Phases:
+ *   Setup        - admin configures question, candidates, and allowlist.
+ *   Registration - allowlisted voters submit commitment leaves. Config locked.
+ *   Voting       - registered voters submit ZK proofs to cast a vote.
+ *   Ended        - results frozen.
+ *
+ * Phase transitions are admin-driven (startRegistration / startVoting /
+ * endElection) with deadline-based auto-advancement enforced on every
+ * state-changing call and reflected by the `currentPhase()` view.
+ */
 contract Voting is Ownable {
     using LeanIMT for LeanIMTData;
 
     //////////////////
-    /// Errors //////
-    /////////////////
+    /// Errors ///////
+    //////////////////
 
     error Voting__CommitmentAlreadyAdded(uint256 commitment);
     error Voting__NullifierHashAlreadyUsed(bytes32 nullifierHash);
@@ -18,18 +32,40 @@ contract Voting is Ownable {
     error Voting__NotAllowedToVote();
     error Voting__EmptyTree();
     error Voting__InvalidRoot();
+    error Voting__WrongPhase(Phase expected, Phase actual);
+    error Voting__InvalidCandidate(uint256 candidateIndex);
+    error Voting__InvalidDuration();
+    error Voting__TooManyCandidates(uint256 provided, uint256 max);
+    error Voting__NoCandidates();
 
-    ///////////////////////
-    /// State Variables ///
-    ///////////////////////
+    //////////////////
+    /// Types ////////
+    //////////////////
 
-    string private s_question;
+    enum Phase {
+        Setup,
+        Registration,
+        Voting,
+        Ended
+    }
+
+    //////////////////////////
+    /// State Variables //////
+    //////////////////////////
+
+    uint256 public constant MAX_CANDIDATES = 100;
+
     IVerifier public immutable i_verifier;
 
-    mapping(address => bool) private s_voters;
-    uint256 private s_yesVotes;
-    uint256 private s_noVotes;
+    string private s_question;
+    string[] private s_candidates;
+    mapping(uint256 => uint256) private s_voteCounts;
 
+    Phase private s_phase;
+    uint256 private s_registrationEndTime;
+    uint256 private s_votingEndTime;
+
+    mapping(address => bool) private s_voters;
     mapping(address => bool) private s_hasRegistered;
     mapping(uint256 => bool) private s_commitments;
     mapping(bytes32 => bool) private s_nullifierHashes;
@@ -42,40 +78,134 @@ contract Voting is Ownable {
 
     event VoterAdded(address indexed voter);
     event NewLeaf(uint256 index, uint256 value);
+    event QuestionUpdated(string question);
+    event CandidatesUpdated(string[] candidates);
+    event PhaseChanged(Phase indexed phase, uint256 deadline);
     event VoteCast(
         bytes32 indexed nullifierHash,
         address indexed voter,
-        bool vote,
+        uint256 indexed candidate,
         uint256 timestamp,
-        uint256 totalYes,
-        uint256 totalNo
+        uint256 newCount
     );
 
     //////////////////
-    ////Constructor///
+    /// Modifiers ////
     //////////////////
 
-    constructor(address _owner, address _verifier, string memory _question) Ownable(_owner) {
-        s_question = _question;
-        i_verifier = IVerifier(_verifier);
+    /// @dev Auto-advances phase from Registration→Voting and Voting→Ended when
+    ///      their respective deadlines have passed, then requires `expected`.
+    modifier inPhase(Phase expected) {
+        _maybeAdvancePhase();
+        if (s_phase != expected) {
+            revert Voting__WrongPhase(expected, s_phase);
+        }
+        _;
     }
 
     //////////////////
-    /// Functions ///
+    /// Constructor //
     //////////////////
 
-    /// @notice Batch updates the allowlist of voter EOAs
-    function addVoters(address[] calldata voters, bool[] calldata statuses) public onlyOwner {
-        require(voters.length == statuses.length, "Voters and statuses length mismatch");
+    constructor(
+        address _owner,
+        address _verifier,
+        string memory _question,
+        string[] memory _initialCandidates
+    ) Ownable(_owner) {
+        i_verifier = IVerifier(_verifier);
+        s_question = _question;
+        s_phase = Phase.Setup;
+        if (_initialCandidates.length > 0) {
+            _setCandidates(_initialCandidates);
+        }
+    }
 
+    //////////////////////////
+    /// Admin: Setup phase ///
+    //////////////////////////
+
+    /// @notice Sets the ballot question. Allowed only during Setup.
+    function setQuestion(string calldata _question) external onlyOwner inPhase(Phase.Setup) {
+        s_question = _question;
+        emit QuestionUpdated(_question);
+    }
+
+    /// @notice Sets the candidate list. Allowed only during Setup.
+    function setCandidates(string[] calldata _candidates) external onlyOwner inPhase(Phase.Setup) {
+        _setCandidates(_candidates);
+    }
+
+    function _setCandidates(string[] memory _candidates) internal {
+        if (_candidates.length == 0) {
+            revert Voting__NoCandidates();
+        }
+        if (_candidates.length > MAX_CANDIDATES) {
+            revert Voting__TooManyCandidates(_candidates.length, MAX_CANDIDATES);
+        }
+        delete s_candidates;
+        for (uint256 i = 0; i < _candidates.length; i++) {
+            s_candidates.push(_candidates[i]);
+        }
+        emit CandidatesUpdated(_candidates);
+    }
+
+    /// @notice Batch updates the allowlist of voter EOAs. Allowed during Setup.
+    function addVoters(address[] calldata voters, bool[] calldata statuses)
+        external
+        onlyOwner
+        inPhase(Phase.Setup)
+    {
+        require(voters.length == statuses.length, "Voters and statuses length mismatch");
         for (uint256 i = 0; i < voters.length; i++) {
             s_voters[voters[i]] = statuses[i];
             emit VoterAdded(voters[i]);
         }
     }
 
-    /// @notice Registers a commitment leaf for an allowlisted address
-    function register(uint256 _commitment) public {
+    /////////////////////////////////
+    /// Admin: Phase transitions ////
+    /////////////////////////////////
+
+    /// @notice Move Setup → Registration. `_durationSec` is the registration
+    ///         window length (seconds). Must be > 0. Candidates must be set.
+    function startRegistration(uint256 _durationSec) external onlyOwner inPhase(Phase.Setup) {
+        if (_durationSec == 0) revert Voting__InvalidDuration();
+        if (s_candidates.length == 0) revert Voting__NoCandidates();
+        s_phase = Phase.Registration;
+        s_registrationEndTime = block.timestamp + _durationSec;
+        emit PhaseChanged(Phase.Registration, s_registrationEndTime);
+    }
+
+    /// @notice Move Registration → Voting early (or right at the deadline).
+    ///         `_durationSec` is the voting window length (seconds), > 0.
+    function startVoting(uint256 _durationSec) external onlyOwner {
+        _maybeAdvancePhase();
+        if (s_phase != Phase.Registration) {
+            revert Voting__WrongPhase(Phase.Registration, s_phase);
+        }
+        if (_durationSec == 0) revert Voting__InvalidDuration();
+        s_phase = Phase.Voting;
+        s_votingEndTime = block.timestamp + _durationSec;
+        emit PhaseChanged(Phase.Voting, s_votingEndTime);
+    }
+
+    /// @notice End the election early. Allowed from Registration or Voting.
+    function endElection() external onlyOwner {
+        _maybeAdvancePhase();
+        if (s_phase == Phase.Setup || s_phase == Phase.Ended) {
+            revert Voting__WrongPhase(Phase.Voting, s_phase);
+        }
+        s_phase = Phase.Ended;
+        emit PhaseChanged(Phase.Ended, block.timestamp);
+    }
+
+    //////////////////
+    /// Voter API ////
+    //////////////////
+
+    /// @notice Registers a commitment leaf for an allowlisted address.
+    function register(uint256 _commitment) external inPhase(Phase.Registration) {
         if (!s_voters[msg.sender] || s_hasRegistered[msg.sender]) {
             revert Voting__NotAllowedToVote();
         }
@@ -88,14 +218,25 @@ contract Voting is Ownable {
         emit NewLeaf(s_tree.size - 1, _commitment);
     }
 
-    /// @notice Casts a vote using a zero-knowledge proof
-    function vote(bytes memory _proof, bytes32 _nullifierHash, bytes32 _root, bytes32 _vote, bytes32 _depth) public {
+    /// @notice Casts a vote using a ZK proof. `_vote` is the candidate index
+    ///         (as bytes32 to match circuit public-input encoding).
+    function vote(
+        bytes memory _proof,
+        bytes32 _nullifierHash,
+        bytes32 _root,
+        bytes32 _vote,
+        bytes32 _depth
+    ) external inPhase(Phase.Voting) {
         if (_root == bytes32(0)) {
             revert Voting__EmptyTree();
         }
-
         if (_root != bytes32(s_tree.root())) {
             revert Voting__InvalidRoot();
+        }
+
+        uint256 candidateIdx = uint256(_vote);
+        if (candidateIdx >= s_candidates.length) {
+            revert Voting__InvalidCandidate(candidateIdx);
         }
 
         bytes32[] memory publicInputs = new bytes32[](4);
@@ -113,42 +254,91 @@ contract Voting is Ownable {
         }
         s_nullifierHashes[_nullifierHash] = true;
 
-        if (_vote == bytes32(uint256(1))) {
-            s_yesVotes++;
-        } else {
-            s_noVotes++;
-        }
+        uint256 newCount = ++s_voteCounts[candidateIdx];
+        emit VoteCast(_nullifierHash, msg.sender, candidateIdx, block.timestamp, newCount);
+    }
 
-        emit VoteCast(_nullifierHash, msg.sender, _vote == bytes32(uint256(1)), block.timestamp, s_yesVotes, s_noVotes);
+    //////////////////
+    /// Internals ////
+    //////////////////
+
+    /// @dev Apply automatic time-based phase advancement.
+    function _maybeAdvancePhase() internal {
+        if (s_phase == Phase.Registration && block.timestamp >= s_registrationEndTime) {
+            // Registration window expired without admin calling startVoting:
+            // the election is considered closed (no voting window opened).
+            s_phase = Phase.Ended;
+            emit PhaseChanged(Phase.Ended, block.timestamp);
+        } else if (s_phase == Phase.Voting && block.timestamp >= s_votingEndTime) {
+            s_phase = Phase.Ended;
+            emit PhaseChanged(Phase.Ended, block.timestamp);
+        }
     }
 
     /////////////////////////
-    /// Getter Functions ///
-    ////////////////////////
+    /// View Functions //////
+    /////////////////////////
+
+    /// @notice Returns the effective phase (accounting for elapsed deadlines)
+    ///         without writing to storage.
+    function currentPhase() public view returns (Phase) {
+        if (s_phase == Phase.Registration && block.timestamp >= s_registrationEndTime) {
+            return Phase.Ended;
+        }
+        if (s_phase == Phase.Voting && block.timestamp >= s_votingEndTime) {
+            return Phase.Ended;
+        }
+        return s_phase;
+    }
+
+    function getCandidates() external view returns (string[] memory) {
+        return s_candidates;
+    }
+
+    function getCandidate(uint256 index) external view returns (string memory) {
+        if (index >= s_candidates.length) revert Voting__InvalidCandidate(index);
+        return s_candidates[index];
+    }
+
+    function getVoteCounts() external view returns (uint256[] memory counts) {
+        counts = new uint256[](s_candidates.length);
+        for (uint256 i = 0; i < s_candidates.length; i++) {
+            counts[i] = s_voteCounts[i];
+        }
+    }
+
+    function getVoteCount(uint256 index) external view returns (uint256) {
+        if (index >= s_candidates.length) revert Voting__InvalidCandidate(index);
+        return s_voteCounts[index];
+    }
 
     function getVotingData()
-        public
+        external
         view
         returns (
             string memory question,
             address contractOwner,
-            uint256 yesVotes,
-            uint256 noVotes,
+            Phase phase,
+            uint256 registrationEndTime,
+            uint256 votingEndTime,
             uint256 size,
             uint256 depth,
-            uint256 root
+            uint256 root,
+            uint256 candidateCount
         )
     {
         question = s_question;
         contractOwner = owner();
-        yesVotes = s_yesVotes;
-        noVotes = s_noVotes;
+        phase = currentPhase();
+        registrationEndTime = s_registrationEndTime;
+        votingEndTime = s_votingEndTime;
         size = s_tree.size;
         depth = s_tree.depth;
         root = s_tree.root();
+        candidateCount = s_candidates.length;
     }
 
-    function getVoterData(address _voter) public view returns (bool voter, bool registered) {
+    function getVoterData(address _voter) external view returns (bool voter, bool registered) {
         voter = s_voters[_voter];
         registered = s_hasRegistered[_voter];
     }

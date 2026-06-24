@@ -5,8 +5,8 @@ import { UltraHonkBackend } from "@aztec/bb.js";
 // @ts-ignore
 import { Noir } from "@noir-lang/noir_js";
 import { LeanIMT } from "@zk-kit/lean-imt";
-import { encodeAbiParameters, toHex } from "viem";
 import { poseidon1, poseidon2 } from "poseidon-lite";
+import { encodeAbiParameters, toHex } from "viem";
 import { useAccount } from "wagmi";
 import { useDeployedContractInfo, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
@@ -15,7 +15,7 @@ import { notification } from "~~/utils/scaffold-eth";
 
 const generateProof = async (
   _root: bigint,
-  _vote: boolean,
+  _vote: number,
   _depth: number,
   _nullifier: string,
   _secret: string,
@@ -28,10 +28,8 @@ const generateProof = async (
     const nullifierHash = poseidon1([BigInt(_nullifier)]);
 
     // Step 2: Rebuild the Merkle tree from on-chain leaf events
-    const calculatedTree = new LeanIMT((a: bigint, b: bigint) =>
-      poseidon2([a, b]),
-    );
-    const leaves = _leaves.map((event) => {
+    const calculatedTree = new LeanIMT((a: bigint, b: bigint) => poseidon2([a, b]));
+    const leaves = _leaves.map(event => {
       return event?.args.value;
     });
     // Events are newest-first, tree needs oldest-first
@@ -40,7 +38,7 @@ const generateProof = async (
 
     // Step 3: Generate Merkle inclusion proof for our leaf
     const calculatedProof = calculatedTree.generateProof(_index);
-    const sibs = calculatedProof.siblings.map((sib) => {
+    const sibs = calculatedProof.siblings.map(sib => {
       return sib.toString();
     });
 
@@ -56,7 +54,9 @@ const generateProof = async (
       nullifier: BigInt(_nullifier).toString(),
       secret: BigInt(_secret).toString(),
       root: _root.toString(),
-      vote: _vote,
+      // Candidate index encoded as a Field string. Circuit range-checks to 8 bits;
+      // contract enforces upper bound vs candidates.length.
+      vote: BigInt(_vote).toString(),
       depth: _depth.toString(),
       index: _index.toString(),
       siblings: sibs,
@@ -79,15 +79,10 @@ const generateProof = async (
 
     // Step 8: Format for Solidity — encode proof + publicInputs as ABI params
     const proofHex = toHex(proof);
-    const inputsHex = publicInputs.map((x) =>
-      typeof x === "string"
-        ? (x as `0x${string}`)
-        : toHex(x as Uint8Array, { size: 32 }),
+    const inputsHex = publicInputs.map(x =>
+      typeof x === "string" ? (x as `0x${string}`) : toHex(x as Uint8Array, { size: 32 }),
     );
-    const result = encodeAbiParameters(
-      [{ type: "bytes" }, { type: "bytes32[]" }],
-      [proofHex, inputsHex],
-    );
+    const result = encodeAbiParameters([{ type: "bytes" }, { type: "bytes32[]" }], [proofHex, inputsHex]);
     console.log("encoded result for Solidity:", result.slice(0, 66) + "...");
 
     return { proof, publicInputs };
@@ -117,8 +112,8 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
     functionName: "getVotingData",
   });
 
-  const root = votingData?.[6];
-  const treeDepth = votingData?.[5];
+  const root = votingData?.[7];
+  const treeDepth = votingData?.[6];
 
   const { data: voterData } = useScaffoldReadContract({
     contractName: "Voting",
@@ -167,7 +162,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         indexInput?.trim() !== "" ? Number(indexInput) : (commitmentData?.index ?? storedCommitment?.index);
 
       if (voteChoice === null) {
-        throw new Error("Please select your vote (Yes/No) first");
+        throw new Error("Please select a candidate first");
       }
 
       if (!leafEvents || leafEvents.length === 0) {

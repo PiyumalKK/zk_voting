@@ -7,7 +7,7 @@ export interface SerializableProofData {
   publicInputs: any[];
   timestamp: number;
   contractAddress?: string;
-  voteChoice?: boolean;
+  voteChoice?: number;
 }
 
 export interface CommitmentData {
@@ -47,7 +47,7 @@ const getStorageKey = (contractAddress?: string, userAddress?: string): string =
 export const serializeProofData = (
   proofData: { proof: Uint8Array; publicInputs: any[] },
   contractAddress?: string,
-  voteChoice?: boolean,
+  voteChoice?: number,
 ): SerializableProofData => {
   return {
     proof: Array.from(proofData.proof), // Convert Uint8Array to number array
@@ -76,7 +76,7 @@ export const deserializeProofData = (
 export const saveProofToLocalStorage = (
   proofData: { proof: Uint8Array; publicInputs: any[] },
   contractAddress?: string,
-  voteChoice?: boolean,
+  voteChoice?: number,
   userAddress?: string,
 ): void => {
   try {
