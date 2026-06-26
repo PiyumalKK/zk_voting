@@ -124,11 +124,7 @@ export const Faucet = () => {
                 style={{ width: "100%" }}
               />
               <button className="h-10 btn btn-primary btn-sm px-2 rounded-full" onClick={sendETH} disabled={loading}>
-                {!loading ? (
-                  <BanknotesIcon className="h-6 w-6" />
-                ) : (
-                  <span className="loading loading-spinner loading-sm"></span>
-                )}
+                {loading && <span className="loading loading-spinner loading-sm"></span>}
                 <span>Send</span>
               </button>
             </div>

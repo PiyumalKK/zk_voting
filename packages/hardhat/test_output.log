@@ -1,0 +1,4 @@
+[31m[1mError[22m[39m [31m[1mHH108:[22m[39m Cannot connect to the network localhost.
+Please make sure your node is running, and check your internet connection and networks config
+
+For more info go to https://v2.hardhat.org/HH108 or run Hardhat with --show-stack-traces

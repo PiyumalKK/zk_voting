@@ -9,6 +9,7 @@ import { useAccount } from "wagmi";
 import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
 import { saveCommitmentToLocalStorage } from "~~/utils/proofStorage";
+import { notification } from "~~/utils/scaffold-eth";
 
 const generateCommitment = async (): Promise<CommitmentData> => {
   ////// Checkpoint 7 //////
@@ -54,6 +55,11 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
     args: [userAddress as `0x${string}`],
   });
 
+  const { data: electionId } = useScaffoldReadContract({
+    contractName: "Voting",
+    functionName: "getCurrentElectionId",
+  });
+
   const isVoter = voterData?.[0];
   const hasRegistered = voterData?.[1];
 
@@ -97,7 +103,7 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
               setCommitmentData(updatedData);
               setIsInserted(true);
 
-              saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress);
+              saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress, electionId);
             }
           },
         },
@@ -112,6 +118,30 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
   const handleRegister = async () => {
     const data = await handleGenerateCommitment();
     await handleInsertCommitment(data);
+  };
+
+  const handleDownloadSecret = () => {
+    if (!commitmentData) {
+      notification.error("Generate or register a commitment first.");
+      return;
+    }
+    const payload = {
+      nullifier: commitmentData.nullifier,
+      secret: commitmentData.secret,
+      commitment: commitmentData.commitment,
+      index: commitmentData.index,
+      electionId: electionId?.toString(),
+      contractAddress: deployedContractData?.address,
+      savedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `zk-voting-secret-election-${electionId?.toString() ?? "x"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    notification.success("Secret backup downloaded. Keep it safe and private.");
   };
 
   return (
@@ -155,6 +185,22 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
             "Register to vote"
           )}
         </button>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm flex-1"
+            onClick={handleDownloadSecret}
+            disabled={!commitmentData}
+            title="Download your secret and nullifier as a backup file"
+          >
+            Download secret &amp; nullifier
+          </button>
+        </div>
+        <p className="text-xs opacity-60 text-center">
+          Your secret and nullifier are your private voting key. Download and keep them safe — they are required to cast
+          your vote and cannot be recovered if lost.
+        </p>
       </div>
     </div>
   );
