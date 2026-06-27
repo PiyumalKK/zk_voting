@@ -10,7 +10,7 @@ import { EntryPointVersion, entryPoint07Address } from "viem/account-abstraction
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { useAccount } from "wagmi";
-import { useDeployedContractInfo } from "~~/hooks/scaffold-eth";
+import { useDeployedContractInfo, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
 import {
   hasStoredProof,
@@ -83,7 +83,10 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
 
   const { data: contractInfo } = useDeployedContractInfo({ contractName: "Voting" });
 
-  // Reset client and owner when account/contract changes
+  const { data: electionId } = useScaffoldReadContract({
+    contractName: "Voting",
+    functionName: "getCurrentElectionId",
+  });
   useEffect(() => {
     const effectiveContractAddress = contractAddress || contractInfo?.address;
     if (!effectiveContractAddress || !userAddress) {
@@ -101,14 +104,14 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
     const checkAndLoadStoredData = () => {
       const effectiveContractAddress = contractAddress || contractInfo?.address;
       if (effectiveContractAddress && userAddress) {
-        const proofExists = hasStoredProof(effectiveContractAddress, userAddress);
+        const proofExists = hasStoredProof(effectiveContractAddress, userAddress, electionId);
         const transactionResultExists = hasStoredTransactionResult(effectiveContractAddress, userAddress);
 
         setHasProofStored(proofExists);
 
         if (proofExists && !proofData) {
           try {
-            const storedProof = loadProofFromLocalStorage(effectiveContractAddress, userAddress);
+            const storedProof = loadProofFromLocalStorage(effectiveContractAddress, userAddress, electionId);
             if (storedProof) {
               setProofData(storedProof);
             }
@@ -142,7 +145,7 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
     };
 
     checkAndLoadStoredData();
-  }, [contractAddress, contractInfo?.address, userAddress, proofData, setProofData]);
+  }, [contractAddress, contractInfo?.address, userAddress, proofData, setProofData, electionId]);
 
   return (
     <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">

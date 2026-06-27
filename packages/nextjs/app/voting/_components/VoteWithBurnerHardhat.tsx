@@ -6,7 +6,7 @@ import { createPublicClient, createTestClient, createWalletClient, getContract, 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { hardhat } from "viem/chains";
 import { useAccount } from "wagmi";
-import { useDeployedContractInfo, useScaffoldEventHistory } from "~~/hooks/scaffold-eth";
+import { useDeployedContractInfo, useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
 import {
   hasStoredProof,
@@ -14,6 +14,7 @@ import {
   loadProofFromLocalStorage,
   saveBurnerWalletToLocalStorage,
 } from "~~/utils/proofStorage";
+import { notification } from "~~/utils/scaffold-eth";
 
 type LocalProofData = {
   proof: Uint8Array;
@@ -84,6 +85,18 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
 
   const { data: contractInfo } = useDeployedContractInfo({ contractName: "Voting" });
 
+  const { data: electionId } = useScaffoldReadContract({
+    contractName: "Voting",
+    functionName: "getCurrentElectionId",
+  });
+
+  const { data: votingData } = useScaffoldReadContract({
+    contractName: "Voting",
+    functionName: "getVotingData",
+  });
+
+  const currentRoot = votingData?.[7];
+
   const { data: voteCastEvents } = useScaffoldEventHistory({
     contractName: "Voting",
     eventName: "VoteCast",
@@ -106,12 +119,12 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
     const checkAndLoadStoredProof = () => {
       const effectiveContractAddress = contractAddress || contractInfo?.address;
       if (effectiveContractAddress && userAddress) {
-        const proofExists = hasStoredProof(effectiveContractAddress, userAddress);
+        const proofExists = hasStoredProof(effectiveContractAddress, userAddress, electionId);
         setHasProofStored(proofExists);
 
         if (proofExists && !proofData) {
           try {
-            const storedProof = loadProofFromLocalStorage(effectiveContractAddress, userAddress);
+            const storedProof = loadProofFromLocalStorage(effectiveContractAddress, userAddress, electionId);
             if (storedProof) {
               setProofData(storedProof);
             }
@@ -125,7 +138,7 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
     };
 
     checkAndLoadStoredProof();
-  }, [contractAddress, contractInfo?.address, userAddress, proofData, setProofData]);
+  }, [contractAddress, contractInfo?.address, userAddress, proofData, setProofData, electionId]);
 
   useEffect(() => {
     const effectiveContractAddress = contractAddress || contractInfo?.address;
@@ -175,6 +188,24 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
                 return;
               }
 
+              // The contract requires the proof's root to match the current on-chain
+              // tree root. If the voter set changed or the contract was redeployed/reset
+              // after this proof was made, the root won't match and vote() reverts.
+              const proofRoot = proofData.publicInputs?.[1];
+              if (currentRoot !== undefined && proofRoot !== undefined) {
+                try {
+                  if (BigInt(proofRoot as string) !== BigInt(currentRoot as bigint)) {
+                    notification.error(
+                      "This proof is stale: its Merkle root no longer matches the current voter tree. " +
+                        "Upload your secret on the proof page and regenerate the proof, then try again.",
+                    );
+                    return;
+                  }
+                } catch {
+                  // If comparison fails for any reason, fall through and let the chain decide.
+                }
+              }
+
               setTxStatus("pending");
 
               const wallet = burnerWallet ?? generateBurnerWallet();
@@ -199,6 +230,26 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
               setTxStatus("success");
             } catch (e) {
               console.error("Error voting:", e);
+              const err = e as { shortMessage?: string; message?: string };
+              const raw = `${err?.shortMessage ?? ""} ${err?.message ?? ""}`;
+              let friendly = err?.shortMessage || err?.message || "Vote transaction failed";
+              if (raw.includes("NullifierHashAlreadyUsed")) {
+                friendly = "You have already voted with this identity.";
+                setHasVoted(true);
+              } else if (raw.includes("InvalidRoot")) {
+                friendly =
+                  "This proof is stale: its Merkle root no longer matches the current voter tree. " +
+                  "Upload your secret on the proof page and regenerate the proof.";
+              } else if (raw.includes("InvalidProof")) {
+                friendly = "The proof is invalid for the current election. Regenerate it from your secret.";
+              } else if (raw.includes("WrongPhase")) {
+                friendly = "Voting is not open right now.";
+              } else if (raw.includes("InvalidCandidate")) {
+                friendly = "The selected candidate is invalid.";
+              } else if (raw.includes("EmptyTree")) {
+                friendly = "No one has registered yet, so there is nothing to vote against.";
+              }
+              notification.error(friendly);
               setTxStatus("error");
             }
           }}
