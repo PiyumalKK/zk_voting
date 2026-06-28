@@ -9,6 +9,7 @@ import (
 
 	"zk-blockchain/internal/api"
 	"zk-blockchain/internal/core"
+	"zk-blockchain/internal/evm"
 	"zk-blockchain/internal/network"
 	"zk-blockchain/internal/persistence"
 )
@@ -44,6 +45,14 @@ func main() {
 		}
 	}
 
+	// Initialize EVM for smart contract execution
+	smgr, err := evm.NewStateManager()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize EVM StateManager")
+	}
+	evmInstance := evm.CreateStatelessEVM(smgr.GetStateDB())
+	contractCaller := evm.NewContractCaller(evmInstance)
+
 	// Paths to security assets
 	pubKeyPath := dataDir + "/keys/admin_public.pem"
 	certFile := dataDir + "/certs/server.crt"
@@ -57,6 +66,6 @@ func main() {
 
 	network.SyncWithPeers(&bc, store)
 
-	api.InitServer(bc, store)
+	api.InitServer(bc, store, contractCaller)
 	api.StartServer(port, certFile, keyFile, caFile)
 }

@@ -1,13 +1,10 @@
-module zk-blockchain
+module evm-sandbox
 
 go 1.25.0
 
 require (
 	github.com/ethereum/go-ethereum v1.13.14
 	github.com/holiman/uint256 v1.3.2
-	github.com/rs/zerolog v1.35.1
-	go.etcd.io/bbolt v1.4.3
-	golang.org/x/time v0.15.0
 )
 
 require (
@@ -40,8 +37,6 @@ require (
 	github.com/klauspost/compress v1.15.15 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
@@ -60,8 +55,8 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/sync v0.5.0 // indirect
+	golang.org/x/sys v0.16.0 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
