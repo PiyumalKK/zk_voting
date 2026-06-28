@@ -434,9 +434,10 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <div className="flex items-center justify-center flex-col grow pt-6 w-full">
     <div className="px-4 sm:px-5 w-full max-w-7xl mx-auto">
       <div className="flex flex-col items-center w-full">
-        <div className="text-center mb-6">
-          <h1 className="text-3xl font-extrabold gradient-text">Election Admin</h1>
-          <p className="text-sm opacity-60 mt-1">Owner-only controls for the Voting contract</p>
+        <div className="text-center mb-8 relative">
+          <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-secondary/10 to-primary/10 blur-3xl -z-10 rounded-full w-3/4 h-full mx-auto" />
+          <h1 className="text-4xl md:text-5xl font-extrabold bg-gradient-to-br from-primary to-secondary text-transparent bg-clip-text drop-shadow-sm">Election Admin</h1>
+          <p className="text-base md:text-lg opacity-70 mt-3 font-medium">Owner-only controls for the Voting contract</p>
         </div>
         <div className="w-full max-w-3xl space-y-5">{children}</div>
       </div>
@@ -456,7 +457,7 @@ const Section = ({
   disabled?: boolean;
 }) => (
   <div
-    className={`bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 ${disabled ? "opacity-70" : ""}`}
+    className={`bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden ${disabled ? "opacity-70" : ""}`}
   >
     <div>
       <h2 className="text-xl font-bold">{title}</h2>
@@ -490,7 +491,7 @@ const PhaseHeader = ({
     phase === 0 ? "badge-ghost" : phase === 1 ? "badge-info" : phase === 2 ? "badge-success" : "badge-neutral";
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-4 border border-base-300/50 flex flex-wrap justify-between items-center gap-3">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-6 border border-base-300/50 flex flex-wrap justify-between items-center gap-3 relative overflow-hidden">
       <span className={`badge ${badge} badge-lg`}>Phase: {phaseLabel}</span>
       {remaining && <span className="text-xs font-mono opacity-80">{remaining}</span>}
     </div>

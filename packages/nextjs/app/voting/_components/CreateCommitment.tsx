@@ -4,7 +4,7 @@ import { useState } from "react";
 ////// Checkpoint 7 //////
 import { Fr } from "@aztec/bb.js";
 import { poseidon2 } from "poseidon-lite";
-import { toHex } from "viem";
+import { decodeEventLog, toHex } from "viem";
 import { useAccount } from "wagmi";
 import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
@@ -83,6 +83,31 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
     }
   };
 
+  const handleDownloadSecret = (dataOverride?: CommitmentData) => {
+    const dataToUse = dataOverride || commitmentData;
+    if (!dataToUse) {
+      notification.error("Generate or register a commitment first.");
+      return;
+    }
+    const payload = {
+      nullifier: dataToUse.nullifier,
+      secret: dataToUse.secret,
+      commitment: dataToUse.commitment,
+      index: dataToUse.index,
+      electionId: electionId?.toString(),
+      contractAddress: deployedContractData?.address,
+      savedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `zk-voting-secret-election-${electionId?.toString() ?? "x"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    notification.success("Voting Key automatically downloaded. Keep it safe and private.");
+  };
+
   const handleInsertCommitment = async (dataOverride?: CommitmentData) => {
     const localData = dataOverride || commitmentData;
     if (!localData) return;
@@ -96,15 +121,35 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
         },
         {
           blockConfirmations: 1,
-          onBlockConfirmation: () => {
-            if (leafEvents) {
-              const newIndex = leafEvents.length;
-              const updatedData = { ...localData, index: newIndex };
-              setCommitmentData(updatedData);
-              setIsInserted(true);
-
-              saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress, electionId);
+          onBlockConfirmation: (txnReceipt: any) => {
+            let newIndex = leafEvents ? leafEvents.length : 0; // fallback
+            
+            if (txnReceipt && txnReceipt.logs) {
+              for (const log of txnReceipt.logs) {
+                try {
+                  const decoded = decodeEventLog({
+                    abi: deployedContractData?.abi as any,
+                    data: log.data,
+                    topics: log.topics,
+                  });
+                  if (decoded.eventName === "NewLeaf") {
+                    newIndex = Number((decoded.args as any).index);
+                    break;
+                  }
+                } catch (e) {
+                  // Ignore logs that don't match
+                }
+              }
             }
+
+            const updatedData = { ...localData, index: newIndex };
+            setCommitmentData(updatedData);
+            setIsInserted(true);
+
+            saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress, electionId);
+            
+            // Auto-download the voting key once the block is confirmed and index is assigned
+            handleDownloadSecret(updatedData);
           },
         },
       );
@@ -120,35 +165,11 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
     await handleInsertCommitment(data);
   };
 
-  const handleDownloadSecret = () => {
-    if (!commitmentData) {
-      notification.error("Generate or register a commitment first.");
-      return;
-    }
-    const payload = {
-      nullifier: commitmentData.nullifier,
-      secret: commitmentData.secret,
-      commitment: commitmentData.commitment,
-      index: commitmentData.index,
-      electionId: electionId?.toString(),
-      contractAddress: deployedContractData?.address,
-      savedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `zk-voting-secret-election-${electionId?.toString() ?? "x"}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    notification.success("Secret backup downloaded. Keep it safe and private.");
-  };
-
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-5 border border-base-300/50 hover-lift">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Register for this vote</h2>
-        <p className="text-sm opacity-60">Generate your anonymous identifier and insert it into the Merkle tree.</p>
+        <p className="text-sm opacity-60">Securely register to get your anonymous voting pass.</p>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -168,12 +189,12 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
           {isGenerating ? (
             <>
               <span className="loading loading-spinner loading-sm"></span>
-              Generating commitment...
+              Preparing pass...
             </>
           ) : isInserting ? (
             <>
               <span className="loading loading-spinner loading-sm"></span>
-              Inserting into Merkle tree...
+              Securing & Downloading Key...
             </>
           ) : !isConnected ? (
             "Connect wallet to register"
@@ -186,20 +207,8 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
           )}
         </button>
 
-        <div className="flex flex-col sm:flex-row gap-2">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm flex-1"
-            onClick={handleDownloadSecret}
-            disabled={!commitmentData}
-            title="Download your secret and nullifier as a backup file"
-          >
-            Download secret &amp; nullifier
-          </button>
-        </div>
         <p className="text-xs opacity-60 text-center">
-          Your secret and nullifier are your private voting key. Download and keep them safe — they are required to cast
-          your vote and cannot be recovered if lost.
+          Your private Voting Key will be automatically downloaded once registration is complete. Keep it safe — it is required to cast your vote and cannot be recovered if lost.
         </p>
       </div>
     </div>

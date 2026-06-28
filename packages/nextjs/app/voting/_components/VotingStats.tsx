@@ -82,20 +82,14 @@ export const VotingStats = () => {
   const remainingLabel = phase === 1 ? "Registration closes in" : phase === 2 ? "Voting closes in" : null;
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">
-      <div className="text-center space-y-2">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
+      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary via-secondary to-accent opacity-50"></div>
+      <div className="text-center space-y-3 relative z-10">
         <div className="flex justify-center">
           <span className={`badge ${badge} badge-lg`}>Phase: {phaseLabel}</span>
         </div>
         <h2 className="text-2xl font-bold">{question || "Loading..."}</h2>
-        <div className="flex flex-wrap justify-center gap-x-10 gap-y-1 text-sm">
-          <div>
-            Contract: <Address address={deployedContractData?.address} />
-          </div>
-          <div>
-            Owner: <Address address={owner} />
-          </div>
-        </div>
+
         <div className="text-xs opacity-60">Total votes cast: {total.toString()}</div>
         {remaining && remainingLabel && (
           <div className="text-xs font-medium opacity-80">
@@ -116,11 +110,11 @@ export const VotingStats = () => {
               const pct = total > 0n ? Number((c * 1000n) / total) / 10 : 0;
               const p = PALETTES[idx % PALETTES.length];
               return (
-                <div key={`${idx}-${name}`} className={`rounded-xl border ${p.border} ${p.bg} p-4 text-center`}>
-                  <div className="text-xs opacity-60 font-medium uppercase tracking-wider truncate" title={name}>
+                <div key={`${idx}-${name}`} className={`rounded-2xl border ${p.border} ${p.bg} p-5 text-center shadow-sm hover:shadow-md transition-shadow duration-300`}>
+                  <div className="text-sm opacity-70 font-semibold uppercase tracking-wider truncate mb-1" title={name}>
                     {name}
                   </div>
-                  <div className={`text-2xl font-bold ${p.text}`}>{c.toString()}</div>
+                  <div className={`text-4xl font-extrabold ${p.text}`}>{c.toString()}</div>
                   <div className="text-xs opacity-60">{pct.toFixed(1)}%</div>
                 </div>
               );

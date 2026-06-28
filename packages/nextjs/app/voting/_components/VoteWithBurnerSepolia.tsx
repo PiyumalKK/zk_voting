@@ -158,17 +158,9 @@ export const VoteWithBurnerSepolia = ({
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Vote</h2>
         <p className="text-sm opacity-60">
-          Use an ERC-4337 smart account to submit the on-chain vote with the proof and let the tx be paid by a
-          paymaster.
+          Submit your vote privately to the blockchain. Gas fees are sponsored.
         </p>
       </div>
-
-      {hasSuccessfulVote && votedSmartAccount && (
-        <div className="flex items-center gap-2 justify-center">
-          <span className="text-sm">Voted With Smart Account:</span>
-          <Address address={votedSmartAccount} />
-        </div>
-      )}
 
       <div className="flex justify-center">
         <button
@@ -322,7 +314,7 @@ export const VoteWithBurnerSepolia = ({
           }}
         >
           {isGenerating ? (
-            "Generating proof..."
+            "Securing your vote..."
           ) : txStatus === "pending" ? (
             <>
               <span className="loading loading-spinner loading-xs"></span>

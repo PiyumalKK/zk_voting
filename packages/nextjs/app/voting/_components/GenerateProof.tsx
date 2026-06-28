@@ -49,6 +49,35 @@ const generateProof = async (
       return sib.toString();
     });
 
+    // Calculate Circuit Index to fix LeanIMT vs Noir binary_merkle_root incompatibility
+    let circuitIndex = 0;
+    const siblingsNum = calculatedProof.siblings.length;
+    const maxIndex = 1 << siblingsNum;
+    const leaf = poseidon2([BigInt(_nullifier), BigInt(_secret)]);
+    let foundCircuitIndex = false;
+
+    for (let cIndex = 0; cIndex < maxIndex; cIndex++) {
+      let current = leaf;
+      for (let i = 0; i < siblingsNum; i++) {
+        const isRight = (cIndex >> i) & 1;
+        const sibling = calculatedProof.siblings[i] as bigint;
+        if (isRight) {
+          current = poseidon2([sibling, current]);
+        } else {
+          current = poseidon2([current, sibling]);
+        }
+      }
+      if (current === calculatedProof.root) {
+        circuitIndex = cIndex;
+        foundCircuitIndex = true;
+        break;
+      }
+    }
+
+    if (!foundCircuitIndex) {
+      throw new Error("Could not find a valid circuit index for the given Merkle path.");
+    }
+
     // Step 4: Pad siblings to fixed length 16 (circuit expects [Field; 16])
     const lengthDiff = 16 - sibs.length;
     for (let i = 0; i < lengthDiff; i++) {
@@ -65,7 +94,7 @@ const generateProof = async (
       // contract enforces upper bound vs candidates.length.
       vote: BigInt(_vote).toString(),
       depth: _depth.toString(),
-      index: _index.toString(),
+      index: circuitIndex.toString(),
       siblings: sibs,
     };
 
@@ -114,6 +143,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const [nullifierInput, setNullifierInput] = useState<string>("");
   const [secretInput, setSecretInput] = useState<string>("");
   const [indexInput, setIndexInput] = useState<string>("");
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
   const { data: votingData } = useScaffoldReadContract({
     contractName: "Voting",
@@ -257,15 +287,18 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const handleSecretFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file) void handleUploadSecret(file);
+    if (file) {
+      setUploadedFileName(file.name);
+      void handleUploadSecret(file);
+    }
   };
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-5 border border-base-300/50 hover-lift">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1">
         <h2 className="text-2xl font-bold text-center"> Cast your vote </h2>
         <p className="text-sm opacity-60 text-center">
-          Prove membership in the Merkle tree and cast your vote anonymously.
+          Submit your ballot privately and securely.
         </p>
       </div>
 
@@ -288,14 +321,35 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         </div>
 
         <div className="flex justify-center mt-4">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            onClick={() => secretFileInputRef.current?.click()}
-            title="Restore your secret and nullifier from a downloaded backup file"
-          >
-            Upload secret
-          </button>
+          {uploadedFileName ? (
+            <div className="flex items-center gap-2 bg-base-200/50 px-4 py-2 rounded-xl border border-base-300">
+              <span className="text-sm font-medium opacity-80 truncate max-w-[200px]" title={uploadedFileName}>
+                {uploadedFileName}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs btn-circle"
+                onClick={() => {
+                  setUploadedFileName(null);
+                  setNullifierInput("");
+                  setSecretInput("");
+                  setIndexInput("");
+                }}
+                title="Remove uploaded file"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => secretFileInputRef.current?.click()}
+              title="Restore your Voting Key from a downloaded backup file"
+            >
+              Upload Voting Key
+            </button>
+          )}
           <input
             ref={secretFileInputRef}
             type="file"
@@ -304,9 +358,11 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
             onChange={handleSecretFileChange}
           />
         </div>
-        <p className="text-xs opacity-60 text-center">
-          Cleared your browser data? Upload the secret file you downloaded during registration.
-        </p>
+        {!uploadedFileName && (
+          <p className="text-xs opacity-60 text-center">
+            Cleared your browser data? Upload the Voting Key you downloaded during registration.
+          </p>
+        )}
       </div>
     </div>
   );

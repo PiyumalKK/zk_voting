@@ -26,7 +26,7 @@ export const VoteSelector = () => {
   ];
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Choose your vote</h2>
         <p className="text-xs opacity-50">Your selection is private — only you know your choice</p>

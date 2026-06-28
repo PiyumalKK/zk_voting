@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { ShowVotersButton } from "./_components/ShowVotersButton";
 import { NextPage } from "next";
 import { ClearStorageButton } from "~~/app/voting/_components/ClearStorageButton";
@@ -11,7 +12,7 @@ import { VotingStats } from "~~/app/voting/_components/VotingStats";
 import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 
 const VotingPage: NextPage = () => {
-  const { data: leafEvents } = useScaffoldEventHistory({
+  const { data: rawLeafEvents } = useScaffoldEventHistory({
     contractName: "Voting",
     eventName: "NewLeaf",
     watch: true,
@@ -22,6 +23,15 @@ const VotingPage: NextPage = () => {
     contractName: "Voting",
     functionName: "getVotingData",
   });
+
+  const treeSize = Number(votingData?.[5] ?? 0);
+
+  const leafEvents = useMemo(() => {
+    if (!rawLeafEvents) return [];
+    // The current election has exactly `treeSize` leaves.
+    // rawLeafEvents is newest-first, so the first `treeSize` events belong to the current election.
+    return rawLeafEvents.slice(0, treeSize);
+  }, [rawLeafEvents, treeSize]);
 
   const phase = Number(votingData?.[2] ?? 0);
   // Phase: 0 Setup, 1 Registration, 2 Voting, 3 Ended
@@ -34,9 +44,12 @@ const VotingPage: NextPage = () => {
     <div className="flex items-center justify-center flex-col grow pt-6 w-full">
       <div className="px-4 sm:px-5 w-full max-w-7xl mx-auto">
         <div className="flex flex-col items-center w-full">
-          <div className="text-center mb-6">
-            <h1 className="text-3xl font-extrabold gradient-text">Anonymous Voting</h1>
-            <p className="text-sm opacity-60 mt-1">Cast your vote privately using zero-knowledge proofs</p>
+          <div className="text-center mb-8 relative">
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-secondary/10 to-primary/10 blur-3xl -z-10 rounded-full w-3/4 h-full mx-auto" />
+            <h1 className="text-4xl md:text-5xl font-extrabold bg-gradient-to-br from-primary to-secondary text-transparent bg-clip-text drop-shadow-sm">
+              Anonymous Voting
+            </h1>
+            <p className="text-base md:text-lg opacity-70 mt-3 font-medium">Cast your vote privately and securely.</p>
           </div>
 
           <div className="w-full max-w-2xl space-y-5">

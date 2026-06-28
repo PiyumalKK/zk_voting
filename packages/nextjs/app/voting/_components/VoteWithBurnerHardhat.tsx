@@ -170,18 +170,11 @@ export const VoteWithBurnerHardhat = ({
   }, [contractAddress, contractInfo?.address, userAddress]);
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Vote</h2>
-        <p className="text-sm opacity-60">Use a local burner wallet to submit the on-chain vote with the proof.</p>
+        <p className="text-sm opacity-60">Submit your vote privately to the blockchain.</p>
       </div>
-
-      {burnerWallet && (
-        <div className="flex items-center gap-2 justify-center">
-          <span className="text-sm">Burner Wallet:</span>
-          <Address address={burnerWallet.address} />
-        </div>
-      )}
 
       <div className="flex justify-center">
         <button
@@ -221,8 +214,8 @@ export const VoteWithBurnerHardhat = ({
                 try {
                   if (BigInt(proofRoot as string) !== BigInt(currentRoot as bigint)) {
                     notification.error(
-                      "This proof is stale: its Merkle root no longer matches the current voter tree. " +
-                        "Upload your secret on the proof page and regenerate the proof, then try again.",
+                      "Your voting key is outdated or invalid. " +
+                        "Upload your latest Voting Key and try again.",
                     );
                     return;
                   }
@@ -263,10 +256,10 @@ export const VoteWithBurnerHardhat = ({
                 setHasVoted(true);
               } else if (raw.includes("InvalidRoot")) {
                 friendly =
-                  "This proof is stale: its Merkle root no longer matches the current voter tree. " +
-                  "Upload your secret on the proof page and regenerate the proof.";
+                  "Your voting key is outdated. " +
+                  "Upload your latest Voting Key and try again.";
               } else if (raw.includes("InvalidProof")) {
-                friendly = "The proof is invalid for the current election. Regenerate it from your secret.";
+                friendly = "The proof is invalid for the current election. Regenerate it from your Voting Key.";
               } else if (raw.includes("WrongPhase")) {
                 friendly = "Voting is not open right now.";
               } else if (raw.includes("InvalidCandidate")) {
@@ -280,7 +273,7 @@ export const VoteWithBurnerHardhat = ({
           }}
         >
           {isGenerating
-            ? "Generating proof..."
+            ? "Securing your vote..."
             : txStatus === "pending"
               ? "Voting..."
               : hasVoted
