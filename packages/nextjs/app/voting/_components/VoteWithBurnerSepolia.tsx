@@ -70,15 +70,24 @@ const voteOnSepolia = async ({
   throw new Error("Checkpoint 10: implement voteOSepolia"); // placeholder
 };
 
-export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `0x${string}` }) => {
+export const VoteWithBurnerSepolia = ({
+  contractAddress,
+  onGenerateProof,
+  isGenerating,
+  canVote,
+}: {
+  contractAddress?: `0x${string}`;
+  onGenerateProof?: () => Promise<boolean>;
+  isGenerating?: boolean;
+  canVote?: boolean;
+}) => {
   const [smartAccount, setSmartAccount] = useState<`0x${string}` | null>(null);
   const [txStatus, setTxStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
-  const [hasProofStored, setHasProofStored] = useState<boolean>(false);
   const [hasSuccessfulVote, setHasSuccessfulVote] = useState<boolean>(false);
   const [walletOwner, setWalletOwner] = useState<`0x${string}` | null>(null);
   const [smartAccountClient, setSmartAccountClient] = useState<any>(null);
   const [votedSmartAccount, setVotedSmartAccount] = useState<`0x${string}` | null>(null);
-  const { proofData, setProofData } = useChallengeState();
+  const { proofData, setProofData, voteChoice } = useChallengeState();
   const { address: userAddress } = useAccount();
 
   const { data: contractInfo } = useDeployedContractInfo({ contractName: "Voting" });
@@ -106,8 +115,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
       if (effectiveContractAddress && userAddress) {
         const proofExists = hasStoredProof(effectiveContractAddress, userAddress, electionId);
         const transactionResultExists = hasStoredTransactionResult(effectiveContractAddress, userAddress);
-
-        setHasProofStored(proofExists);
 
         if (proofExists && !proofData) {
           try {
@@ -139,7 +146,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
           // Reset displayed smart account
         }
       } else {
-        setHasProofStored(false);
         setVotedSmartAccount(null);
       }
     };
@@ -166,18 +172,31 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
 
       <div className="flex justify-center">
         <button
-          className={`btn btn-primary ${txStatus === "pending" ? "loading" : ""} ${!hasProofStored || !proofData || txStatus === "pending" || hasSuccessfulVote ? "" : "shadow-lg shadow-primary/25"}`}
-          disabled={!hasProofStored || !proofData || txStatus === "pending" || hasSuccessfulVote}
+          className={`btn btn-primary ${txStatus === "pending" || isGenerating ? "loading" : ""} ${!canVote || hasSuccessfulVote || voteChoice === null ? "" : "shadow-lg shadow-primary/25"}`}
+          disabled={!canVote || txStatus === "pending" || isGenerating || hasSuccessfulVote || voteChoice === null}
           onClick={async () => {
             try {
-              if (!proofData) {
+              const currentProof = proofData;
+
+              if (!currentProof && onGenerateProof) {
+                const success = await onGenerateProof();
+                if (!success) return;
+              }
+
+              const effectiveContractAddress = contractAddress || contractInfo?.address;
+              let latestProof = proofData;
+              if (!latestProof && effectiveContractAddress && userAddress) {
+                const stored = loadProofFromLocalStorage(effectiveContractAddress, userAddress, electionId);
+                if (stored) latestProof = stored;
+              }
+
+              if (!latestProof) {
                 console.error("Please generate proof first");
                 return;
               }
               if (!contractInfo && !contractAddress) throw new Error("Contract not found");
 
               setTxStatus("pending");
-              const effectiveContractAddress = contractAddress || contractInfo?.address;
 
               let client = smartAccountClient;
               let currentSmartAccount = smartAccount;
@@ -203,7 +222,7 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
               }
 
               const { userOpHash } = await voteOnSepolia({
-                proofData,
+                proofData: latestProof,
                 contractInfo,
                 contractAddress,
                 smartAccountClient: client,
@@ -302,15 +321,21 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
             }
           }}
         >
-          {txStatus === "pending" ? (
+          {isGenerating ? (
+            "Generating proof..."
+          ) : txStatus === "pending" ? (
             <>
               <span className="loading loading-spinner loading-xs"></span>
               <span>Voting...</span>
             </>
           ) : hasSuccessfulVote ? (
             "Already voted"
+          ) : !canVote ? (
+            "Must register first"
+          ) : voteChoice === null ? (
+            "Select choice first"
           ) : (
-            "Vote with smart account"
+            "Cast Vote"
           )}
         </button>
       </div>

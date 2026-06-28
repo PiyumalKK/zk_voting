@@ -1,21 +1,16 @@
 "use client";
 
 import { ShowVotersButton } from "./_components/ShowVotersButton";
-import { VoteWithBurnerHardhat } from "./_components/VoteWithBurnerHardhat";
 import { NextPage } from "next";
-import { hardhat, sepolia } from "viem/chains";
 import { ClearStorageButton } from "~~/app/voting/_components/ClearStorageButton";
 import { CreateCommitment } from "~~/app/voting/_components/CreateCommitment";
 import { GenerateProof } from "~~/app/voting/_components/GenerateProof";
 import { LogStorageButton } from "~~/app/voting/_components/LogStorageButton";
 import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
-import { VoteWithBurnerSepolia } from "~~/app/voting/_components/VoteWithBurnerSepolia";
 import { VotingStats } from "~~/app/voting/_components/VotingStats";
-import { useScaffoldEventHistory, useScaffoldReadContract, useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 
 const VotingPage: NextPage = () => {
-  const network = useTargetNetwork();
-
   const { data: leafEvents } = useScaffoldEventHistory({
     contractName: "Voting",
     eventName: "NewLeaf",
@@ -63,8 +58,6 @@ const VotingPage: NextPage = () => {
               <>
                 <VoteSelector />
                 <GenerateProof leafEvents={leafEvents || []} />
-                {network.targetNetwork.id === hardhat.id && <VoteWithBurnerHardhat />}
-                {network.targetNetwork.id === sepolia.id && <VoteWithBurnerSepolia />}
               </>
             )}
 
