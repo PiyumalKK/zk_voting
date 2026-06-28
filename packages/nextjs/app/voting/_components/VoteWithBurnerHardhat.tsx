@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Address } from "@scaffold-ui/components";
 import { createPublicClient, createTestClient, createWalletClient, getContract, http, parseEther } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { hardhat } from "viem/chains";
@@ -214,8 +213,7 @@ export const VoteWithBurnerHardhat = ({
                 try {
                   if (BigInt(proofRoot as string) !== BigInt(currentRoot as bigint)) {
                     notification.error(
-                      "Your voting key is outdated or invalid. " +
-                        "Upload your latest Voting Key and try again.",
+                      "Your voting key is outdated or invalid. " + "Upload your latest Voting Key and try again.",
                     );
                     return;
                   }
@@ -255,9 +253,7 @@ export const VoteWithBurnerHardhat = ({
                 friendly = "You have already voted with this identity.";
                 setHasVoted(true);
               } else if (raw.includes("InvalidRoot")) {
-                friendly =
-                  "Your voting key is outdated. " +
-                  "Upload your latest Voting Key and try again.";
+                friendly = "Your voting key is outdated. " + "Upload your latest Voting Key and try again.";
               } else if (raw.includes("InvalidProof")) {
                 friendly = "The proof is invalid for the current election. Regenerate it from your Voting Key.";
               } else if (raw.includes("WrongPhase")) {
@@ -273,7 +269,7 @@ export const VoteWithBurnerHardhat = ({
           }}
         >
           {isGenerating
-            ? "Securing your vote..."
+            ? "Anonymizing your vote..."
             : txStatus === "pending"
               ? "Voting..."
               : hasVoted

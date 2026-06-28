@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Address } from "@scaffold-ui/components";
-import { useDeployedContractInfo, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 
 const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
 const PHASE_BADGE: Record<number, string> = {
@@ -35,8 +34,6 @@ function formatRemaining(seconds: number): string {
 }
 
 export const VotingStats = () => {
-  const { data: deployedContractData } = useDeployedContractInfo({ contractName: "Voting" });
-
   const { data: votingData } = useScaffoldReadContract({
     contractName: "Voting",
     functionName: "getVotingData",
@@ -60,7 +57,6 @@ export const VotingStats = () => {
   }, []);
 
   const question = votingData?.[0] as string | undefined;
-  const owner = votingData?.[1] as `0x${string}` | undefined;
   const phase = Number(votingData?.[2] ?? 0);
   const registrationEnd = Number(votingData?.[3] ?? 0);
   const votingEnd = Number(votingData?.[4] ?? 0);
@@ -110,7 +106,10 @@ export const VotingStats = () => {
               const pct = total > 0n ? Number((c * 1000n) / total) / 10 : 0;
               const p = PALETTES[idx % PALETTES.length];
               return (
-                <div key={`${idx}-${name}`} className={`rounded-2xl border ${p.border} ${p.bg} p-5 text-center shadow-sm hover:shadow-md transition-shadow duration-300`}>
+                <div
+                  key={`${idx}-${name}`}
+                  className={`rounded-2xl border ${p.border} ${p.bg} p-5 text-center shadow-sm hover:shadow-md transition-shadow duration-300`}
+                >
                   <div className="text-sm opacity-70 font-semibold uppercase tracking-wider truncate mb-1" title={name}>
                     {name}
                   </div>

@@ -7,7 +7,6 @@ import { ClearStorageButton } from "~~/app/voting/_components/ClearStorageButton
 import { CreateCommitment } from "~~/app/voting/_components/CreateCommitment";
 import { GenerateProof } from "~~/app/voting/_components/GenerateProof";
 import { LogStorageButton } from "~~/app/voting/_components/LogStorageButton";
-import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
 import { VotingStats } from "~~/app/voting/_components/VotingStats";
 import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 
@@ -53,10 +52,6 @@ const VotingPage: NextPage = () => {
           </div>
 
           <div className="w-full max-w-2xl space-y-5">
-            <div className="flex flex-wrap gap-2 justify-end">
-              <ShowVotersButton />
-            </div>
-
             <VotingStats />
 
             {showStartupNotice && (
@@ -67,12 +62,7 @@ const VotingPage: NextPage = () => {
 
             {showRegistration && <CreateCommitment leafEvents={leafEvents || []} />}
 
-            {showVoting && (
-              <>
-                <VoteSelector />
-                <GenerateProof leafEvents={leafEvents || []} />
-              </>
-            )}
+            {showVoting && <GenerateProof leafEvents={leafEvents || []} />}
 
             {showEndedNotice && (
               <PhaseNotice tone="neutral" title="Election ended">
@@ -81,10 +71,16 @@ const VotingPage: NextPage = () => {
             )}
 
             <div className="mt-8 pt-6 border-t border-base-300/50">
-              <div className="flex justify-center gap-4">
-                <LogStorageButton />
-                <ClearStorageButton />
-              </div>
+              <details className="collapse bg-base-200/50 border border-base-300">
+                <summary className="collapse-title text-sm font-medium text-center opacity-70 cursor-pointer">
+                  Advanced Tools
+                </summary>
+                <div className="collapse-content flex flex-wrap justify-center gap-4 pt-4">
+                  <ShowVotersButton />
+                  <LogStorageButton />
+                  <ClearStorageButton />
+                </div>
+              </details>
             </div>
           </div>
         </div>

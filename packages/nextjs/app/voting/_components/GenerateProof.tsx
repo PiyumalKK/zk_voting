@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UltraHonkBackend } from "@aztec/bb.js";
 // @ts-ignore
 import { Noir } from "@noir-lang/noir_js";
@@ -9,6 +9,7 @@ import { poseidon1, poseidon2 } from "poseidon-lite";
 import { encodeAbiParameters, toHex } from "viem";
 import { hardhat, sepolia } from "viem/chains";
 import { useAccount } from "wagmi";
+import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
 import { VoteWithBurnerHardhat } from "~~/app/voting/_components/VoteWithBurnerHardhat";
 import { VoteWithBurnerSepolia } from "~~/app/voting/_components/VoteWithBurnerSepolia";
 import { useDeployedContractInfo, useScaffoldReadContract, useTargetNetwork } from "~~/hooks/scaffold-eth";
@@ -144,6 +145,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const [secretInput, setSecretInput] = useState<string>("");
   const [indexInput, setIndexInput] = useState<string>("");
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [hasLocalKey, setHasLocalKey] = useState(false);
 
   const { data: votingData } = useScaffoldReadContract({
     contractName: "Voting",
@@ -166,6 +168,17 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
 
   const isVoter = voterData?.[0];
   const hasRegistered = voterData?.[1];
+
+  useEffect(() => {
+    if (deployedContractData?.address && userAddress) {
+      const stored = loadCommitmentFromLocalStorage(deployedContractData.address, userAddress, electionId);
+      if (stored?.secret || commitmentData?.secret) {
+        setHasLocalKey(true);
+      } else {
+        setHasLocalKey(false);
+      }
+    }
+  }, [deployedContractData?.address, userAddress, electionId, commitmentData]);
 
   const canVote = Boolean(isConnected && isVoter === true && hasRegistered === true);
 
@@ -277,10 +290,10 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
           electionId,
         );
       }
-      notification.success("Secret restored. You can now generate your proof.");
+      notification.success("Voter Pass restored. You can now cast your vote.");
     } catch (error) {
       console.error("Error using uploaded secret:", error);
-      notification.error("Invalid secret file.");
+      notification.error("Invalid Voter Pass file.");
     }
   };
 
@@ -294,76 +307,99 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   };
 
   return (
-    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
-      <div className="space-y-1">
-        <h2 className="text-2xl font-bold text-center"> Cast your vote </h2>
-        <p className="text-sm opacity-60 text-center">
-          Submit your ballot privately and securely.
-        </p>
-      </div>
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-8 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
+      <VoteSelector />
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2 justify-center">
-          {network.targetNetwork.id === hardhat.id && (
-            <VoteWithBurnerHardhat
-              onGenerateProof={getCircuitDataAndGenerateProof}
-              isGenerating={isLoading}
-              canVote={canVote}
-            />
-          )}
-          {network.targetNetwork.id === sepolia.id && (
-            <VoteWithBurnerSepolia
-              onGenerateProof={getCircuitDataAndGenerateProof}
-              isGenerating={isLoading}
-              canVote={canVote}
-            />
-          )}
-        </div>
-
-        <div className="flex justify-center mt-4">
-          {uploadedFileName ? (
-            <div className="flex items-center gap-2 bg-base-200/50 px-4 py-2 rounded-xl border border-base-300">
-              <span className="text-sm font-medium opacity-80 truncate max-w-[200px]" title={uploadedFileName}>
-                {uploadedFileName}
-              </span>
-              <button
-                type="button"
-                className="btn btn-ghost btn-xs btn-circle"
-                onClick={() => {
-                  setUploadedFileName(null);
-                  setNullifierInput("");
-                  setSecretInput("");
-                  setIndexInput("");
-                }}
-                title="Remove uploaded file"
-              >
-                ✕
-              </button>
+      {voteChoice !== null && (
+        <div className="pt-6 border-t border-base-300/50">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {network.targetNetwork.id === hardhat.id && (
+                <VoteWithBurnerHardhat
+                  onGenerateProof={getCircuitDataAndGenerateProof}
+                  isGenerating={isLoading}
+                  canVote={canVote}
+                />
+              )}
+              {network.targetNetwork.id === sepolia.id && (
+                <VoteWithBurnerSepolia
+                  onGenerateProof={getCircuitDataAndGenerateProof}
+                  isGenerating={isLoading}
+                  canVote={canVote}
+                />
+              )}
             </div>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-outline btn-sm"
-              onClick={() => secretFileInputRef.current?.click()}
-              title="Restore your Voting Key from a downloaded backup file"
-            >
-              Upload Voting Key
-            </button>
-          )}
-          <input
-            ref={secretFileInputRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={handleSecretFileChange}
-          />
+
+            <div className="flex flex-col gap-4 mt-4">
+              {hasLocalKey && !uploadedFileName ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="badge badge-success badge-outline gap-2 p-3 font-medium bg-success/5 border-success/20">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    Voter Pass Secured
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-center">
+                  {uploadedFileName ? (
+                    <div className="flex items-center gap-2 bg-base-200/50 px-4 py-2 rounded-xl border border-base-300">
+                      <span className="text-sm font-medium opacity-80 truncate max-w-[200px]" title={uploadedFileName}>
+                        {uploadedFileName}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs btn-circle"
+                        onClick={() => {
+                          setUploadedFileName(null);
+                          setNullifierInput("");
+                          setSecretInput("");
+                          setIndexInput("");
+                        }}
+                        title="Remove uploaded file"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => secretFileInputRef.current?.click()}
+                      title="Restore your Voter Pass from a downloaded backup file"
+                    >
+                      Upload Voter Pass
+                    </button>
+                  )}
+                </div>
+              )}
+              <input
+                ref={secretFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleSecretFileChange}
+              />
+              {!hasLocalKey && !uploadedFileName && (
+                <p className="text-xs opacity-60 text-center">
+                  Cleared your browser data? Upload the Voter Pass you downloaded during registration.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-        {!uploadedFileName && (
-          <p className="text-xs opacity-60 text-center">
-            Cleared your browser data? Upload the Voting Key you downloaded during registration.
-          </p>
-        )}
-      </div>
+      )}
     </div>
   );
 };

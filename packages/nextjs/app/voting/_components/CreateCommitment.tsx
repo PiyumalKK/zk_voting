@@ -102,10 +102,10 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `zk-voting-secret-election-${electionId?.toString() ?? "x"}.json`;
+    link.download = `voter-pass-election-${electionId?.toString() ?? "x"}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    notification.success("Voting Key automatically downloaded. Keep it safe and private.");
+    notification.success("Voter Pass automatically downloaded. Keep it safe and private.");
   };
 
   const handleInsertCommitment = async (dataOverride?: CommitmentData) => {
@@ -123,20 +123,20 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
           blockConfirmations: 1,
           onBlockConfirmation: (txnReceipt: any) => {
             let newIndex = leafEvents ? leafEvents.length : 0; // fallback
-            
+
             if (txnReceipt && txnReceipt.logs) {
               for (const log of txnReceipt.logs) {
                 try {
-                  const decoded = decodeEventLog({
+                  const decoded: any = decodeEventLog({
                     abi: deployedContractData?.abi as any,
                     data: log.data,
                     topics: log.topics,
                   });
                   if (decoded.eventName === "NewLeaf") {
-                    newIndex = Number((decoded.args as any).index);
+                    newIndex = Number(decoded.args.index);
                     break;
                   }
-                } catch (e) {
+                } catch {
                   // Ignore logs that don't match
                 }
               }
@@ -147,7 +147,7 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
             setIsInserted(true);
 
             saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress, electionId);
-            
+
             // Auto-download the voting key once the block is confirmed and index is assigned
             handleDownloadSecret(updatedData);
           },
@@ -168,8 +168,8 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
   return (
     <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1 text-center">
-        <h2 className="text-2xl font-bold">Register for this vote</h2>
-        <p className="text-sm opacity-60">Securely register to get your anonymous voting pass.</p>
+        <h2 className="text-2xl font-bold">Register to vote</h2>
+        <p className="text-sm opacity-60">Securely register to get your anonymous Voter Pass.</p>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -194,21 +194,22 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
           ) : isInserting ? (
             <>
               <span className="loading loading-spinner loading-sm"></span>
-              Securing & Downloading Key...
+              Securing & Downloading Voter Pass...
             </>
           ) : !isConnected ? (
             "Connect wallet to register"
           ) : isVoter === false ? (
             "Not eligible - not on voters list"
           ) : hasRegistered === true ? (
-            "✓ Already registered for this vote"
+            "✓ Registered! Wait for voting to open."
           ) : (
             "Register to vote"
           )}
         </button>
 
         <p className="text-xs opacity-60 text-center">
-          Your private Voting Key will be automatically downloaded once registration is complete. Keep it safe — it is required to cast your vote and cannot be recovered if lost.
+          Your private Voter Pass will be automatically downloaded once registration is complete. Keep it safe — it is
+          required to cast your vote and cannot be recovered if lost.
         </p>
       </div>
     </div>

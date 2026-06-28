@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Address } from "@scaffold-ui/components";
 import { createSmartAccountClient } from "permissionless";
 import { toSafeSmartAccount } from "permissionless/accounts";
 import { createPimlicoClient } from "permissionless/clients/pimlico";
@@ -86,7 +85,6 @@ export const VoteWithBurnerSepolia = ({
   const [hasSuccessfulVote, setHasSuccessfulVote] = useState<boolean>(false);
   const [walletOwner, setWalletOwner] = useState<`0x${string}` | null>(null);
   const [smartAccountClient, setSmartAccountClient] = useState<any>(null);
-  const [votedSmartAccount, setVotedSmartAccount] = useState<`0x${string}` | null>(null);
   const { proofData, setProofData, voteChoice } = useChallengeState();
   const { address: userAddress } = useAccount();
 
@@ -133,8 +131,6 @@ export const VoteWithBurnerSepolia = ({
             if (storedResult) {
               setTxStatus(storedResult.success ? "success" : "error");
               setHasSuccessfulVote(Boolean(storedResult.success));
-              const fromReceiptSA = storedResult.receipt?.smartAccountAddress as `0x${string}` | undefined;
-              setVotedSmartAccount((fromReceiptSA as `0x${string}`) || null);
               // We only display the smart account publicly; owner is kept internal
             }
           } catch (error) {
@@ -142,11 +138,8 @@ export const VoteWithBurnerSepolia = ({
           }
         } else {
           setHasSuccessfulVote(false);
-          setVotedSmartAccount(null);
           // Reset displayed smart account
         }
-      } else {
-        setVotedSmartAccount(null);
       }
     };
 
@@ -157,9 +150,7 @@ export const VoteWithBurnerSepolia = ({
     <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Vote</h2>
-        <p className="text-sm opacity-60">
-          Submit your vote privately to the blockchain. Gas fees are sponsored.
-        </p>
+        <p className="text-sm opacity-60">Submit your vote privately to the blockchain. Gas fees are sponsored.</p>
       </div>
 
       <div className="flex justify-center">
@@ -243,7 +234,6 @@ export const VoteWithBurnerSepolia = ({
                       userAddress,
                       enhancedReceipt,
                     );
-                    setVotedSmartAccount((currentSmartAccount as `0x${string}`) || null);
                     // owner is not displayed; keep internal if needed
                   }
                 } else {
@@ -264,7 +254,6 @@ export const VoteWithBurnerSepolia = ({
                       enhancedReceipt,
                       "User operation failed",
                     );
-                    setVotedSmartAccount((currentSmartAccount as `0x${string}`) || null);
                     // owner is not displayed; keep internal if needed
                   }
                 }
@@ -288,7 +277,6 @@ export const VoteWithBurnerSepolia = ({
                       },
                       "Transaction submitted successfully but receipt timed out",
                     );
-                    setVotedSmartAccount((currentSmartAccount as `0x${string}`) || null);
                     // owner is not displayed; keep internal if needed
                   }
                 } else {
@@ -314,7 +302,7 @@ export const VoteWithBurnerSepolia = ({
           }}
         >
           {isGenerating ? (
-            "Securing your vote..."
+            "Anonymizing your vote..."
           ) : txStatus === "pending" ? (
             <>
               <span className="loading loading-spinner loading-xs"></span>
