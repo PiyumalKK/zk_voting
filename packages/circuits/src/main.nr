@@ -10,7 +10,9 @@ fn main(
     secret: Field,
     // public inputs
     root: pub Field,
-    vote: pub bool,
+    // Vote is the candidate index (0..MAX_CANDIDATES-1). Constrained to 8 bits (0..255)
+    // by the circuit; the on-chain contract additionally enforces it is < candidates.length.
+    vote: pub Field,
     depth: pub u32,
     // private inputs
     index: Field,
@@ -44,6 +46,7 @@ fn main(
     assert(computed_root == root);
 
     // Bind the vote to the proof (prevents front-running with a different vote)
-    let vote_field = vote as Field;
-    assert((vote_field * vote_field) == vote_field);
+    // and range-check it to 8 bits (0..=255). The contract enforces the upper
+    // bound against the actual candidate count.
+    let _vote_bits: [u1; 8] = vote.to_le_bits();
 }

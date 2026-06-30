@@ -1,21 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UltraHonkBackend } from "@aztec/bb.js";
 // @ts-ignore
 import { Noir } from "@noir-lang/noir_js";
 import { LeanIMT } from "@zk-kit/lean-imt";
-import { encodeAbiParameters, toHex } from "viem";
 import { poseidon1, poseidon2 } from "poseidon-lite";
+import { encodeAbiParameters, toHex } from "viem";
+import { hardhat, sepolia } from "viem/chains";
 import { useAccount } from "wagmi";
-import { useDeployedContractInfo, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
+import { VoteWithBurnerHardhat } from "~~/app/voting/_components/VoteWithBurnerHardhat";
+import { VoteWithBurnerSepolia } from "~~/app/voting/_components/VoteWithBurnerSepolia";
+import { useDeployedContractInfo, useScaffoldReadContract, useTargetNetwork } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
-import { hasStoredProof, loadCommitmentFromLocalStorage, saveProofToLocalStorage } from "~~/utils/proofStorage";
+import {
+  loadCommitmentFromLocalStorage,
+  saveCommitmentToLocalStorage,
+  saveProofToLocalStorage,
+} from "~~/utils/proofStorage";
 import { notification } from "~~/utils/scaffold-eth";
 
 const generateProof = async (
   _root: bigint,
-  _vote: boolean,
+  _vote: number,
   _depth: number,
   _nullifier: string,
   _secret: string,
@@ -28,10 +36,8 @@ const generateProof = async (
     const nullifierHash = poseidon1([BigInt(_nullifier)]);
 
     // Step 2: Rebuild the Merkle tree from on-chain leaf events
-    const calculatedTree = new LeanIMT((a: bigint, b: bigint) =>
-      poseidon2([a, b]),
-    );
-    const leaves = _leaves.map((event) => {
+    const calculatedTree = new LeanIMT((a: bigint, b: bigint) => poseidon2([a, b]));
+    const leaves = _leaves.map(event => {
       return event?.args.value;
     });
     // Events are newest-first, tree needs oldest-first
@@ -40,9 +46,38 @@ const generateProof = async (
 
     // Step 3: Generate Merkle inclusion proof for our leaf
     const calculatedProof = calculatedTree.generateProof(_index);
-    const sibs = calculatedProof.siblings.map((sib) => {
+    const sibs = calculatedProof.siblings.map(sib => {
       return sib.toString();
     });
+
+    // Calculate Circuit Index to fix LeanIMT vs Noir binary_merkle_root incompatibility
+    let circuitIndex = 0;
+    const siblingsNum = calculatedProof.siblings.length;
+    const maxIndex = 1 << siblingsNum;
+    const leaf = poseidon2([BigInt(_nullifier), BigInt(_secret)]);
+    let foundCircuitIndex = false;
+
+    for (let cIndex = 0; cIndex < maxIndex; cIndex++) {
+      let current = leaf;
+      for (let i = 0; i < siblingsNum; i++) {
+        const isRight = (cIndex >> i) & 1;
+        const sibling = calculatedProof.siblings[i] as bigint;
+        if (isRight) {
+          current = poseidon2([sibling, current]);
+        } else {
+          current = poseidon2([current, sibling]);
+        }
+      }
+      if (current === calculatedProof.root) {
+        circuitIndex = cIndex;
+        foundCircuitIndex = true;
+        break;
+      }
+    }
+
+    if (!foundCircuitIndex) {
+      throw new Error("Could not find a valid circuit index for the given Merkle path.");
+    }
 
     // Step 4: Pad siblings to fixed length 16 (circuit expects [Field; 16])
     const lengthDiff = 16 - sibs.length;
@@ -56,9 +91,11 @@ const generateProof = async (
       nullifier: BigInt(_nullifier).toString(),
       secret: BigInt(_secret).toString(),
       root: _root.toString(),
-      vote: _vote,
+      // Candidate index encoded as a Field string. Circuit range-checks to 8 bits;
+      // contract enforces upper bound vs candidates.length.
+      vote: BigInt(_vote).toString(),
       depth: _depth.toString(),
-      index: _index.toString(),
+      index: circuitIndex.toString(),
       siblings: sibs,
     };
 
@@ -79,15 +116,10 @@ const generateProof = async (
 
     // Step 8: Format for Solidity — encode proof + publicInputs as ABI params
     const proofHex = toHex(proof);
-    const inputsHex = publicInputs.map((x) =>
-      typeof x === "string"
-        ? (x as `0x${string}`)
-        : toHex(x as Uint8Array, { size: 32 }),
+    const inputsHex = publicInputs.map(x =>
+      typeof x === "string" ? (x as `0x${string}`) : toHex(x as Uint8Array, { size: 32 }),
     );
-    const result = encodeAbiParameters(
-      [{ type: "bytes" }, { type: "bytes32[]" }],
-      [proofHex, inputsHex],
-    );
+    const result = encodeAbiParameters([{ type: "bytes" }, { type: "bytes32[]" }], [proofHex, inputsHex]);
     console.log("encoded result for Solidity:", result.slice(0, 66) + "...");
 
     return { proof, publicInputs };
@@ -104,21 +136,29 @@ interface CreateCommitmentProps {
 export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const [, setCircuitData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { commitmentData, setProofData, voteChoice } = useChallengeState();
+  const { commitmentData, setCommitmentData, setProofData, voteChoice } = useChallengeState();
   const { address: userAddress, isConnected } = useAccount();
   const { data: deployedContractData } = useDeployedContractInfo({ contractName: "Voting" });
+  const secretFileInputRef = useRef<HTMLInputElement>(null);
 
   const [nullifierInput, setNullifierInput] = useState<string>("");
   const [secretInput, setSecretInput] = useState<string>("");
   const [indexInput, setIndexInput] = useState<string>("");
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [hasLocalKey, setHasLocalKey] = useState(false);
 
   const { data: votingData } = useScaffoldReadContract({
     contractName: "Voting",
     functionName: "getVotingData",
   });
 
-  const root = votingData?.[6];
-  const treeDepth = votingData?.[5];
+  const root = votingData?.[7];
+  const treeDepth = votingData?.[6];
+
+  const { data: electionId } = useScaffoldReadContract({
+    contractName: "Voting",
+    functionName: "getCurrentElectionId",
+  });
 
   const { data: voterData } = useScaffoldReadContract({
     contractName: "Voting",
@@ -129,17 +169,28 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const isVoter = voterData?.[0];
   const hasRegistered = voterData?.[1];
 
+  useEffect(() => {
+    if (deployedContractData?.address && userAddress) {
+      const stored = loadCommitmentFromLocalStorage(deployedContractData.address, userAddress, electionId);
+      if (stored?.secret || commitmentData?.secret) {
+        setHasLocalKey(true);
+      } else {
+        setHasLocalKey(false);
+      }
+    }
+  }, [deployedContractData?.address, userAddress, electionId, commitmentData]);
+
   const canVote = Boolean(isConnected && isVoter === true && hasRegistered === true);
 
-  const hasExistingProof = hasStoredProof(deployedContractData?.address, userAddress);
+  const network = useTargetNetwork();
 
-  const getCircuitDataAndGenerateProof = async () => {
+  const getCircuitDataAndGenerateProof = async (): Promise<boolean> => {
     setIsLoading(true);
     try {
       // Ensure commitment inputs are loaded from localStorage when available
       const storedCommitment =
         deployedContractData?.address && userAddress
-          ? loadCommitmentFromLocalStorage(deployedContractData.address, userAddress)
+          ? loadCommitmentFromLocalStorage(deployedContractData.address, userAddress, electionId)
           : null;
 
       // Reflect stored values in the UI if inputs are empty
@@ -167,7 +218,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         indexInput?.trim() !== "" ? Number(indexInput) : (commitmentData?.index ?? storedCommitment?.index);
 
       if (voteChoice === null) {
-        throw new Error("Please select your vote (Yes/No) first");
+        throw new Error("Please select a candidate first");
       }
 
       if (!leafEvents || leafEvents.length === 0) {
@@ -200,44 +251,155 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         deployedContractData?.address,
         voteChoice,
         userAddress,
+        electionId,
       );
+      return true;
     } catch (error) {
       console.error("Error in getCircuitDataAndGenerateProof:", error);
       notification.error((error as Error).message || "Failed to generate proof");
+      return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-5 border border-base-300/50 hover-lift">
-      <div className="space-y-1">
-        <h2 className="text-2xl font-bold text-center"> Generate ZK proof off-chain </h2>
-        <p className="text-sm opacity-60">
-          Prove membership in the Merkle tree and add your voting decision to the proof.
-        </p>
-      </div>
+  const handleUploadSecret = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed?.nullifier || !parsed?.secret) {
+        notification.error("File is missing a nullifier or secret.");
+        return;
+      }
+      const nullifier = toHex(BigInt(parsed.nullifier), { size: 32 });
+      const secret = toHex(BigInt(parsed.secret), { size: 32 });
+      const commitment = toHex(poseidon2([BigInt(parsed.nullifier), BigInt(parsed.secret)]), { size: 32 });
+      const index = typeof parsed.index === "number" ? parsed.index : undefined;
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2 justify-center">
-          <button
-            type="button"
-            className={`btn ${canVote && !hasExistingProof && voteChoice !== null ? "btn-primary shadow-lg shadow-primary/25" : "btn-disabled"}`}
-            onClick={canVote && !hasExistingProof && voteChoice !== null ? getCircuitDataAndGenerateProof : undefined}
-            disabled={isLoading || !canVote || hasExistingProof || voteChoice === null}
-          >
-            {isLoading
-              ? "Generating proof..."
-              : hasExistingProof
-                ? "Proof already exists"
-                : !canVote
-                  ? "Must register first"
-                  : voteChoice === null
-                    ? "Select choice first"
-                    : "Generate proof"}
-          </button>
+      setNullifierInput(nullifier);
+      setSecretInput(secret);
+      setIndexInput(index?.toString() ?? "");
+
+      const restored = { commitment, nullifier, secret, index };
+      setCommitmentData(restored);
+      if (index !== undefined) {
+        saveCommitmentToLocalStorage(
+          { commitment, nullifier, secret, index },
+          deployedContractData?.address,
+          userAddress,
+          electionId,
+        );
+      }
+      notification.success("Voter Pass restored. You can now cast your vote.");
+    } catch (error) {
+      console.error("Error using uploaded secret:", error);
+      notification.error("Invalid Voter Pass file.");
+    }
+  };
+
+  const handleSecretFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) {
+      setUploadedFileName(file.name);
+      void handleUploadSecret(file);
+    }
+  };
+
+  return (
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-8 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
+      <VoteSelector />
+
+      {voteChoice !== null && (
+        <div className="pt-6 border-t border-base-300/50">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {network.targetNetwork.id === hardhat.id && (
+                <VoteWithBurnerHardhat
+                  onGenerateProof={getCircuitDataAndGenerateProof}
+                  isGenerating={isLoading}
+                  canVote={canVote}
+                />
+              )}
+              {network.targetNetwork.id === sepolia.id && (
+                <VoteWithBurnerSepolia
+                  onGenerateProof={getCircuitDataAndGenerateProof}
+                  isGenerating={isLoading}
+                  canVote={canVote}
+                />
+              )}
+            </div>
+
+            <div className="flex flex-col gap-4 mt-4">
+              {hasLocalKey && !uploadedFileName ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="badge badge-success badge-outline gap-2 p-3 font-medium bg-success/5 border-success/20">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    Voter Pass Secured
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-center">
+                  {uploadedFileName ? (
+                    <div className="flex items-center gap-2 bg-base-200/50 px-4 py-2 rounded-xl border border-base-300">
+                      <span className="text-sm font-medium opacity-80 truncate max-w-[200px]" title={uploadedFileName}>
+                        {uploadedFileName}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs btn-circle"
+                        onClick={() => {
+                          setUploadedFileName(null);
+                          setNullifierInput("");
+                          setSecretInput("");
+                          setIndexInput("");
+                        }}
+                        title="Remove uploaded file"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => secretFileInputRef.current?.click()}
+                      title="Restore your Voter Pass from a downloaded backup file"
+                    >
+                      Upload Voter Pass
+                    </button>
+                  )}
+                </div>
+              )}
+              <input
+                ref={secretFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleSecretFileChange}
+              />
+              {!hasLocalKey && !uploadedFileName && (
+                <p className="text-xs opacity-60 text-center">
+                  Cleared your browser data? Upload the Voter Pass you downloaded during registration.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

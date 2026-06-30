@@ -4,11 +4,12 @@ import { useState } from "react";
 ////// Checkpoint 7 //////
 import { Fr } from "@aztec/bb.js";
 import { poseidon2 } from "poseidon-lite";
-import { toHex } from "viem";
+import { decodeEventLog, toHex } from "viem";
 import { useAccount } from "wagmi";
 import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
 import { saveCommitmentToLocalStorage } from "~~/utils/proofStorage";
+import { notification } from "~~/utils/scaffold-eth";
 
 const generateCommitment = async (): Promise<CommitmentData> => {
   ////// Checkpoint 7 //////
@@ -54,6 +55,11 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
     args: [userAddress as `0x${string}`],
   });
 
+  const { data: electionId } = useScaffoldReadContract({
+    contractName: "Voting",
+    functionName: "getCurrentElectionId",
+  });
+
   const isVoter = voterData?.[0];
   const hasRegistered = voterData?.[1];
 
@@ -77,6 +83,31 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
     }
   };
 
+  const handleDownloadSecret = (dataOverride?: CommitmentData) => {
+    const dataToUse = dataOverride || commitmentData;
+    if (!dataToUse) {
+      notification.error("Generate or register a commitment first.");
+      return;
+    }
+    const payload = {
+      nullifier: dataToUse.nullifier,
+      secret: dataToUse.secret,
+      commitment: dataToUse.commitment,
+      index: dataToUse.index,
+      electionId: electionId?.toString(),
+      contractAddress: deployedContractData?.address,
+      savedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `voter-pass-election-${electionId?.toString() ?? "x"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    notification.success("Voter Pass automatically downloaded. Keep it safe and private.");
+  };
+
   const handleInsertCommitment = async (dataOverride?: CommitmentData) => {
     const localData = dataOverride || commitmentData;
     if (!localData) return;
@@ -90,15 +121,35 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
         },
         {
           blockConfirmations: 1,
-          onBlockConfirmation: () => {
-            if (leafEvents) {
-              const newIndex = leafEvents.length;
-              const updatedData = { ...localData, index: newIndex };
-              setCommitmentData(updatedData);
-              setIsInserted(true);
+          onBlockConfirmation: (txnReceipt: any) => {
+            let newIndex = leafEvents ? leafEvents.length : 0; // fallback
 
-              saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress);
+            if (txnReceipt && txnReceipt.logs) {
+              for (const log of txnReceipt.logs) {
+                try {
+                  const decoded: any = decodeEventLog({
+                    abi: deployedContractData?.abi as any,
+                    data: log.data,
+                    topics: log.topics,
+                  });
+                  if (decoded.eventName === "NewLeaf") {
+                    newIndex = Number(decoded.args.index);
+                    break;
+                  }
+                } catch {
+                  // Ignore logs that don't match
+                }
+              }
             }
+
+            const updatedData = { ...localData, index: newIndex };
+            setCommitmentData(updatedData);
+            setIsInserted(true);
+
+            saveCommitmentToLocalStorage(updatedData, deployedContractData?.address, userAddress, electionId);
+
+            // Auto-download the voting key once the block is confirmed and index is assigned
+            handleDownloadSecret(updatedData);
           },
         },
       );
@@ -115,10 +166,10 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
   };
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-5 border border-base-300/50 hover-lift">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1 text-center">
-        <h2 className="text-2xl font-bold">Register for this vote</h2>
-        <p className="text-sm opacity-60">Generate your anonymous identifier and insert it into the Merkle tree.</p>
+        <h2 className="text-2xl font-bold">Register to vote</h2>
+        <p className="text-sm opacity-60">Securely register to get your anonymous Voter Pass.</p>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -138,23 +189,28 @@ export const CreateCommitment = ({ leafEvents = [] }: CreateCommitmentProps) => 
           {isGenerating ? (
             <>
               <span className="loading loading-spinner loading-sm"></span>
-              Generating commitment...
+              Preparing pass...
             </>
           ) : isInserting ? (
             <>
               <span className="loading loading-spinner loading-sm"></span>
-              Inserting into Merkle tree...
+              Securing & Downloading Voter Pass...
             </>
           ) : !isConnected ? (
             "Connect wallet to register"
           ) : isVoter === false ? (
             "Not eligible - not on voters list"
           ) : hasRegistered === true ? (
-            "✓ Already registered for this vote"
+            "✓ Registered! Wait for voting to open."
           ) : (
             "Register to vote"
           )}
         </button>
+
+        <p className="text-xs opacity-60 text-center">
+          Your private Voter Pass will be automatically downloaded once registration is complete. Keep it safe — it is
+          required to cast your vote and cannot be recovered if lost.
+        </p>
       </div>
     </div>
   );

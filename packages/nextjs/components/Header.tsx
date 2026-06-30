@@ -4,10 +4,9 @@ import React, { useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bars3Icon, BugAntIcon } from "@heroicons/react/24/outline";
-import { UserGroupIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon, BugAntIcon, Cog6ToothIcon, UserGroupIcon } from "@heroicons/react/24/outline";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
-import { useOutsideClick } from "~~/hooks/scaffold-eth";
+import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
 
 type HeaderMenuLink = {
   label: string;
@@ -15,7 +14,7 @@ type HeaderMenuLink = {
   icon?: React.ReactNode;
 };
 
-export const menuLinks: HeaderMenuLink[] = [
+export const baseMenuLinks: HeaderMenuLink[] = [
   {
     label: "Home",
     href: "/",
@@ -32,12 +31,20 @@ export const menuLinks: HeaderMenuLink[] = [
   },
 ];
 
+const adminLink: HeaderMenuLink = {
+  label: "Admin",
+  href: "/voting/admin",
+  icon: <Cog6ToothIcon className="h-4 w-4" />,
+};
+
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
+  const isOwner = useIsVotingOwner();
+  const links = isOwner ? [...baseMenuLinks, adminLink] : baseMenuLinks;
 
   return (
     <>
-      {menuLinks.map(({ label, href, icon }) => {
+      {links.map(({ label, href, icon }) => {
         const isActive = pathname === href;
         return (
           <li key={href}>

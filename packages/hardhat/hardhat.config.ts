@@ -52,6 +52,13 @@ const config: HardhatUserConfig = {
         url: `https://eth-mainnet.alchemyapi.io/v2/${providerApiKey}`,
         enabled: process.env.MAINNET_FORKING_ENABLED === "true",
       },
+      // The EVM enforces a hard per-transaction gas cap of 2**24 (16,777,216).
+      // Keep the block gas limit just under it so wallets (e.g. the burner
+      // connector) that default their tx gas to the block gas limit stay legal.
+      blockGasLimit: 16_000_000,
+    },
+    localhost: {
+      url: "http://127.0.0.1:8545",
     },
 
     mainnet: {

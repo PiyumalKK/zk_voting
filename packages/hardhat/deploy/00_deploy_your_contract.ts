@@ -8,6 +8,10 @@ const deployVotingContract: DeployFunction = async function (hre: HardhatRuntime
 
   const ownerAddress = deployer;
   const question = "Do you support this proposal?";
+  // Default candidates — preserve the "Yes/No" feel of the original demo
+  // while exercising the multi-candidate path. Admin can replace these
+  // during the Setup phase via setCandidates(...).
+  const initialCandidates: string[] = ["Yes", "No"];
 
   // 1. Deploy PoseidonT3 hash library (used internally by LeanIMT)
   const poseidonT3 = await deploy("PoseidonT3", {
@@ -36,7 +40,7 @@ const deployVotingContract: DeployFunction = async function (hre: HardhatRuntime
   // 4. Deploy the Voting contract, linked to LeanIMT, with verifier address
   await deploy("Voting", {
     from: deployer,
-    args: [ownerAddress, verifier.address, question],
+    args: [ownerAddress, verifier.address, question, initialCandidates],
     libraries: {
       LeanIMT: leanIMT.address,
     },
@@ -44,7 +48,7 @@ const deployVotingContract: DeployFunction = async function (hre: HardhatRuntime
     autoMine: true,
   });
 
-  const voting = await hre.ethers.getContract<Contract>("Voting", deployer);
+  await hre.ethers.getContract<Contract>("Voting", deployer);
   console.log("🗳️  Voting deployed with verifier at:", verifier.address);
 };
 
