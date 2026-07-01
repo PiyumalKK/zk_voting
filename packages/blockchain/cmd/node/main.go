@@ -51,7 +51,10 @@ func main() {
 	bc, err := store.LoadBlockchain()
 	if err != nil {
 		log.Info().Msg("No existing blockchain found — creating new genesis block")
-		bc = core.NewBlockchain("Do you support this proposal?")
+		// Default candidates mirror packages/hardhat/deploy/00_deploy_your_contract.ts,
+		// which seeds ["Yes", "No"] at deploy time to preserve the original demo's feel.
+		// The admin can replace these later during Phase.Setup via /set-candidates.
+		bc = core.NewBlockchain("Do you support this proposal?", []string{"Yes", "No"})
 		if err := store.SaveBlockchain(bc); err != nil {
 			log.Fatal().Err(err).Msg("Failed to save genesis block")
 		}
@@ -124,7 +127,8 @@ func main() {
 
 	var bridge *evm.ContractBridge
 	question := genesisQuestion(bc)
-	contractBridge, err := evm.NewContractBridge(contractCaller, assetsDir, question)
+	candidates := genesisCandidates(bc)
+	contractBridge, err := evm.NewContractBridge(contractCaller, assetsDir, question, candidates)
 	if err != nil {
 		if requireEVM {
 			log.Fatal().Err(err).Msg(
@@ -164,4 +168,20 @@ func genesisQuestion(bc *core.Blockchain) string {
 		return "Do you support this proposal?"
 	}
 	return payload.Question
+}
+
+// genesisCandidates reads the initial candidate list from the genesis block's
+// transaction payload. Returns nil (no candidates) if the genesis block predates
+// this field or cannot be parsed — the contract deploys fine with zero candidates,
+// and an admin can set them later via /set-candidates during Phase.Setup.
+func genesisCandidates(bc *core.Blockchain) []string {
+	genesis, err := bc.GetBlock(0)
+	if err != nil || len(genesis.Transactions) == 0 {
+		return nil
+	}
+	var payload core.GenesisPayload
+	if err := genesis.Transactions[0].ParsePayload(&payload); err != nil {
+		return nil
+	}
+	return payload.Candidates
 }

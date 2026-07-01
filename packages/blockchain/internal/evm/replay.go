@@ -66,7 +66,41 @@ func (b *ContractBridge) ReplayTransaction(tx core.Transaction) error {
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.Vote(p.Proof, p.NullifierHash, p.Root, p.Vote, p.Depth)
+		return b.Vote(p.Proof, p.NullifierHash, p.Root, p.CandidateIndex, p.Depth)
+
+	case core.TxSetQuestion:
+		var p core.SetQuestionPayload
+		if err := tx.ParsePayload(&p); err != nil {
+			return err
+		}
+		return b.SetQuestion(p.Question)
+
+	case core.TxSetCandidates:
+		var p core.SetCandidatesPayload
+		if err := tx.ParsePayload(&p); err != nil {
+			return err
+		}
+		return b.SetCandidates(p.Candidates)
+
+	case core.TxStartRegistration:
+		var p core.StartRegistrationPayload
+		if err := tx.ParsePayload(&p); err != nil {
+			return err
+		}
+		return b.StartRegistration(p.DurationSec)
+
+	case core.TxStartVoting:
+		var p core.StartVotingPayload
+		if err := tx.ParsePayload(&p); err != nil {
+			return err
+		}
+		return b.StartVoting(p.DurationSec)
+
+	case core.TxEndElection:
+		return b.EndElection()
+
+	case core.TxResetElection:
+		return b.ResetElection()
 
 	default:
 		// Genesis and any future transaction types are silently skipped.

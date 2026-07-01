@@ -6,13 +6,15 @@ import (
 	"zk-blockchain/internal/core"
 )
 
-// newTestBlockchain creates a fresh 3-block chain:
-//   Block 0 (genesis)
-//   Block 1: ADD_VOTER  alice@example.com
-//   Block 2: REGISTER   alice@example.com with sampleCommitmentHex
+// newTestBlockchain creates a fresh 4-block chain:
+//   Block 0 (genesis, candidates ["Yes", "No"])
+//   Block 1: ADD_VOTER          alice@example.com
+//   Block 2: START_REGISTRATION (Setup → Registration; addVoters only works in Setup,
+//                                register only works in Registration)
+//   Block 3: REGISTER           alice@example.com with sampleCommitmentHex
 func newTestBlockchain(t *testing.T) *core.Blockchain {
 	t.Helper()
-	bc := core.NewBlockchain("Test voting question")
+	bc := core.NewBlockchain("Test voting question", []string{"Yes", "No"})
 
 	addTx, err := core.NewTransaction(core.TxAddVoter, core.AddVoterPayload{
 		VoterID: "alice@example.com",
@@ -23,6 +25,16 @@ func newTestBlockchain(t *testing.T) *core.Blockchain {
 	}
 	if _, err := bc.AddTransaction(addTx); err != nil {
 		t.Fatalf("AddTransaction ADD_VOTER: %v", err)
+	}
+
+	startRegTx, err := core.NewTransaction(core.TxStartRegistration, core.StartRegistrationPayload{
+		DurationSec: 3600,
+	})
+	if err != nil {
+		t.Fatalf("NewTransaction START_REGISTRATION: %v", err)
+	}
+	if _, err := bc.AddTransaction(startRegTx); err != nil {
+		t.Fatalf("AddTransaction START_REGISTRATION: %v", err)
 	}
 
 	regTx, err := core.NewTransaction(core.TxRegister, core.RegisterPayload{
@@ -42,7 +54,7 @@ func newTestBlockchain(t *testing.T) *core.Blockchain {
 
 func TestReplayBlockchain_GenesisOnly(t *testing.T) {
 	bridge := newTestBridge(t)
-	bc := core.NewBlockchain("Replay test")
+	bc := core.NewBlockchain("Replay test", []string{"Yes", "No"})
 
 	// Should complete without panicking or returning errors.
 	ReplayBlockchain(bc, bridge)
@@ -90,36 +102,42 @@ func TestReplayBlockchain_InvalidVoteIsSkipped(t *testing.T) {
 
 	// Build a chain that has a VOTE transaction with a fake proof.
 	// In Stage 1/2, votes were committed without EVM verification.
-	bc := core.NewBlockchain("Replay with invalid vote")
+	bc := core.NewBlockchain("Replay with invalid vote", []string{"Yes", "No"})
 
-	// First add and register a voter so the tree is non-empty.
+	// Add, open registration, and register a voter so the tree is non-empty.
 	addTx, _ := core.NewTransaction(core.TxAddVoter, core.AddVoterPayload{VoterID: "alice@example.com", Allowed: true})
 	bc.AddTransaction(addTx)
+	startRegTx, _ := core.NewTransaction(core.TxStartRegistration, core.StartRegistrationPayload{DurationSec: 3600})
+	bc.AddTransaction(startRegTx)
 	regTx, _ := core.NewTransaction(core.TxRegister, core.RegisterPayload{
 		VoterID: "alice@example.com", Commitment: sampleCommitmentHex, LeafIndex: 0,
 	})
 	bc.AddTransaction(regTx)
 
-	// A VOTE transaction with a garbage proof (invalid ZK proof).
+	// A VOTE transaction with a garbage proof (invalid ZK proof). Also submitted
+	// before START_VOTING, so it would be rejected on phase grounds alone even if
+	// the proof were valid — either way, it must be skipped, not applied.
 	voteTx, _ := core.NewTransaction(core.TxVote, core.VotePayload{
-		Proof:         "0xdeadbeef",
-		NullifierHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
-		Root:          "0x0000000000000000000000000000000000000000000000000000000000000001",
-		Vote:          true,
-		Depth:         1,
+		Proof:          "0xdeadbeef",
+		NullifierHash:  "0x0000000000000000000000000000000000000000000000000000000000000001",
+		Root:           "0x0000000000000000000000000000000000000000000000000000000000000001",
+		CandidateIndex: 0,
+		Depth:          1,
 	})
 	bc.AddTransaction(voteTx)
 
 	// Replay must not panic. The invalid vote is logged as a warning and skipped.
 	ReplayBlockchain(bc, bridge)
 
-	// Votes should still be 0 since the proof was invalid.
-	data, err := bridge.GetVotingData()
+	// Vote counts should still be all zero since the vote was never applied.
+	counts, err := bridge.GetVoteCounts()
 	if err != nil {
-		t.Fatalf("GetVotingData: %v", err)
+		t.Fatalf("GetVoteCounts: %v", err)
 	}
-	if data.YesVotes.Sign() != 0 || data.NoVotes.Sign() != 0 {
-		t.Errorf("invalid vote should not increment counters: yes=%s no=%s", data.YesVotes, data.NoVotes)
+	for i, c := range counts {
+		if c.Sign() != 0 {
+			t.Errorf("invalid vote should not increment counters: candidate %d has %s votes", i, c)
+		}
 	}
 }
 

@@ -137,6 +137,8 @@ Run: `cd packages/hardhat && npx hardhat compile` then copy artifacts to `packag
   - `Register(voterID, commitmentHex)` → `register(uint256)`
   - `Vote(proofHex, nullifierHashHex, rootHex, vote, depth)` → `vote(...)`
   - `GetVotingData()` → returns `VotingData{Question, Owner, YesVotes, NoVotes, TreeSize, Depth, Root}`
+    (binary Yes/No shape as of Stage 3 — since superseded by the multi-candidate/phase shape, see the
+    "Multi-Candidate & Phased Election Alignment" note near the end of this file)
   - `GetVoterData(voterID)` → returns `VoterData{Allowed, Registered}`
   - `VoterIDToAddress(voterID)` — deterministic keccak256-based address derivation
   - `wrapErr()` — ABI-decodes standard/custom Solidity revert reasons
@@ -155,7 +157,7 @@ With EIP-150, the 63/64 gas forwarding rule caps what's forwarded, solving the i
 
 ---
 
-### Stage 4: EVM-Powered API & Queries 🟡 PARTIALLY DONE (pulled forward into Stage 3's wiring)
+### Stage 4: EVM-Powered API & Queries ✅ COMPLETED
 **Goal:** Query the current voting stats directly from the EVM state.
 
 **Deliverables:**
@@ -163,26 +165,28 @@ With EIP-150, the 63/64 gas forwarding rule caps what's forwarded, solving the i
   - `GetVotingData()` -> Call contract, parse return values (Yes/No votes, Root) — implemented in `bridge.go`, used internally by `Register()` to read back the true leaf index
   - `GetVoterData(address)` -> Check eligibility/registration — implemented in `bridge.go`
 - [x] Proper parsing of EVM errors (reverts) into friendly JSON responses — `wrapErr()` decodes `Error(string)`, `Panic(uint256)`, and Voting's custom errors; `handleRegister`/`handleVote` surface the decoded message as the HTTP error body
-- [ ] `GetVotingData`/`GetVoterData` are not yet exposed as their own `GET /voting-data` / `GET /voter/:id` HTTP endpoints — only used internally by the write-path handlers today
-- [ ] State caching for performance (avoid re-running the whole chain for every query) — not started; every query is a live EVM call today, which is cheap at current scale but not benchmarked
+- [x] `GetVotingData`/`GetVoterData` exposed as `GET /voting-data` and `GET /voter/{voter_id}` HTTP endpoints (`server.go`)
+- [x] State caching for performance — `ContractBridge` memoizes the last `VotingData` result and a per-voter `VoterData` map, guarded by the same lock that already serializes EVM calls. `AddVoter`/`Register` invalidate only the touched voter's entry; `Register`/`Vote` invalidate the shared `VotingData` entry (their write touches tree/tally fields); `Register` re-populates it immediately since it needs the fresh tree size anyway.
 
 ---
 
-### Stage 5: REST API Server 🟡 PARTIALLY DONE (pulled forward into Stage 3's wiring)
+### Stage 5: REST API Server ✅ COMPLETED (core surface); real API-key admin auth intentionally out of scope
 **Goal:** HTTP API that the frontend can call.
 
 **Deliverables:**
 - [x] HTTP server with proper CORS — `CORSMiddleware` in `middleware.go`, origin configurable via `ALLOWED_ORIGIN`
 - [x] Admin authentication — RSA signature (`X-Admin-Signature` header), not a simple API key as originally scoped, but functionally equivalent and already implemented in Stage 1
 - [x] Endpoints implemented (paths differ slightly from the original sketch below — no `/api` prefix):
-  | Method | Path          | Auth               | Description                                  |
-  |--------|---------------|--------------------|-----------------------------------------------|
-  | POST   | /add-voter    | Admin (RSA sig)    | Add/revoke a voter's eligibility               |
-  | POST   | /register     | Rate-limited        | Submit commitment; EVM-validated before commit |
-  | POST   | /vote         | Rate-limited        | Submit ZK proof + vote; EVM-verified before commit |
-  | GET    | /chain        | None               | Full chain + length                            |
-  | GET    | /blocks       | None               | List all blocks                                |
-  | GET    | /health       | None               | Health check                                   |
+  | Method | Path                  | Auth               | Description                                  |
+  |--------|-----------------------|--------------------|-----------------------------------------------|
+  | POST   | /add-voter            | Admin (RSA sig)    | Add/revoke a voter's eligibility               |
+  | POST   | /register             | Rate-limited        | Submit commitment; EVM-validated before commit |
+  | POST   | /vote                 | Rate-limited        | Submit ZK proof + vote; EVM-verified before commit |
+  | GET    | /voting-data          | None               | Current tally, tree size/depth/root (Stage 4)  |
+  | GET    | /voter/{voter_id}     | None               | Voter's allowed/registered status (Stage 4)    |
+  | GET    | /chain                | None               | Full chain + length                            |
+  | GET    | /blocks               | None               | List all blocks                                |
+  | GET    | /health               | None               | Health check                                   |
 - [ ] No dedicated `GET /voting-data` endpoint yet (tally/tree info) — this is the main remaining Stage 5 gap once Stage 4's read endpoints are added
 
 ---
@@ -262,10 +266,10 @@ packages/blockchain/
 - [x] Stage 1: Blockchain Foundation
 - [x] Stage 2: Embedded EVM Integration
 - [x] Stage 3: Contract Bridge & State Replay
-- [~] Stage 4: EVM-Powered API & Queries — read calls + error decoding done; dedicated read endpoints + caching still open  ← NEXT
+- [x] Stage 4: EVM-Powered API & Queries — read calls, error decoding, dedicated read endpoints (`GET /voting-data`, `GET /voter/{voter_id}`), and per-request caching all done
   - [ ] **[Network Fix]** Periodic background sync ticker to detect and recover live node drift (see Stage 1.4 Known Gap)
-- [~] Stage 5: REST API Server — CORS, admin auth, and all write/read endpoints except `/voting-data` are already live (see Stage 5 deliverables)
-- [ ] Stage 6: Integration Testing
+- [x] Stage 5: REST API Server — CORS, admin auth, and the full read/write endpoint set are live
+- [ ] Stage 6: Integration Testing  ← NEXT
 - [ ] Stage 7: Frontend Connection
 
 > **Post-Stage-3 hardening (2026-07-01):** a review of the Stage 3 diff found and fixed one critical
@@ -274,3 +278,14 @@ packages/blockchain/
 > a missing mutex around the shared EVM state (data races across concurrent `/vote`, `/register`,
 > `/add-voter`, and P2P block replay), a `LeafIndex` that could drift from the real Merkle index,
 > and a silent Stage 1/2 fallback with no way to make it a hard startup failure.
+
+> **Multi-candidate & phased-election parity (2026-07-01):** `packages/hardhat/contracts/Voting.sol`
+> was independently rewritten (commit `37634cf "Multi Candidate system"`, merged into `main` before
+> this branch existed) from a binary Yes/No referendum into an arbitrary-candidate, admin-phased
+> election (`Setup → Registration → Voting → Ended`). `packages/blockchain` had never been updated to
+> match — it was still deploying and testing against a stale compiled artifact of the old contract
+> shape. This has been fixed: the compiled artifacts were refreshed, and the Go bridge/types/API were
+> rewritten to mirror the current contract (and the admin UI that drives it,
+> `packages/nextjs/app/voting/admin/page.tsx`) exactly. See
+> [`BLOCKCHAIN_OVERVIEW.md` → "Multi-Candidate & Phased Election Alignment"](./BLOCKCHAIN_OVERVIEW.md)
+> for the full breakdown.
