@@ -217,6 +217,42 @@ func (bc *Blockchain) validateChainInternal() error {
 	return nil
 }
 
+// AppendExternalBlock adds a block received from a peer, preserving its original
+// hash, timestamp, and index. Unlike AddBlock, this does not re-create the block.
+// It validates hash integrity, chain linkage, sequential index, and all transaction
+// hashes before accepting.
+func (bc *Blockchain) AppendExternalBlock(block *Block) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	if !block.VerifyHash() {
+		return fmt.Errorf("block %d has invalid hash", block.Index)
+	}
+
+	latest := bc.blocks[len(bc.blocks)-1]
+
+	if block.PrevHash != latest.Hash {
+		return fmt.Errorf("block %d prev_hash does not match current chain tip", block.Index)
+	}
+
+	if block.Index != latest.Index+1 {
+		return fmt.Errorf("block %d index not sequential (expected %d)", block.Index, latest.Index+1)
+	}
+
+	if block.Timestamp < latest.Timestamp {
+		return fmt.Errorf("block %d has timestamp before previous block", block.Index)
+	}
+
+	for i, tx := range block.Transactions {
+		if !tx.VerifyHash() {
+			return fmt.Errorf("block %d transaction %d has invalid hash", block.Index, i)
+		}
+	}
+
+	bc.blocks = append(bc.blocks, block)
+	return nil
+}
+
 // PrintChain prints a human-readable summary of the blockchain to stdout.
 // Useful for debugging and demonstration.
 func (bc *Blockchain) PrintChain() {
