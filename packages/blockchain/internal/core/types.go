@@ -14,15 +14,36 @@ type TxType string
 
 const (
 	// TxAddVoter is used by the admin to add/remove voters from the allowlist.
+	// Only effective during Phase.Setup (see Voting.sol).
 	TxAddVoter TxType = "ADD_VOTER"
 
 	// TxRegister is used by a voter to register their Poseidon commitment
-	// into the on-chain Merkle tree.
+	// into the on-chain Merkle tree. Only effective during Phase.Registration.
 	TxRegister TxType = "REGISTER"
 
 	// TxVote is used to submit an anonymous vote with a ZK proof.
 	// This transaction requires NO identity — the ZK proof IS the authentication.
+	// Only effective during Phase.Voting.
 	TxVote TxType = "VOTE"
+
+	// TxSetQuestion updates the ballot question. Only effective during Phase.Setup.
+	TxSetQuestion TxType = "SET_QUESTION"
+
+	// TxSetCandidates replaces the candidate list. Only effective during Phase.Setup.
+	TxSetCandidates TxType = "SET_CANDIDATES"
+
+	// TxStartRegistration moves Setup → Registration and opens a registration window.
+	TxStartRegistration TxType = "START_REGISTRATION"
+
+	// TxStartVoting moves Registration → Voting and opens a voting window.
+	TxStartVoting TxType = "START_VOTING"
+
+	// TxEndElection ends the election early (Registration or Voting → Ended).
+	TxEndElection TxType = "END_ELECTION"
+
+	// TxResetElection clears all election state (voters, registrations, votes,
+	// question, candidates) and returns to Phase.Setup, starting a new election.
+	TxResetElection TxType = "RESET_ELECTION"
 )
 
 // Transaction represents a single operation on the voting blockchain.
@@ -99,19 +120,40 @@ type RegisterPayload struct {
 // VotePayload is the data for TxVote transactions.
 // Contains the ZK proof and public inputs — NO voter identity.
 type VotePayload struct {
-	Proof         string `json:"proof"`          // Hex-encoded ZK proof bytes
-	NullifierHash string `json:"nullifier_hash"` // Hex-encoded nullifier hash (prevents double-vote)
-	Root          string `json:"root"`           // Hex-encoded Merkle root (proof was generated against)
-	Vote          bool   `json:"vote"`           // true = Yes, false = No
-	Depth         uint32 `json:"depth"`          // Merkle tree depth at proof generation time
+	Proof          string `json:"proof"`           // Hex-encoded ZK proof bytes
+	NullifierHash  string `json:"nullifier_hash"`  // Hex-encoded nullifier hash (prevents double-vote)
+	Root           string `json:"root"`            // Hex-encoded Merkle root (proof was generated against)
+	CandidateIndex uint64 `json:"candidate_index"` // Index into the candidate list (0-based)
+	Depth          uint32 `json:"depth"`           // Merkle tree depth at proof generation time
 }
 
 // GenesisPayload is the data embedded in the genesis block.
 // It records the voting question and initial configuration.
 type GenesisPayload struct {
-	Action   string `json:"action"`   // Always "GENESIS"
-	Question string `json:"question"` // The voting question
-	Version  string `json:"version"`  // Protocol version
+	Action     string   `json:"action"`     // Always "GENESIS"
+	Question   string   `json:"question"`   // The voting question
+	Candidates []string `json:"candidates"` // Initial candidate list (may be empty; set later via SET_CANDIDATES)
+	Version    string   `json:"version"`    // Protocol version
+}
+
+// SetQuestionPayload is the data for TxSetQuestion transactions.
+type SetQuestionPayload struct {
+	Question string `json:"question"`
+}
+
+// SetCandidatesPayload is the data for TxSetCandidates transactions.
+type SetCandidatesPayload struct {
+	Candidates []string `json:"candidates"`
+}
+
+// StartRegistrationPayload is the data for TxStartRegistration transactions.
+type StartRegistrationPayload struct {
+	DurationSec uint64 `json:"duration_sec"` // Length of the registration window
+}
+
+// StartVotingPayload is the data for TxStartVoting transactions.
+type StartVotingPayload struct {
+	DurationSec uint64 `json:"duration_sec"` // Length of the voting window
 }
 
 // ParsePayload unmarshals the transaction's JSON payload into the given struct.

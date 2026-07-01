@@ -21,9 +21,12 @@ type Blockchain struct {
 }
 
 // NewBlockchain creates a new blockchain with a genesis block.
-// The question parameter is embedded in the genesis block as the voting question.
-func NewBlockchain(question string) *Blockchain {
-	genesis := CreateGenesisBlock(question)
+// question and candidates are embedded in the genesis block and used to seed the
+// Voting contract's constructor when the EVM bridge deploys it (see
+// evm.NewContractBridge). candidates may be empty — the election simply starts
+// with no candidates configured until an admin calls SetCandidates.
+func NewBlockchain(question string, candidates []string) *Blockchain {
+	genesis := CreateGenesisBlock(question, candidates)
 	return &Blockchain{
 		blocks: []*Block{genesis},
 	}

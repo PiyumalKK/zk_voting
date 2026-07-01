@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"os"
 	"sync"
@@ -36,15 +37,10 @@ func InitServer(blockchain *core.Blockchain, fs *persistence.FileStore, b *evm.C
 	bridge = b
 }
 
-// StartServer registers all routes and starts the TLS server.
-// tlsConfig must be fully initialized before calling this (load it in main and
-// call network.InitNetworkClient first so that peer sync works on startup).
-func StartServer(port string, tlsConfig *tls.Config) {
-	origin := os.Getenv("ALLOWED_ORIGIN")
-	if origin == "" {
-		origin = "http://localhost:3000" // default Next.js dev server
-	}
-
+// newMux builds the route table. Split out from StartServer so tests can drive
+// real route matching (method + path-parameter patterns like /voter/{voter_id})
+// through httptest without needing a live TLS listener.
+func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Public read endpoints
@@ -52,8 +48,23 @@ func StartServer(port string, tlsConfig *tls.Config) {
 	mux.HandleFunc("/chain", RequestLogger(handleGetChain))
 	mux.HandleFunc("/blocks", RequestLogger(handleGetBlocks))
 
-	// Admin-only write endpoint
+	// Stage 4: EVM-backed read endpoints
+	mux.HandleFunc("GET /voting-data", RequestLogger(handleGetVotingData))
+	mux.HandleFunc("GET /voter/{voter_id}", RequestLogger(handleGetVoterData))
+	mux.HandleFunc("GET /candidates", RequestLogger(handleGetCandidates))
+	mux.HandleFunc("GET /vote-counts", RequestLogger(handleGetVoteCounts))
+
+	// Admin-only write endpoints
 	mux.HandleFunc("/add-voter", RequestLogger(AdminAuthMiddleware(handleAddVoter)))
+
+	// Admin-only election lifecycle endpoints (mirror the admin page's phase
+	// controls — see packages/nextjs/app/voting/admin/page.tsx)
+	mux.HandleFunc("/set-question", RequestLogger(AdminAuthMiddleware(handleSetQuestion)))
+	mux.HandleFunc("/set-candidates", RequestLogger(AdminAuthMiddleware(handleSetCandidates)))
+	mux.HandleFunc("/start-registration", RequestLogger(AdminAuthMiddleware(handleStartRegistration)))
+	mux.HandleFunc("/start-voting", RequestLogger(AdminAuthMiddleware(handleStartVoting)))
+	mux.HandleFunc("/end-election", RequestLogger(AdminAuthMiddleware(handleEndElection)))
+	mux.HandleFunc("/reset-election", RequestLogger(AdminAuthMiddleware(handleResetElection)))
 
 	// Public voter endpoints — rate limited per IP
 	mux.HandleFunc("/register", RequestLogger(RateLimitMiddleware(handleRegister)))
@@ -63,9 +74,21 @@ func StartServer(port string, tlsConfig *tls.Config) {
 	mux.HandleFunc("/internal/block", RequestLogger(handleReceiveBlock))
 	mux.HandleFunc("/internal/chain", RequestLogger(handleSendChain))
 
+	return mux
+}
+
+// StartServer registers all routes and starts the TLS server.
+// tlsConfig must be fully initialized before calling this (load it in main and
+// call network.InitNetworkClient first so that peer sync works on startup).
+func StartServer(port string, tlsConfig *tls.Config) {
+	origin := os.Getenv("ALLOWED_ORIGIN")
+	if origin == "" {
+		origin = "http://localhost:3000" // default Next.js dev server
+	}
+
 	server := &http.Server{
 		Addr:      port,
-		Handler:   CORSMiddleware(origin, mux),
+		Handler:   CORSMiddleware(origin, newMux()),
 		TLSConfig: tlsConfig,
 	}
 
@@ -93,16 +116,128 @@ func handleGetBlocks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(bc.GetBlocks())
 }
 
+// ─── EVM Reads (Stage 4) ────────────────────────────────────────────────────────
+
+// handleGetVotingData returns the current election tally and Merkle tree state,
+// read live from the embedded EVM (question, owner, yes/no votes, tree size,
+// depth, root). Returns 503 if the contract bridge is unavailable (Stage 1/2
+// storage-only mode — see REQUIRE_EVM in main.go).
+func handleGetVotingData(w http.ResponseWriter, r *http.Request) {
+	if bridge == nil {
+		http.Error(w, "EVM bridge not available on this node", http.StatusServiceUnavailable)
+		return
+	}
+
+	data, err := bridge.GetVotingData()
+	if err != nil {
+		log.Error().Err(err).Msg("GetVotingData failed")
+		http.Error(w, "failed to read voting data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+// handleGetVoterData returns a single voter's on-chain eligibility/registration
+// status. voter_id is the same opaque string used with /add-voter and /register
+// (e.g. an email address); it is hashed to the EVM address internally. Returns
+// 503 if the contract bridge is unavailable, 400 if voter_id is missing.
+func handleGetVoterData(w http.ResponseWriter, r *http.Request) {
+	if bridge == nil {
+		http.Error(w, "EVM bridge not available on this node", http.StatusServiceUnavailable)
+		return
+	}
+
+	voterID := r.PathValue("voter_id")
+	if voterID == "" {
+		http.Error(w, "voter_id is required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := bridge.GetVoterData(voterID)
+	if err != nil {
+		log.Error().Err(err).Str("voter_id", voterID).Msg("GetVoterData failed")
+		http.Error(w, "failed to read voter data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+// handleGetCandidates returns the current candidate list, in the same order used
+// for vote submission (CandidateIndex) and returned by GET /vote-counts.
+func handleGetCandidates(w http.ResponseWriter, r *http.Request) {
+	if bridge == nil {
+		http.Error(w, "EVM bridge not available on this node", http.StatusServiceUnavailable)
+		return
+	}
+
+	candidates, err := bridge.GetCandidates()
+	if err != nil {
+		log.Error().Err(err).Msg("GetCandidates failed")
+		http.Error(w, "failed to read candidates: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(candidates)
+}
+
+// CandidateTally pairs a candidate name with its current vote count.
+type CandidateTally struct {
+	Candidate string   `json:"candidate"`
+	Votes     *big.Int `json:"votes"`
+}
+
+// handleGetVoteCounts zips GetCandidates() and GetVoteCounts() together into a
+// single response, mirroring how packages/nextjs/app/voting/_components/VotingStats.tsx
+// zips the two separate contract reads together client-side today.
+func handleGetVoteCounts(w http.ResponseWriter, r *http.Request) {
+	if bridge == nil {
+		http.Error(w, "EVM bridge not available on this node", http.StatusServiceUnavailable)
+		return
+	}
+
+	candidates, err := bridge.GetCandidates()
+	if err != nil {
+		log.Error().Err(err).Msg("GetCandidates failed")
+		http.Error(w, "failed to read candidates: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	counts, err := bridge.GetVoteCounts()
+	if err != nil {
+		log.Error().Err(err).Msg("GetVoteCounts failed")
+		http.Error(w, "failed to read vote counts: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tally := make([]CandidateTally, 0, len(candidates))
+	for i, name := range candidates {
+		votes := big.NewInt(0)
+		if i < len(counts) {
+			votes = counts[i]
+		}
+		tally = append(tally, CandidateTally{Candidate: name, Votes: votes})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tally)
+}
+
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
 type AddVoterRequest struct {
 	VoterID string `json:"voter_id"`
 }
 
-// handleAddVoter commits an ADD_VOTER block, then calls EVM addVoters() to update
-// the on-chain allowlist. The EVM call is best-effort — a failure is logged but
-// does not roll back the block, because addVoters is idempotent and will succeed
-// on the next replay.
+// handleAddVoter calls EVM addVoters() BEFORE committing the ADD_VOTER block.
+// addVoters is only effective during Phase.Setup (Voting.sol's inPhase modifier),
+// so — unlike the old binary-referendum contract where addVoters never reverted —
+// this can now genuinely fail (Voting__WrongPhase) if called outside Setup. Calling
+// EVM first, same as register/vote, ensures a rejected call never becomes a
+// permanent chain entry.
 func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -115,10 +250,31 @@ func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := core.NewTransaction(core.TxAddVoter, core.AddVoterPayload{
-		VoterID: req.VoterID,
-		Allowed: true,
-	})
+	if bridge != nil {
+		if err := bridge.AddVoter(req.VoterID, true); err != nil {
+			log.Warn().Err(err).Str("voter_id", req.VoterID).Msg("EVM addVoters rejected")
+			http.Error(w, "add-voter rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	commitAdminTx(w, core.TxAddVoter, core.AddVoterPayload{VoterID: req.VoterID, Allowed: true})
+}
+
+// ─── Election lifecycle ─────────────────────────────────────────────────────────
+//
+// setQuestion/setCandidates/startRegistration/startVoting/endElection/resetElection
+// mirror packages/nextjs/app/voting/admin/page.tsx's admin controls exactly — same
+// six actions, same phase-gating enforced by the contract. Each handler follows
+// the register/vote ordering (call EVM first, commit only on success) rather than
+// the old handleAddVoter ordering, since every one of these can genuinely fail on
+// phase gating and a rejected transition must not become a permanent chain entry.
+
+// commitAdminTx is the shared tail of every election-lifecycle handler: create a
+// transaction, append it to the chain, persist it, and broadcast it to peers. The
+// EVM call has already succeeded by the time this runs.
+func commitAdminTx(w http.ResponseWriter, txType core.TxType, payload interface{}) {
+	tx, err := core.NewTransaction(txType, payload)
 	if err != nil {
 		http.Error(w, "failed to create transaction", http.StatusInternalServerError)
 		return
@@ -131,22 +287,135 @@ func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := store.SaveBlock(block); err != nil {
-		log.Error().Err(err).Msg("Failed to persist add-voter block")
+		log.Error().Err(err).Str("tx_type", string(txType)).Msg("Failed to persist block")
 	}
 
 	network.BroadcastBlock(*block)
 
-	// Update EVM state: mark voter as allowed in the Voting contract.
-	// Best-effort — addVoters never reverts, so failure here indicates a
-	// misconfiguration that will surface as an error during vote verification.
-	if bridge != nil {
-		if err := bridge.AddVoter(req.VoterID, true); err != nil {
-			log.Error().Err(err).Str("voter_id", req.VoterID).Msg("EVM addVoters call failed")
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(block)
+}
+
+type SetQuestionRequest struct {
+	Question string `json:"question"`
+}
+
+func handleSetQuestion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req SetQuestionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Question == "" {
+		http.Error(w, "invalid request: question required", http.StatusBadRequest)
+		return
+	}
+	if bridge != nil {
+		if err := bridge.SetQuestion(req.Question); err != nil {
+			log.Warn().Err(err).Msg("EVM setQuestion rejected")
+			http.Error(w, "set-question rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	commitAdminTx(w, core.TxSetQuestion, core.SetQuestionPayload{Question: req.Question})
+}
+
+type SetCandidatesRequest struct {
+	Candidates []string `json:"candidates"`
+}
+
+func handleSetCandidates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req SetCandidatesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Candidates) == 0 {
+		http.Error(w, "invalid request: at least one candidate required", http.StatusBadRequest)
+		return
+	}
+	if bridge != nil {
+		if err := bridge.SetCandidates(req.Candidates); err != nil {
+			log.Warn().Err(err).Msg("EVM setCandidates rejected")
+			http.Error(w, "set-candidates rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	commitAdminTx(w, core.TxSetCandidates, core.SetCandidatesPayload{Candidates: req.Candidates})
+}
+
+type DurationRequest struct {
+	DurationSec uint64 `json:"duration_sec"`
+}
+
+func handleStartRegistration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req DurationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DurationSec == 0 {
+		http.Error(w, "invalid request: positive duration_sec required", http.StatusBadRequest)
+		return
+	}
+	if bridge != nil {
+		if err := bridge.StartRegistration(req.DurationSec); err != nil {
+			log.Warn().Err(err).Msg("EVM startRegistration rejected")
+			http.Error(w, "start-registration rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	commitAdminTx(w, core.TxStartRegistration, core.StartRegistrationPayload{DurationSec: req.DurationSec})
+}
+
+func handleStartVoting(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req DurationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DurationSec == 0 {
+		http.Error(w, "invalid request: positive duration_sec required", http.StatusBadRequest)
+		return
+	}
+	if bridge != nil {
+		if err := bridge.StartVoting(req.DurationSec); err != nil {
+			log.Warn().Err(err).Msg("EVM startVoting rejected")
+			http.Error(w, "start-voting rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	commitAdminTx(w, core.TxStartVoting, core.StartVotingPayload{DurationSec: req.DurationSec})
+}
+
+func handleEndElection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if bridge != nil {
+		if err := bridge.EndElection(); err != nil {
+			log.Warn().Err(err).Msg("EVM endElection rejected")
+			http.Error(w, "end-election rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	commitAdminTx(w, core.TxEndElection, struct{}{})
+}
+
+func handleResetElection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if bridge != nil {
+		if err := bridge.ResetElection(); err != nil {
+			log.Warn().Err(err).Msg("EVM resetElection rejected")
+			http.Error(w, "reset-election rejected: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	commitAdminTx(w, core.TxResetElection, struct{}{})
 }
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -236,12 +505,14 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 // VoteRequest carries the ZK proof and its public inputs.
 // Root and Depth must match the values used when the proof was generated.
+// CandidateIndex is the 0-based index into the current candidate list (see
+// GET /candidates) — the contract rejects an out-of-range index.
 type VoteRequest struct {
-	Proof         string `json:"proof"`
-	NullifierHash string `json:"nullifier_hash"`
-	Root          string `json:"root"`
-	Vote          bool   `json:"vote"`
-	Depth         uint32 `json:"depth"`
+	Proof          string `json:"proof"`
+	NullifierHash  string `json:"nullifier_hash"`
+	Root           string `json:"root"`
+	CandidateIndex uint64 `json:"candidate_index"`
+	Depth          uint32 `json:"depth"`
 }
 
 // handleVote verifies the ZK proof via the embedded EVM BEFORE committing the vote
@@ -270,7 +541,7 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 	//   - NullifierHash not previously used (prevents double-voting)
 	// Only if the EVM call succeeds do we commit the vote to the blockchain.
 	if bridge != nil {
-		if err := bridge.Vote(req.Proof, req.NullifierHash, req.Root, req.Vote, req.Depth); err != nil {
+		if err := bridge.Vote(req.Proof, req.NullifierHash, req.Root, req.CandidateIndex, req.Depth); err != nil {
 			log.Warn().Err(err).Msg("EVM vote verification failed")
 			http.Error(w, "vote rejected: "+err.Error(), http.StatusBadRequest)
 			return
@@ -278,11 +549,11 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx, err := core.NewTransaction(core.TxVote, core.VotePayload{
-		Proof:         req.Proof,
-		NullifierHash: req.NullifierHash,
-		Root:          req.Root,
-		Vote:          req.Vote,
-		Depth:         req.Depth,
+		Proof:          req.Proof,
+		NullifierHash:  req.NullifierHash,
+		Root:           req.Root,
+		CandidateIndex: req.CandidateIndex,
+		Depth:          req.Depth,
 	})
 	if err != nil {
 		http.Error(w, "failed to create transaction", http.StatusInternalServerError)
