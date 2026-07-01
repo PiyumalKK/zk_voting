@@ -63,95 +63,127 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 
 ## Development Stages
 
-### Stage 1: Blockchain Foundation & Production Hardening ← IN PROGRESS
+### Stage 1: Blockchain Foundation & Production Hardening ✅ COMPLETED
 **Goal:** Build a robust, secure foundation that can handle real-world load and attacks.
 
-**1.1 Core Engine (COMPLETED)**
+**1.1 Core Engine**
 - Block and Transaction data structures with SHA-256 hashing
 - Blockchain engine (add blocks, validate chain, query blocks)
 - Genesis block creation with voting question
 - Transaction types: `ADD_VOTER`, `REGISTER`, `VOTE`
+- `AppendExternalBlock` for peer-received blocks (preserves original hash/index/timestamp)
 
-**1.2 Robust Storage (UPGRADE)**
-- Replace `blockchain.json` with **BoltDB** (`bbolt`)
-- Move from "rewrite-the-whole-file" to "append-only-blocks" for ACID safety
-- Ensure the node can recover state instantly from the database on startup
+**1.2 Robust Storage**
+- BoltDB (`bbolt`) — ACID-safe, append-only block storage
+- Node recovers state instantly from the database on startup
 
-**1.3 API Security & Authentication (NEW)**
-- **Admin Auth**: Implement RSA signature verification for `/admin` endpoints
-- **Rate Limiting**: Add token-bucket limits to prevent DoS on `/vote` and `/register`
-- **CORS**: Secure cross-origin settings for the Next.js frontend
+**1.3 API Security & Authentication**
+- **Admin Auth**: RSA signature verification for `/add-voter`; non-fatal if key missing (endpoint returns 503 with instructions)
+- **Rate Limiting**: Per-IP token-bucket limits on `/vote` and `/register` (1 req/sec, burst 5)
+- **CORS**: Configurable via `ALLOWED_ORIGIN` env var (defaults to `http://localhost:3000`)
+- **Input validation**: Required fields enforced on all POST endpoints
 
-**1.4 Network Hardening (NEW)**
-- **mTLS**: Implement Mutual TLS for all node-to-node (P2P) communication
-- **Identity**: Ensure only nodes with authorized certificates can sync blocks
+**1.4 Network Hardening**
+- **mTLS**: Mutual TLS for all node-to-node communication
+- **Peer discovery**: Peers configured via `PEERS` env var (comma-separated URLs); not hardcoded
+- **Block sync**: `handleReceiveBlock` uses `AppendExternalBlock` — peers stay on identical chain
+- **Startup ordering**: TLS config loaded → `InitNetworkClient` → `SyncWithPeers` → `StartServer`
 
-**1.5 Observability (NEW)**
-- **Structured Logging**: Replace `fmt.Println` with `zerolog` for JSON-based logs
-- **Request Logging**: Add middleware to track every API call and performance latency
+> ⚠️ **Known Gap — Live Node Drift (to be addressed in Stage 4)**
+>
+> `BroadcastBlock` in `broadcast.go` is fire-and-forget (`go func` with no retry or ACK).
+> If a peer node is temporarily offline or the POST fails, it silently misses blocks and its
+> chain drifts behind. The only recovery today is a full node restart triggering `SyncWithPeers`.
+> There is no periodic heartbeat, gap-fill, or divergence detection for live nodes.
+>
+> **Planned fix:** Add a periodic background sync ticker that calls `SyncWithPeers` on a
+> configurable interval (e.g. every 30s). This ensures live nodes self-heal without requiring
+> a restart, at the cost of one `/internal/chain` request per peer per interval.
+
+**1.5 Observability**
+- **Structured Logging**: `zerolog` with JSON/console output and request latency tracking
+- **Request Logging**: Every API call logged with method, path, IP, and duration
 
 ---
 
-### Stage 2: Embedded EVM Integration
+### Stage 2: Embedded EVM Integration ✅ COMPLETED
 **Goal:** Integrate `go-ethereum/core/vm` and configure cryptographic precompiles.
 
 **Deliverables:**
-- Geth `core/vm` and `core/state` dependency integration
-- EVM Configuration (Setting Hardfork to `Istanbul` to enable BN254 precompiles)
-- Stateless execution wrapper:
-  - Function to initialize an ephemeral state
-  - Function to call a contract at a specific address with calldata
-- Precompile verification test:
-  - Run a small EVM test that calls the pairing precompile (`0x08`) to ensure ZK math works
+- `go-ethereum v1.13.14` dependency integrated
+- EVM configured with Istanbul + Berlin + London hardforks — enables BN254 pairing precompile (`0x08`) required for Noir ZK proof verification
+- `NewStateManager()` — ephemeral in-memory state via `rawdb.NewMemoryDatabase()`
+- `CreateStatelessEVM()` — spoofed block context, zero gas price, very high gas limit (authority model)
+- `ContractCaller.Call()` — call any deployed contract at a given address
+- `ContractCaller.Deploy()` — run constructor and install runtime code (used in Stage 3)
+- `ContractCaller.InstallRuntimeCode()` — low-level escape hatch for runtime-only bytecode
+- `TestEVMPrecompiles` — verifies `0x08` precompile returns correct result under Istanbul config
+- EVM wired into `main.go` and passed to `InitServer` (ready for Stage 3 contract calls)
 
 **Key dependency:** `github.com/ethereum/go-ethereum`
 
+**Stage 3 prerequisite:** Compile `Voting.sol` → `assets/Voting.bin` + `assets/Voting.abi` before starting Stage 3.
+Run: `cd packages/hardhat && npx hardhat compile` then copy artifacts to `packages/blockchain/assets/`
+
 ---
 
-### Stage 3: Contract Bridge & State Replay
+### Stage 3: Contract Bridge & State Replay ✅ COMPLETED
 **Goal:** "Deploy" `Voting.sol` and reconstruct state from the blockchain.
 
 **Deliverables:**
-- Solidity artifacts integration (loading bytecode/ABI into Go)
-- Contract "Auto-Deployment":
-  - On node startup, the EVM state is initialized with `Voting.sol` at a fixed address
-- State reconstruction:
-  - Loop through existing blocks and "replay" transactions into the EVM
-  - This makes the EVM state deterministic based on the hash chain
-- Transaction Mapping:
-  - `ADD_VOTER` -> EVM call to `addVoters()`
-  - `REGISTER` -> EVM call to `register()`
-  - `VOTE` -> EVM call to `vote()`
+- `artifacts.go` — `loadArtifact()`, `decodedBytecode()`, `decodedLinkedBytecode()` (Hardhat JSON parsing)
+- `bridge.go` — `ContractBridge` with typed Go methods for all Solidity functions:
+  - `AddVoter(voterID, allowed)` → `addVoters([]address, []bool)`
+  - `Register(voterID, commitmentHex)` → `register(uint256)`
+  - `Vote(proofHex, nullifierHashHex, rootHex, vote, depth)` → `vote(...)`
+  - `GetVotingData()` → returns `VotingData{Question, Owner, YesVotes, NoVotes, TreeSize, Depth, Root}`
+  - `GetVoterData(voterID)` → returns `VoterData{Allowed, Registered}`
+  - `VoterIDToAddress(voterID)` — deterministic keccak256-based address derivation
+  - `wrapErr()` — ABI-decodes standard/custom Solidity revert reasons
+- 4-step deterministic deployment (nonce 0=HonkVerifier, 1=PoseidonT3, 2=LeanIMT, 3=Voting)
+  - Solidity library linking: `__$hash$__` placeholders replaced with deployed addresses
+- `replay.go` — `ReplayBlockchain()` replays all persisted transactions into a fresh EVM state
+  - Transaction mapping: `ADD_VOTER`→`AddVoter`, `REGISTER`→`Register`, `VOTE`→`Vote`
+  - Invalid/rejected transactions are skipped with a warning log (chain not invalidated)
+- `bridge_test.go`, `replay_test.go` — full test coverage (20 tests, all passing)
+
+**Key technical fix:** Added `EIP150Block: big.NewInt(0)` to the EVM chain config.  
+Without EIP-150, Geth's `callGas()` forwards ALL available gas to DELEGATECALL callees.  
+Combined with EIP-2929's cold-account base cost (Berlin), this caused `baseCost + forwardedGas`  
+to exceed available gas → OOG before LeanIMT executed a single opcode.  
+With EIP-150, the 63/64 gas forwarding rule caps what's forwarded, solving the issue.
 
 ---
 
-### Stage 4: EVM-Powered API & Queries
+### Stage 4: EVM-Powered API & Queries 🟡 PARTIALLY DONE (pulled forward into Stage 3's wiring)
 **Goal:** Query the current voting stats directly from the EVM state.
 
 **Deliverables:**
-- EVM "Read-Only" calls:
-  - `GetVotingData()` -> Call contract, parse return values (Yes/No votes, Root)
-  - `GetVoterData(address)` -> Check eligibility/registration
-- State caching for performance (avoid re-running the whole chain for every query)
-- Proper parsing of EVM errors (reverts) into friendly JSON responses
+- [x] EVM "Read-Only" calls:
+  - `GetVotingData()` -> Call contract, parse return values (Yes/No votes, Root) — implemented in `bridge.go`, used internally by `Register()` to read back the true leaf index
+  - `GetVoterData(address)` -> Check eligibility/registration — implemented in `bridge.go`
+- [x] Proper parsing of EVM errors (reverts) into friendly JSON responses — `wrapErr()` decodes `Error(string)`, `Panic(uint256)`, and Voting's custom errors; `handleRegister`/`handleVote` surface the decoded message as the HTTP error body
+- [ ] `GetVotingData`/`GetVoterData` are not yet exposed as their own `GET /voting-data` / `GET /voter/:id` HTTP endpoints — only used internally by the write-path handlers today
+- [ ] State caching for performance (avoid re-running the whole chain for every query) — not started; every query is a live EVM call today, which is cheap at current scale but not benchmarked
 
 ---
 
-### Stage 5: REST API Server
+### Stage 5: REST API Server 🟡 PARTIALLY DONE (pulled forward into Stage 3's wiring)
 **Goal:** HTTP API that the frontend can call.
 
 **Deliverables:**
-- HTTP server with proper CORS
-- Admin authentication (simple API key)
-- Endpoints:
-  | Method | Path                | Auth   | Description                    |
-  |--------|---------------------|--------|--------------------------------|
-  | POST   | /api/admin/voters   | Admin  | Add voter(s)                   |
-  | POST   | /api/register       | Voter  | Submit commitment              |
-  | POST   | /api/vote           | None   | Submit ZK proof + vote         |
-  | GET    | /api/voting-data    | None   | Get current tally & tree info  |
-  | GET    | /api/blocks         | None   | List all blocks                |
-  | GET    | /api/health         | None   | Health check                   |
+- [x] HTTP server with proper CORS — `CORSMiddleware` in `middleware.go`, origin configurable via `ALLOWED_ORIGIN`
+- [x] Admin authentication — RSA signature (`X-Admin-Signature` header), not a simple API key as originally scoped, but functionally equivalent and already implemented in Stage 1
+- [x] Endpoints implemented (paths differ slightly from the original sketch below — no `/api` prefix):
+  | Method | Path          | Auth               | Description                                  |
+  |--------|---------------|--------------------|-----------------------------------------------|
+  | POST   | /add-voter    | Admin (RSA sig)    | Add/revoke a voter's eligibility               |
+  | POST   | /register     | Rate-limited        | Submit commitment; EVM-validated before commit |
+  | POST   | /vote         | Rate-limited        | Submit ZK proof + vote; EVM-verified before commit |
+  | GET    | /chain        | None               | Full chain + length                            |
+  | GET    | /blocks       | None               | List all blocks                                |
+  | GET    | /health       | None               | Health check                                   |
+- [ ] No dedicated `GET /voting-data` endpoint yet (tally/tree info) — this is the main remaining Stage 5 gap once Stage 4's read endpoints are added
 
 ---
 
@@ -227,10 +259,18 @@ packages/blockchain/
 
 ## Current Status
 
-- [x] Stage 1: Blockchain Foundation ← COMPLETED
-- [ ] Stage 2: Embedded EVM Integration
-- [ ] Stage 3: Contract Bridge & State Replay
-- [ ] Stage 4: EVM-Powered API & Queries
-- [ ] Stage 5: REST API Server
+- [x] Stage 1: Blockchain Foundation
+- [x] Stage 2: Embedded EVM Integration
+- [x] Stage 3: Contract Bridge & State Replay
+- [~] Stage 4: EVM-Powered API & Queries — read calls + error decoding done; dedicated read endpoints + caching still open  ← NEXT
+  - [ ] **[Network Fix]** Periodic background sync ticker to detect and recover live node drift (see Stage 1.4 Known Gap)
+- [~] Stage 5: REST API Server — CORS, admin auth, and all write/read endpoints except `/voting-data` are already live (see Stage 5 deliverables)
 - [ ] Stage 6: Integration Testing
 - [ ] Stage 7: Frontend Connection
+
+> **Post-Stage-3 hardening (2026-07-01):** a review of the Stage 3 diff found and fixed one critical
+> and two moderate/minor issues in the contract-bridge wiring. See
+> [`BLOCKCHAIN_OVERVIEW.md` → "Stage 3 Hardening Pass"](./BLOCKCHAIN_OVERVIEW.md) for full details:
+> a missing mutex around the shared EVM state (data races across concurrent `/vote`, `/register`,
+> `/add-voter`, and P2P block replay), a `LeafIndex` that could drift from the real Merkle index,
+> and a silent Stage 1/2 fallback with no way to make it a hard startup failure.
