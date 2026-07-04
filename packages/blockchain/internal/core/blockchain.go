@@ -49,6 +49,41 @@ func LoadFromBlocks(blocks []*Block) (*Blockchain, error) {
 	return bc, nil
 }
 
+// ReplaceBlocks atomically swaps this Blockchain's entire block list, validating
+// the replacement before committing it. Unlike LoadFromBlocks (which returns a
+// brand-new *Blockchain), this mutates the receiver in place — the *Blockchain
+// object's identity never changes, only its contents.
+//
+// This distinction matters for live nodes: every other package (api, evm) holds
+// its own copy of the *Blockchain pointer captured once at startup. A function
+// that swapped the pointer (`*bcPtr = newBlockchain`) would only update whichever
+// local variable happened to hold the pointer-to-pointer at call time — it would
+// never reach the copies already captured by api.InitServer or evm.ReplayBlockchain.
+// Mutating the existing object in place means every holder of the original
+// pointer transparently sees the update, which is what makes it safe to call this
+// from a periodic background sync running long after startup (see
+// network.StartPeriodicSync) rather than only once before any other package has
+// captured the pointer.
+//
+// On validation failure, the original blocks are restored and an error is
+// returned — the chain is left exactly as it was, never partially replaced.
+func (bc *Blockchain) ReplaceBlocks(newBlocks []*Block) error {
+	if len(newBlocks) == 0 {
+		return fmt.Errorf("cannot replace with an empty blockchain")
+	}
+
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	previous := bc.blocks
+	bc.blocks = newBlocks
+	if err := bc.validateChainInternal(); err != nil {
+		bc.blocks = previous
+		return fmt.Errorf("chain validation failed during replace: %w", err)
+	}
+	return nil
+}
+
 // AddBlock creates a new block containing the given transactions and
 // appends it to the chain. Returns the new block or an error if the
 // transaction list is empty.
