@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -106,7 +107,7 @@ func main() {
 	// InitNetworkClient must come before SyncWithPeers so the mTLS HTTP client
 	// is ready when we attempt to fetch chains from peers.
 	network.InitNetworkClient(tlsConfig)
-	network.SyncWithPeers(&bc, store)
+	network.SyncWithPeers(bc, store)
 
 	// ── Contract Bridge (Stage 3) ─────────────────────────────────────────────
 	// Deploy Voting.sol and HonkVerifier.sol into the embedded EVM, then replay
@@ -150,6 +151,34 @@ func main() {
 			Msg("Contracts deployed — replaying blockchain to reconstruct EVM state")
 		evm.ReplayBlockchain(bc, bridge)
 	}
+
+	// ── Periodic Peer Sync (Live Node Drift fix, see PLAN.md Stage 1.4) ────────
+	// BroadcastBlock is fire-and-forget: a peer that's briefly offline or whose
+	// POST fails silently falls behind, with no recovery short of a restart.
+	// This ticker re-runs SyncWithPeers on an interval so live nodes self-heal.
+	// bc is mutated in place (Blockchain.ReplaceBlocks), so this is safe to run
+	// long after api.InitServer has already captured the same *bc pointer.
+	syncInterval := 30 * time.Second
+	if v := os.Getenv("SYNC_INTERVAL_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			syncInterval = time.Duration(n) * time.Second
+		} else {
+			log.Warn().Str("SYNC_INTERVAL_SEC", v).Msg("Invalid SYNC_INTERVAL_SEC, using default 30s")
+		}
+	}
+	network.StartPeriodicSync(bc, store, syncInterval, func() {
+		// A peer's chain was just adopted — replay it into the EVM bridge so the
+		// EVM state (votes, registrations, phase) reflects what ReplaceBlocks just
+		// wrote into bc. ReplayBlockchain re-runs every block from the start, but
+		// that's safe here: transactions already reflected in EVM state simply
+		// fail again (already-registered, wrong-phase, etc.) and are skipped with
+		// a warning, same as any other replay-time rejection — only the blocks
+		// this node was missing actually apply.
+		if bridge != nil {
+			log.Info().Msg("Periodic sync adopted a longer peer chain — replaying into EVM state")
+			evm.ReplayBlockchain(bc, bridge)
+		}
+	})
 
 	// ── API Server ───────────────────────────────────────────────────────────
 	api.InitServer(bc, store, bridge)

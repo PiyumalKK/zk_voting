@@ -89,16 +89,19 @@ A purpose-built blockchain in Go for private, Sybil-resistant e-voting using zer
 - **Block sync**: `handleReceiveBlock` uses `AppendExternalBlock` — peers stay on identical chain
 - **Startup ordering**: TLS config loaded → `InitNetworkClient` → `SyncWithPeers` → `StartServer`
 
-> ⚠️ **Known Gap — Live Node Drift (to be addressed in Stage 4)**
+> ✅ **Fixed (2026-07-01) — Live Node Drift**
 >
-> `BroadcastBlock` in `broadcast.go` is fire-and-forget (`go func` with no retry or ACK).
-> If a peer node is temporarily offline or the POST fails, it silently misses blocks and its
-> chain drifts behind. The only recovery today is a full node restart triggering `SyncWithPeers`.
-> There is no periodic heartbeat, gap-fill, or divergence detection for live nodes.
->
-> **Planned fix:** Add a periodic background sync ticker that calls `SyncWithPeers` on a
-> configurable interval (e.g. every 30s). This ensures live nodes self-heal without requiring
-> a restart, at the cost of one `/internal/chain` request per peer per interval.
+> `BroadcastBlock` in `broadcast.go` is still fire-and-forget (`go func` with no retry or ACK) —
+> that part is unchanged and by design. What's fixed is the recovery path: `main.go` now starts
+> `network.StartPeriodicSync` (default every 30s, configurable via `SYNC_INTERVAL_SEC`), which
+> re-runs `SyncWithPeers` on a ticker for the lifetime of the process. A peer that missed blocks
+> because of a failed broadcast self-heals on the next tick instead of requiring a restart. See
+> [`BLOCKCHAIN_OVERVIEW.md` → "Periodic Peer Sync"](./BLOCKCHAIN_OVERVIEW.md) for the full design,
+> including a real bug this fix required fixing first: the old `SyncWithPeers(bc **core.Blockchain,
+> ...)` swapped the blockchain pointer, which only worked because it ran once, before any other
+> package captured a copy of that pointer. Calling it again later (from a ticker, after
+> `api.InitServer` already has its own copy) would have silently updated a local variable nobody
+> reads. `Blockchain.ReplaceBlocks` now mutates the existing object in place instead.
 
 **1.5 Observability**
 - **Structured Logging**: `zerolog` with JSON/console output and request latency tracking
@@ -191,17 +194,31 @@ With EIP-150, the 63/64 gas forwarding rule caps what's forwarded, solving the i
 
 ---
 
-### Stage 6: Integration Testing
+### Stage 6: Integration Testing ✅ COMPLETED
 **Goal:** End-to-end test that simulates a complete election.
 
 **Deliverables:**
-- Test script:
+- [x] Test script (`packages/blockchain/integration-test/run.mjs`):
   1. Start Go node (Embedded EVM)
   2. Register voters via API
   3. Verify EVM state updates (check root)
   4. Submit valid/invalid ZK proofs
   5. Verify EVM rejects invalid proofs and double-votes
   6. Stop/Start node and verify state is perfectly reconstructed from blocks
+- [x] `GET /commitments` — new read endpoint exposing the ordered list of
+  registered commitments, needed to build a real Merkle inclusion proof (the
+  browser gets the equivalent from Solidity event logs; this custom chain has no
+  event-log system, so this exposes data that was already on-chain instead of
+  building one)
+- **Proof generation stays a frontend/test-harness concern, not a backend one**:
+  the integration test's proof generation runs entirely in a standalone Node
+  script (`packages/blockchain/integration-test/`) that plays the role of a
+  browser — it is never part of the running node. `packages/blockchain` itself
+  still never sees a `nullifier` or `secret`, only a `commitment` (at
+  registration) and later a proof + public inputs with no voter identity
+  attached. See
+  [`BLOCKCHAIN_OVERVIEW.md` → "Stage 6: Integration Testing"](./BLOCKCHAIN_OVERVIEW.md)
+  for the full breakdown and the frontend/backend split this preserves.
 
 ---
 
@@ -267,10 +284,10 @@ packages/blockchain/
 - [x] Stage 2: Embedded EVM Integration
 - [x] Stage 3: Contract Bridge & State Replay
 - [x] Stage 4: EVM-Powered API & Queries — read calls, error decoding, dedicated read endpoints (`GET /voting-data`, `GET /voter/{voter_id}`), and per-request caching all done
-  - [ ] **[Network Fix]** Periodic background sync ticker to detect and recover live node drift (see Stage 1.4 Known Gap)
+  - [x] **[Network Fix]** Periodic background sync ticker to detect and recover live node drift (see Stage 1.4 Known Gap)
 - [x] Stage 5: REST API Server — CORS, admin auth, and the full read/write endpoint set are live
-- [ ] Stage 6: Integration Testing  ← NEXT
-- [ ] Stage 7: Frontend Connection
+- [x] Stage 6: Integration Testing — `packages/blockchain/integration-test/run.mjs`, passing end-to-end
+- [ ] Stage 7: Frontend Connection  ← NEXT
 
 > **Post-Stage-3 hardening (2026-07-01):** a review of the Stage 3 diff found and fixed one critical
 > and two moderate/minor issues in the contract-bridge wiring. See

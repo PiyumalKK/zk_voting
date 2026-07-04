@@ -53,6 +53,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /voter/{voter_id}", RequestLogger(handleGetVoterData))
 	mux.HandleFunc("GET /candidates", RequestLogger(handleGetCandidates))
 	mux.HandleFunc("GET /vote-counts", RequestLogger(handleGetVoteCounts))
+	mux.HandleFunc("GET /commitments", RequestLogger(handleGetCommitments))
 
 	// Admin-only write endpoints
 	mux.HandleFunc("/add-voter", RequestLogger(AdminAuthMiddleware(handleAddVoter)))
@@ -224,6 +225,46 @@ func handleGetVoteCounts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tally)
+}
+
+// handleGetCommitments returns every registered commitment, in insertion order —
+// the same order LeanIMT assigns leaf indices in. This has no EVM/bridge
+// dependency; it's derived purely from the blockchain's own REGISTER transaction
+// log, so it works even in Stage 1/2 fallback mode.
+//
+// A client that needs to build a ZK proof (see packages/blockchain/integration-test)
+// needs exactly this: the browser gets the equivalent list from Solidity's NewLeaf
+// event logs, which this custom chain has no equivalent of, but the underlying
+// data was always on-chain — every /register call already validates against the
+// EVM before committing (see the Stage 3 hardening pass), so every REGISTER
+// transaction on the chain corresponds 1:1 with a real tree leaf.
+//
+// Commitments are scoped to the current election: everything before the most
+// recent RESET_ELECTION transaction belongs to a dead election and is excluded,
+// otherwise a client would reconstruct a tree that doesn't match the live root.
+func handleGetCommitments(w http.ResponseWriter, r *http.Request) {
+	var commitments []string
+	for _, block := range bc.GetBlocks() {
+		for _, tx := range block.Transactions {
+			switch tx.Type {
+			case core.TxResetElection:
+				commitments = commitments[:0] // everything before a reset belongs to a dead election
+			case core.TxRegister:
+				var p core.RegisterPayload
+				if err := tx.ParsePayload(&p); err != nil {
+					log.Error().Err(err).Str("tx_id", tx.ID).Msg("Failed to parse REGISTER payload")
+					continue
+				}
+				commitments = append(commitments, p.Commitment)
+			}
+		}
+	}
+	if commitments == nil {
+		commitments = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(commitments)
 }
 
 // ─── Admin ────────────────────────────────────────────────────────────────────

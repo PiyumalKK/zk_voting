@@ -393,3 +393,59 @@ func TestLoadFromBlocks_Empty(t *testing.T) {
 	}
 }
 
+// --- ReplaceBlocks Tests ---
+
+// TestReplaceBlocks_PreservesIdentity verifies that ReplaceBlocks mutates the
+// receiver in place rather than requiring callers to swap a pointer — the whole
+// point of the method (see its doc comment): every package holding a copy of the
+// original *Blockchain pointer must transparently see the replacement.
+func TestReplaceBlocks_PreservesIdentity(t *testing.T) {
+	bc := NewBlockchain("Test question", nil)
+	before := bc // same pointer value, held independently of the variable we mutate
+
+	longer := NewBlockchain("Longer chain", nil)
+	for i := 0; i < 3; i++ {
+		tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: fmt.Sprintf("voter%d", i), Allowed: true})
+		longer.AddTransaction(tx)
+	}
+
+	if err := bc.ReplaceBlocks(longer.GetBlocks()); err != nil {
+		t.Fatalf("ReplaceBlocks: %v", err)
+	}
+
+	if before != bc {
+		t.Fatal("bc variable identity changed — ReplaceBlocks must mutate in place, not return a new pointer")
+	}
+	if before.Len() != 4 { // genesis + 3
+		t.Errorf("expected 4 blocks after replace, got %d", before.Len())
+	}
+}
+
+func TestReplaceBlocks_RejectsInvalidChain(t *testing.T) {
+	bc := NewBlockchain("Test question", nil)
+	tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
+	bc.AddTransaction(tx)
+	originalLen := bc.Len()
+
+	invalid := []*Block{
+		{Index: 0, Hash: "not-a-real-genesis-hash"},
+	}
+
+	if err := bc.ReplaceBlocks(invalid); err == nil {
+		t.Error("expected error replacing with an invalid chain, got nil")
+	}
+
+	// The chain must be left exactly as it was — no partial replacement.
+	if bc.Len() != originalLen {
+		t.Errorf("expected chain to be rolled back to %d blocks after rejected replace, got %d", originalLen, bc.Len())
+	}
+}
+
+func TestReplaceBlocks_RejectsEmpty(t *testing.T) {
+	bc := NewBlockchain("Test question", nil)
+
+	if err := bc.ReplaceBlocks([]*Block{}); err == nil {
+		t.Error("expected error replacing with an empty chain, got nil")
+	}
+}
+
