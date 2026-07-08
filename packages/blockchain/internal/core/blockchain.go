@@ -183,6 +183,18 @@ func (bc *Blockchain) Height() uint64 {
 	return uint64(len(bc.blocks) - 1)
 }
 
+// TipTimestamp returns the timestamp (unix milliseconds) of the latest block.
+// Write handlers use this to compute a block timestamp that is already >= the
+// tip before executing the EVM, so the instant the EVM runs at equals the instant
+// that gets persisted (AddBlockAt then has nothing to clamp) — keeping replay
+// deterministic. Only meaningful while the write path holds the write lock, so the
+// tip cannot advance between this read and the subsequent append.
+func (bc *Blockchain) TipTimestamp() int64 {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.blocks[len(bc.blocks)-1].Timestamp
+}
+
 // GetAllTransactions returns all transactions across all blocks,
 // optionally filtered by transaction type. Pass empty string for all types.
 func (bc *Blockchain) GetAllTransactions(filterType TxType) []Transaction {

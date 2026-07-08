@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"os"
 	"strconv"
 	"time"
@@ -51,7 +52,7 @@ func main() {
 	defer store.Close()
 
 	bc, err := store.LoadBlockchain()
-	if err != nil {
+	if errors.Is(err, persistence.ErrNoBlockchain) {
 		log.Info().Msg("No existing blockchain found — creating new genesis block")
 		// Default candidates mirror packages/hardhat/deploy/00_deploy_your_contract.ts,
 		// which seeds ["Yes", "No"] at deploy time to preserve the original demo's feel.
@@ -60,6 +61,14 @@ func main() {
 		if err := store.SaveBlockchain(bc); err != nil {
 			log.Fatal().Err(err).Msg("Failed to save genesis block")
 		}
+	} else if err != nil {
+		// A load error that is NOT "empty database" means the persisted chain is
+		// corrupt or failed validation. Refuse to start rather than silently
+		// discarding it and reinitializing a fresh election (data loss).
+		log.Fatal().Err(err).Msg(
+			"Failed to load existing blockchain — the on-disk data is corrupt or invalid. " +
+				"Refusing to start so it is not silently overwritten. " +
+				"Inspect or remove " + dataDir + "/blockchain.db to start from a fresh genesis.")
 	}
 	log.Info().Int("blocks", bc.Len()).Msg("Blockchain loaded")
 
@@ -177,18 +186,19 @@ func main() {
 		}
 	}
 	network.StartPeriodicSync(bc, store, syncInterval, func() {
-		// A peer's chain was just adopted — replay it into the EVM bridge so the
-		// EVM state (votes, registrations, phase) reflects what ReplaceBlocks just
-		// wrote into bc. ReplayBlockchain re-runs every block from the start, but
-		// that's safe here: transactions already reflected in EVM state simply
-		// fail again (already-registered, wrong-phase, etc.) and are skipped with
-		// a warning, same as any other replay-time rejection — only the blocks
-		// this node was missing actually apply.
+		// A peer's chain was just adopted — rebuild the EVM from scratch to match it.
+		// Replaying onto the existing EVM is only sound for a strict extension; if the
+		// adopted chain diverged from ours, stale registrations/nullifiers from the
+		// abandoned local blocks would linger and wrongly reject later operations.
+		// ResyncFromChain deploys a fresh EVM and replays the whole adopted chain into
+		// it, then swaps it in atomically.
 		if bridge != nil {
-			log.Info().Msg("Periodic sync adopted a longer peer chain — replaying into EVM state")
-			evm.ReplayBlockchain(bc, bridge)
+			log.Info().Msg("Periodic sync adopted a longer peer chain — rebuilding EVM state")
+			if err := bridge.ResyncFromChain(bc); err != nil {
+				log.Error().Err(err).Msg("Failed to rebuild EVM state after peer sync")
+			}
 		}
-	})
+	}, api.WriteLock, api.WriteUnlock)
 
 	// ── API Servers ──────────────────────────────────────────────────────────
 	// Two listeners with different trust models:

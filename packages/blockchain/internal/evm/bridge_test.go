@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	"zk-blockchain/internal/core"
 )
 
 // testNow returns the current wall clock as the unix-seconds blockTime that
@@ -725,5 +727,49 @@ func TestHexToBytes32(t *testing.T) {
 		"ff" + "ff" + "ff" + "ff" + "ff" + "ff" + "ff" + "ff" + "ff")
 	if err == nil {
 		t.Error("expected error for input > 32 bytes, got nil")
+	}
+}
+
+// TestResyncFromChain_RebuildsState verifies the periodic-sync EVM rebuild:
+// ResyncFromChain deploys a fresh EVM and replays a whole chain into it, so the
+// resulting state must match what the chain describes (voter allowed + registered,
+// tree size 1) rather than whatever the old EVM happened to hold.
+func TestResyncFromChain_RebuildsState(t *testing.T) {
+	bridge := newTestBridge(t)
+
+	// Build a chain the fresh EVM will replay: add a voter (Setup), open
+	// registration, then register a commitment.
+	bc := core.NewBlockchain("Should we proceed?", []string{"Yes", "No"})
+	addTx := func(txType core.TxType, payload interface{}) {
+		tx, err := core.NewTransaction(txType, payload)
+		if err != nil {
+			t.Fatalf("NewTransaction(%s): %v", txType, err)
+		}
+		if _, err := bc.AddTransaction(tx); err != nil {
+			t.Fatalf("AddTransaction(%s): %v", txType, err)
+		}
+	}
+	addTx(core.TxAddVoter, core.AddVoterPayload{VoterID: "alice", Allowed: true})
+	addTx(core.TxStartRegistration, core.StartRegistrationPayload{DurationSec: 3600})
+	addTx(core.TxRegister, core.RegisterPayload{VoterID: "alice", Commitment: "0x123", LeafIndex: 0})
+
+	if err := bridge.ResyncFromChain(bc); err != nil {
+		t.Fatalf("ResyncFromChain: %v", err)
+	}
+
+	vd, err := bridge.GetVotingData()
+	if err != nil {
+		t.Fatalf("GetVotingData: %v", err)
+	}
+	if vd.TreeSize.Uint64() != 1 {
+		t.Errorf("expected tree_size 1 after resync, got %s", vd.TreeSize)
+	}
+
+	voter, err := bridge.GetVoterData("alice")
+	if err != nil {
+		t.Fatalf("GetVoterData: %v", err)
+	}
+	if !voter.Allowed || !voter.Registered {
+		t.Errorf("expected alice allowed+registered after resync, got %+v", voter)
 	}
 }

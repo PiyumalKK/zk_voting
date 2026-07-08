@@ -49,6 +49,20 @@ func (cc *ContractCaller) SetTime(unixSec uint64) {
 	cc.evm.Context.Time = unixSec
 }
 
+// Snapshot records the current EVM state and returns a revision id that can be
+// passed to RevertToSnapshot to roll every subsequent mutation back. Used to make
+// a write atomic: if a step after a successful state-changing Call fails, the call's
+// effects can be undone so the EVM never ends up ahead of the committed chain.
+// Not concurrency-safe — only called under the ContractBridge mutex.
+func (cc *ContractCaller) Snapshot() int {
+	return cc.evm.StateDB.Snapshot()
+}
+
+// RevertToSnapshot rolls EVM state back to the given revision (see Snapshot).
+func (cc *ContractCaller) RevertToSnapshot(id int) {
+	cc.evm.StateDB.RevertToSnapshot(id)
+}
+
 // CodeHash returns the keccak256 hash of the runtime bytecode deployed at addr.
 // Logged at startup so a stale compiled artifact (assets/ out of sync with
 // packages/hardhat) is visible immediately.

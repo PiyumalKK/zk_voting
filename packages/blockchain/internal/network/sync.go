@@ -74,9 +74,13 @@ func SyncWithPeers(bc *core.Blockchain, store interface {
 // and adopts any longer valid chain it finds.
 //
 // onSync, if non-nil, is called (synchronously, from the ticker goroutine) every
-// time a tick actually adopts a peer's chain — the caller uses this to replay the
-// newly adopted blocks into the EVM bridge, since ReplaceBlocks only updates the
+// time a tick actually adopts a peer's chain — the caller uses this to rebuild the
+// EVM state from the adopted chain, since ReplaceBlocks only updates the
 // core.Blockchain, not any derived EVM state.
+//
+// lock/unlock, if non-nil, are held around the whole SyncWithPeers + onSync step so
+// the chain replacement and EVM rebuild are serialized against request handlers
+// (the api write lock). Pass nil,nil to run unsynchronized (e.g. tests).
 //
 // Returns a stop function that terminates the background goroutine and blocks
 // until it has fully exited — not just signaled to exit. That distinction
@@ -90,7 +94,7 @@ func SyncWithPeers(bc *core.Blockchain, store interface {
 // value is cheap to provide and tests rely on it.
 func StartPeriodicSync(bc *core.Blockchain, store interface {
 	SaveBlockchain(*core.Blockchain) error
-}, interval time.Duration, onSync func()) (stop func()) {
+}, interval time.Duration, onSync func(), lock, unlock func()) (stop func()) {
 	if interval <= 0 {
 		log.Info().Msg("Periodic peer sync disabled (interval <= 0)")
 		return func() {}
@@ -107,8 +111,14 @@ func StartPeriodicSync(bc *core.Blockchain, store interface {
 			case <-done:
 				return
 			case <-ticker.C:
+				if lock != nil {
+					lock()
+				}
 				if SyncWithPeers(bc, store) && onSync != nil {
 					onSync()
+				}
+				if unlock != nil {
+					unlock()
 				}
 			}
 		}

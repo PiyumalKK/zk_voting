@@ -23,12 +23,32 @@ var (
 	store  *persistence.FileStore
 	bridge *evm.ContractBridge // nil when artifacts are unavailable (Stage 1/2 mode)
 
-	// registrationMu serializes /register requests so that LeafIndex assignment
-	// and block append are atomic. Without this, two concurrent registrations
-	// could both count N existing registrations and assign the same leaf index,
-	// corrupting the Merkle tree.
-	registrationMu sync.Mutex
+	// writeMu serializes every chain-state mutation: voter/vote/admin writes (via
+	// SerializeWrites), P2P block receipt, and periodic-sync chain adoption (via
+	// WriteLock/WriteUnlock passed to network.StartPeriodicSync). Serializing all
+	// of them guarantees two things the node's correctness depends on:
+	//   1. Block timestamps are monotonic and the instant the EVM executes a write
+	//      at equals the instant persisted in the block — so replay is deterministic
+	//      (see nowBlockTime + core.Blockchain.TipTimestamp).
+	//   2. LeafIndex assignment and block append stay atomic (its original job).
+	writeMu sync.Mutex
 )
+
+// WriteLock / WriteUnlock expose writeMu so main.go can serialize the periodic
+// peer sync's chain replacement + EVM rebuild against in-flight request handlers.
+func WriteLock()   { writeMu.Lock() }
+func WriteUnlock() { writeMu.Unlock() }
+
+// SerializeWrites wraps a state-mutating handler so it runs under writeMu. Applied
+// to every write route (register, vote, and all admin endpoints) and to P2P block
+// receipt, so no two chain mutations interleave.
+func SerializeWrites(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		next.ServeHTTP(w, r)
+	}
+}
 
 // InitServer sets the shared state used by all handlers.
 // bridge may be nil — if so, write operations skip EVM calls (Stage 1/2 mode).
@@ -62,21 +82,23 @@ func newPublicMux() *http.ServeMux {
 	mux.HandleFunc("GET /commitments", RequestLogger(handleGetCommitments))
 	mux.HandleFunc("GET /voters", RequestLogger(handleGetVoters))
 
-	// Admin-only write endpoints
-	mux.HandleFunc("/add-voter", RequestLogger(AdminAuthMiddleware(handleAddVoter)))
+	// Admin-only write endpoints. SerializeWrites is innermost so writeMu is held
+	// for the whole handler body (EVM call + block commit), serializing it against
+	// every other chain mutation.
+	mux.HandleFunc("/add-voter", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleAddVoter))))
 
 	// Admin-only election lifecycle endpoints (mirror the admin page's phase
 	// controls — see packages/nextjs/app/voting/admin/page.tsx)
-	mux.HandleFunc("/set-question", RequestLogger(AdminAuthMiddleware(handleSetQuestion)))
-	mux.HandleFunc("/set-candidates", RequestLogger(AdminAuthMiddleware(handleSetCandidates)))
-	mux.HandleFunc("/start-registration", RequestLogger(AdminAuthMiddleware(handleStartRegistration)))
-	mux.HandleFunc("/start-voting", RequestLogger(AdminAuthMiddleware(handleStartVoting)))
-	mux.HandleFunc("/end-election", RequestLogger(AdminAuthMiddleware(handleEndElection)))
-	mux.HandleFunc("/reset-election", RequestLogger(AdminAuthMiddleware(handleResetElection)))
+	mux.HandleFunc("/set-question", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleSetQuestion))))
+	mux.HandleFunc("/set-candidates", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleSetCandidates))))
+	mux.HandleFunc("/start-registration", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleStartRegistration))))
+	mux.HandleFunc("/start-voting", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleStartVoting))))
+	mux.HandleFunc("/end-election", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleEndElection))))
+	mux.HandleFunc("/reset-election", RequestLogger(AdminAuthMiddleware(SerializeWrites(handleResetElection))))
 
-	// Public voter endpoints — rate limited per IP
-	mux.HandleFunc("/register", RequestLogger(RateLimitMiddleware(handleRegister)))
-	mux.HandleFunc("/vote", RequestLogger(RateLimitMiddleware(handleVote)))
+	// Public voter endpoints — rate limited per IP, then serialized.
+	mux.HandleFunc("/register", RequestLogger(RateLimitMiddleware(SerializeWrites(handleRegister))))
+	mux.HandleFunc("/vote", RequestLogger(RateLimitMiddleware(SerializeWrites(handleVote))))
 
 	return mux
 }
@@ -86,7 +108,8 @@ func newPublicMux() *http.ServeMux {
 // peer certificate cannot even complete the TLS handshake.
 func newP2PMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/internal/block", RequestLogger(handleReceiveBlock))
+	// Block receipt mutates the chain + EVM, so it serializes under writeMu too.
+	mux.HandleFunc("/internal/block", RequestLogger(SerializeWrites(handleReceiveBlock)))
 	mux.HandleFunc("/internal/chain", RequestLogger(handleSendChain))
 	return mux
 }
@@ -163,12 +186,14 @@ func handleGetBlocks(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "page and limit must be positive integers (both required for pagination)", http.StatusBadRequest)
 			return
 		}
+		// Guard against int overflow from very large page/limit values: a wrapped
+		// negative start/end would escape the upper-bound clamp and panic the slice.
 		start := (page - 1) * limit
-		if start > len(blocks) {
+		if start < 0 || start > len(blocks) {
 			start = len(blocks)
 		}
 		end := start + limit
-		if end > len(blocks) {
+		if end < start || end > len(blocks) {
 			end = len(blocks)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -357,12 +382,21 @@ type RegisterResponse struct {
 	ElectionID string `json:"election_id,omitempty"`
 }
 
-// nowBlockTime returns the wall-clock instant used to stamp both the EVM call
-// and the committed block, as (milliseconds for the block, seconds for the EVM).
-// Using one instant for both is what makes replay deterministic — see
-// ContractCaller.SetTime.
+// nowBlockTime returns the instant used to stamp both the EVM call and the
+// committed block, as (milliseconds for the block, seconds for the EVM). Using one
+// instant for both is what makes replay deterministic — see ContractCaller.SetTime.
+//
+// The wall clock is clamped up to the chain tip's timestamp so the value returned
+// here is exactly what gets persisted: AddBlockAt would otherwise clamp a
+// behind-the-tip timestamp on its own, leaving the persisted block time (used by
+// replay) different from the evmTime the write was validated against. Callers must
+// hold writeMu (via SerializeWrites) so the tip cannot advance between this read and
+// the block append.
 func nowBlockTime() (tsMs int64, evmTime uint64) {
 	tsMs = time.Now().UnixMilli()
+	if tip := bc.TipTimestamp(); tsMs < tip {
+		tsMs = tip
+	}
 	return tsMs, uint64(tsMs) / 1000
 }
 
@@ -651,11 +685,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serialize registration handling at the HTTP layer too, so that block append
-	// order matches EVM insertion order (auditability) and the tx-count fallback
-	// path below stays consistent when the EVM bridge is unavailable.
-	registrationMu.Lock()
-	defer registrationMu.Unlock()
+	// Registration is serialized against every other chain mutation by the
+	// SerializeWrites middleware (writeMu), so block append order matches EVM
+	// insertion order and the tx-count fallback path stays consistent when the
+	// EVM bridge is unavailable.
 
 	// Stage 3: call EVM register() BEFORE committing the block.
 	// If the EVM rejects the commitment (voter not allowlisted, duplicate commitment,

@@ -16,6 +16,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	gethvm "github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"zk-blockchain/internal/core"
 )
 
 // AdminAddress is the fixed authority address used as the Voting contract deployer/owner.
@@ -43,6 +45,14 @@ type ContractBridge struct {
 	caller     *ContractCaller
 	votingAddr common.Address
 	votingABI  abi.ABI
+
+	// Deployment inputs, retained so the EVM can be rebuilt from scratch after a
+	// peer chain is adopted (see ResyncFromChain). These are the genesis question
+	// and candidates — replay then re-applies every SetQuestion/SetCandidates on
+	// top, exactly as at startup.
+	assetsDir  string
+	question   string
+	candidates []string
 
 	// mu serializes every call into the EVM. go-ethereum's state.StateDB (the
 	// trie/journal backing cc.evm) is built for single-threaded, one-call-at-a-time
@@ -233,8 +243,43 @@ func NewContractBridge(caller *ContractCaller, assetsDir, question string, candi
 		caller:         caller,
 		votingAddr:     votingAddr,
 		votingABI:      votingABI,
+		assetsDir:      assetsDir,
+		question:       question,
+		candidates:     candidates,
 		voterDataCache: make(map[string]*VoterData),
 	}, nil
+}
+
+// ResyncFromChain rebuilds the EVM state from scratch to match the given chain.
+// It is called after the periodic peer sync adopts a longer chain: replaying onto
+// the existing EVM is only sound for a strict extension, so if the adopted chain
+// diverged, stale registrations/nullifiers from abandoned local blocks would linger
+// and wrongly reject later operations. Building a fresh EVM (fresh StateDB → redeploy
+// the four contracts → replay every block) and atomically swapping it in guarantees
+// the EVM reflects exactly the adopted chain and nothing else.
+//
+// The fresh bridge is fully built before the swap, so concurrent readers never see a
+// half-populated EVM — they see either the old state or the new one. The caller must
+// hold the api write lock so no write handler mutates the chain mid-rebuild.
+func (b *ContractBridge) ResyncFromChain(bc *core.Blockchain) error {
+	sm, err := NewStateManager()
+	if err != nil {
+		return fmt.Errorf("resync: new state manager: %w", err)
+	}
+	freshCaller := NewContractCaller(CreateStatelessEVM(sm.GetStateDB()))
+	fresh, err := NewContractBridge(freshCaller, b.assetsDir, b.question, b.candidates)
+	if err != nil {
+		return fmt.Errorf("resync: redeploy contracts: %w", err)
+	}
+	ReplayBlockchain(bc, fresh) // fully reconstruct on the fresh EVM
+
+	b.mu.Lock()
+	b.caller = fresh.caller
+	b.votingAddr = fresh.votingAddr
+	b.votingABI = fresh.votingABI
+	b.voterDataCache = make(map[string]*VoterData)
+	b.mu.Unlock()
+	return nil
 }
 
 // VotingAddress returns the address of the deployed Voting contract.
@@ -307,8 +352,17 @@ func (b *ContractBridge) Register(voterID, commitmentHex string, blockTime uint6
 		return 0, fmt.Errorf("encode register: %w", err)
 	}
 	voterAddr := VoterIDToAddress(voterID)
+
+	// Snapshot before the state-changing call so that if any step AFTER a
+	// successful insert fails (e.g. reading back the tree size), we can undo the
+	// insert. Otherwise the EVM tree would hold a leaf the chain never commits
+	// (the handler returns an error and skips the block), and the live root would
+	// diverge from the one a client rebuilds from GET /commitments.
+	snap := b.caller.Snapshot()
+
 	ret, _, evmErr := b.caller.Call(voterAddr, b.votingAddr, data)
 	if err := b.wrapErr(evmErr, ret, "register"); err != nil {
+		b.caller.RevertToSnapshot(snap)
 		return 0, err
 	}
 
@@ -318,9 +372,11 @@ func (b *ContractBridge) Register(voterID, commitmentHex string, blockTime uint6
 
 	votingData, err := b.fetchVotingDataLocked()
 	if err != nil {
+		b.caller.RevertToSnapshot(snap)
 		return 0, fmt.Errorf("register succeeded but failed to read tree size: %w", err)
 	}
 	if votingData.TreeSize.Sign() <= 0 {
+		b.caller.RevertToSnapshot(snap)
 		return 0, fmt.Errorf("register succeeded but tree size is %s (expected >= 1)", votingData.TreeSize)
 	}
 	return votingData.TreeSize.Uint64() - 1, nil

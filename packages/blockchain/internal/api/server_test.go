@@ -205,3 +205,28 @@ func TestHandleGetVotingData_NoBridge(t *testing.T) {
 		t.Errorf("expected 503 when bridge is nil, got %d", rec.Code)
 	}
 }
+
+// TestHandleGetBlocks_PaginationOverflowDoesNotPanic guards the /blocks pagination
+// against int overflow: (page-1)*limit with near-int64-max inputs wraps negative,
+// and without the start<0 / end<start clamp the slice expression would panic on a
+// negative index (a crafted-input crash).
+func TestHandleGetBlocks_PaginationOverflowDoesNotPanic(t *testing.T) {
+	mux := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/blocks?page=9223372036854775807&limit=2", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req) // would panic here before the overflow guard
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Blocks []json.RawMessage `json:"blocks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
+	}
+	if len(got.Blocks) != 0 {
+		t.Errorf("expected an empty page beyond the end of the chain, got %d blocks", len(got.Blocks))
+	}
+}
