@@ -22,7 +22,7 @@ func ReplayBlockchain(bc *core.Blockchain, bridge *ContractBridge) {
 			continue
 		}
 		for _, tx := range block.Transactions {
-			if err := bridge.ReplayTransaction(tx); err != nil {
+			if err := bridge.ReplayTransaction(tx, BlockEVMTime(block.Timestamp)); err != nil {
 				log.Warn().
 					Str("tx_id", tx.ID).
 					Str("tx_type", string(tx.Type)).
@@ -42,23 +42,34 @@ func ReplayBlockchain(bc *core.Blockchain, bridge *ContractBridge) {
 		Msg("EVM state replay complete")
 }
 
+// BlockEVMTime converts a block's persisted timestamp (unix milliseconds) into
+// the unix-seconds value the EVM clock uses. Centralized so every replay path
+// (startup replay, peer-block replay) rounds the same way.
+func BlockEVMTime(blockTimestampMs int64) uint64 {
+	return uint64(blockTimestampMs) / 1000
+}
+
 // ReplayTransaction applies a single blockchain transaction to the EVM.
 // It dispatches to the correct bridge method based on transaction type.
-func (b *ContractBridge) ReplayTransaction(tx core.Transaction) error {
+// blockTime is the containing block's timestamp in unix seconds (see
+// BlockEVMTime) — replaying with the original time, not the current wall
+// clock, is what keeps phase-deadline decisions identical to the original
+// execution.
+func (b *ContractBridge) ReplayTransaction(tx core.Transaction, blockTime uint64) error {
 	switch tx.Type {
 	case core.TxAddVoter:
 		var p core.AddVoterPayload
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.AddVoter(p.VoterID, p.Allowed)
+		return b.AddVoter(p.VoterID, p.Allowed, blockTime)
 
 	case core.TxRegister:
 		var p core.RegisterPayload
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		_, err := b.Register(p.VoterID, p.Commitment)
+		_, err := b.Register(p.VoterID, p.Commitment, blockTime)
 		return err
 
 	case core.TxVote:
@@ -66,41 +77,41 @@ func (b *ContractBridge) ReplayTransaction(tx core.Transaction) error {
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.Vote(p.Proof, p.NullifierHash, p.Root, p.CandidateIndex, p.Depth)
+		return b.Vote(p.Proof, p.NullifierHash, p.Root, p.CandidateIndex, p.Depth, blockTime)
 
 	case core.TxSetQuestion:
 		var p core.SetQuestionPayload
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.SetQuestion(p.Question)
+		return b.SetQuestion(p.Question, blockTime)
 
 	case core.TxSetCandidates:
 		var p core.SetCandidatesPayload
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.SetCandidates(p.Candidates)
+		return b.SetCandidates(p.Candidates, blockTime)
 
 	case core.TxStartRegistration:
 		var p core.StartRegistrationPayload
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.StartRegistration(p.DurationSec)
+		return b.StartRegistration(p.DurationSec, blockTime)
 
 	case core.TxStartVoting:
 		var p core.StartVotingPayload
 		if err := tx.ParsePayload(&p); err != nil {
 			return err
 		}
-		return b.StartVoting(p.DurationSec)
+		return b.StartVoting(p.DurationSec, blockTime)
 
 	case core.TxEndElection:
-		return b.EndElection()
+		return b.EndElection(blockTime)
 
 	case core.TxResetElection:
-		return b.ResetElection()
+		return b.ResetElection(blockTime)
 
 	default:
 		// Genesis and any future transaction types are silently skipped.

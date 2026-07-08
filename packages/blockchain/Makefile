@@ -1,4 +1,19 @@
-.PHONY: build run test clean
+.PHONY: build run test clean sync-artifacts
+
+# Recompile the Solidity contracts and copy the four artifacts this node
+# embeds into assets/. Run this after ANY change to packages/hardhat/contracts
+# or to the circuit's generated Verifier.sol — a stale artifact means the Go
+# node silently runs a different contract than Hardhat does. The node logs
+# voting_code_hash at startup so drift is detectable; this target is the fix.
+HARDHAT_DIR = ../hardhat
+HH_ARTIFACTS = $(HARDHAT_DIR)/artifacts
+sync-artifacts:
+	cd $(HARDHAT_DIR) && npx hardhat compile
+	cp "$(HH_ARTIFACTS)/contracts/Voting.sol/Voting.json"                assets/
+	cp "$(HH_ARTIFACTS)/contracts/Verifier.sol/HonkVerifier.json"        assets/
+	cp "$(HH_ARTIFACTS)/poseidon-solidity/PoseidonT3.sol/PoseidonT3.json" assets/
+	cp "$(HH_ARTIFACTS)/@zk-kit/lean-imt.sol/LeanIMT.sol/LeanIMT.json"    assets/
+	@echo "assets/ synced from packages/hardhat"
 
 # Build the blockchain node binary
 build:

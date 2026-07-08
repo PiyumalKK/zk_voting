@@ -1,43 +1,27 @@
 "use client";
 
-import { useMemo } from "react";
 import { ShowVotersButton } from "./_components/ShowVotersButton";
 import { NextPage } from "next";
 import { ClearStorageButton } from "~~/app/voting/_components/ClearStorageButton";
 import { CreateCommitment } from "~~/app/voting/_components/CreateCommitment";
 import { GenerateProof } from "~~/app/voting/_components/GenerateProof";
 import { LogStorageButton } from "~~/app/voting/_components/LogStorageButton";
+import { VoterIdCard } from "~~/app/voting/_components/VoterIdCard";
 import { VotingStats } from "~~/app/voting/_components/VotingStats";
-import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { isCustomChain, useLeaves, useVotingData } from "~~/services/chain/hooks";
+import { PHASE } from "~~/services/chain/types";
 
 const VotingPage: NextPage = () => {
-  const { data: rawLeafEvents } = useScaffoldEventHistory({
-    contractName: "Voting",
-    eventName: "NewLeaf",
-    watch: true,
-    enabled: true,
-  });
+  const { data: votingData } = useVotingData();
+  // Normalized Merkle leaves for the CURRENT election, oldest-first —
+  // backend-specific event slicing/ordering lives inside useLeaves().
+  const leaves = useLeaves();
 
-  const { data: votingData } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVotingData",
-  });
-
-  const treeSize = Number(votingData?.[5] ?? 0);
-
-  const leafEvents = useMemo(() => {
-    if (!rawLeafEvents) return [];
-    // The current election has exactly `treeSize` leaves.
-    // rawLeafEvents is newest-first, so the first `treeSize` events belong to the current election.
-    return rawLeafEvents.slice(0, treeSize);
-  }, [rawLeafEvents, treeSize]);
-
-  const phase = Number(votingData?.[2] ?? 0);
-  // Phase: 0 Setup, 1 Registration, 2 Voting, 3 Ended
-  const showRegistration = phase === 1;
-  const showVoting = phase === 2;
-  const showStartupNotice = phase === 0;
-  const showEndedNotice = phase === 3;
+  const phase = votingData?.phase ?? PHASE.Setup;
+  const showRegistration = phase === PHASE.Registration;
+  const showVoting = phase === PHASE.Voting;
+  const showStartupNotice = phase === PHASE.Setup;
+  const showEndedNotice = phase === PHASE.Ended;
 
   return (
     <div className="flex items-center justify-center flex-col grow pt-6 w-full">
@@ -54,15 +38,17 @@ const VotingPage: NextPage = () => {
           <div className="w-full max-w-2xl space-y-5">
             <VotingStats />
 
+            {isCustomChain && (showRegistration || showVoting) && <VoterIdCard />}
+
             {showStartupNotice && (
               <PhaseNotice tone="info" title="Election not started yet">
                 The admin is still configuring the election. Registration will open shortly.
               </PhaseNotice>
             )}
 
-            {showRegistration && <CreateCommitment leafEvents={leafEvents || []} />}
+            {showRegistration && <CreateCommitment />}
 
-            {showVoting && <GenerateProof leafEvents={leafEvents || []} />}
+            {showVoting && <GenerateProof leaves={leaves} />}
 
             {showEndedNotice && (
               <PhaseNotice tone="neutral" title="Election ended">

@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { Bars3Icon, BugAntIcon, Cog6ToothIcon, UserGroupIcon } from "@heroicons/react/24/outline";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
+import { isCustomChain } from "~~/services/chain/hooks";
 
 type HeaderMenuLink = {
   label: string;
@@ -40,7 +41,18 @@ const adminLink: HeaderMenuLink = {
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
   const isOwner = useIsVotingOwner();
-  const links = isOwner ? [...baseMenuLinks, adminLink] : baseMenuLinks;
+  // Custom chain: no wallets, so "Debug Contracts" (an EVM/RPC tool) is
+  // replaced by the REST chain explorer. The Admin link is always shown —
+  // the page itself is password-gated (there is no wallet-owner signal to
+  // hide it behind).
+  const menu = isCustomChain
+    ? [
+        ...baseMenuLinks.filter(l => l.href !== "/debug"),
+        { label: "Chain Explorer", href: "/chain-explorer", icon: <BugAntIcon className="h-4 w-4" /> },
+      ]
+    : baseMenuLinks;
+  const showAdmin = isCustomChain ? true : isOwner;
+  const links = showAdmin ? [...menu, adminLink] : menu;
 
   return (
     <>
@@ -104,7 +116,8 @@ export const Header = () => {
         </ul>
       </div>
       <div className="navbar-end grow mr-4">
-        <RainbowKitCustomConnectButton />
+        {/* Wallets only exist on the EVM backend; the custom chain is wallet-free. */}
+        {!isCustomChain && <RainbowKitCustomConnectButton />}
       </div>
     </div>
   );

@@ -61,11 +61,17 @@ export const useScaffoldReadContract = <
   };
 
   const queryClient = useQueryClient();
+  // Only watch new blocks when the underlying read is actually enabled. A disabled read
+  // (e.g. the inactive EVM branch in services/chain when the custom backend is selected)
+  // must not keep polling eth_blockNumber against an RPC that may not be running.
+  const argsReady = !Array.isArray(args) || !args.some(arg => arg === undefined);
+  const readIsEnabled = (queryOptions as { enabled?: boolean } | undefined)?.enabled ?? argsReady;
+  const shouldWatch = defaultWatch && readIsEnabled;
   const { data: blockNumber } = useBlockNumber({
-    watch: defaultWatch,
+    watch: shouldWatch,
     chainId: selectedNetwork.id,
     query: {
-      enabled: defaultWatch,
+      enabled: shouldWatch,
     },
   });
 

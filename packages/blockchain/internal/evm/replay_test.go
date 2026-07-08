@@ -146,7 +146,7 @@ func TestReplayTransaction_UnknownType(t *testing.T) {
 
 	// An unknown transaction type (e.g., future extension) must be silently ignored.
 	tx, _ := core.NewTransaction("UNKNOWN_TYPE", map[string]string{"foo": "bar"})
-	if err := bridge.ReplayTransaction(*tx); err != nil {
+	if err := bridge.ReplayTransaction(*tx, testNow()); err != nil {
 		t.Errorf("unknown tx type should be silently ignored, got: %v", err)
 	}
 }

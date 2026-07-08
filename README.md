@@ -7,6 +7,7 @@ A private, Sybil-resistant voting system using zero-knowledge proofs. Voters can
 - **packages/circuits** - Noir ZK circuit (proves voter membership privately)
 - **packages/hardhat** - Solidity smart contracts (Voting + Verifier)
 - **packages/nextjs** - React frontend (register, generate proof, vote)
+- **packages/blockchain** - Custom Go blockchain with an embedded EVM — a drop-in replacement for Hardhat (no wallets, no gas)
 
 ## Tech Stack
 
@@ -23,6 +24,104 @@ yarn chain     # Start local blockchain
 yarn deploy    # Deploy contracts
 yarn start     # Start frontend
 ```
+
+## Switching Chain Backends (Hardhat ⇄ Custom Go blockchain)
+
+The app runs against **either** backend with **no source changes** — you flip one
+environment variable and start the matching chain. This works because every voting
+component talks to the chain only through the hook facade in
+`packages/nextjs/services/chain/`, which internally routes to the selected backend.
+
+| | **Hardhat** (default) | **Custom Go blockchain** |
+|---|---|---|
+| `NEXT_PUBLIC_CHAIN_BACKEND` | `hardhat` (or unset) | `custom` |
+| Chain to run | `yarn chain` (local EVM on :8545) | Go node (REST API on :3001) |
+| Voter identity | wallet address (MetaMask / burner) | allowlisted voter ID string (e.g. email) |
+| Casting a vote | signed EVM tx (wallet confirms, costs gas) | one unsigned `POST /vote` (no wallet, no gas) |
+| Admin auth | contract owner (wallet) | dashboard password → server signs with RSA |
+| Contract logic | `Voting.sol` on Hardhat | the **same** `Voting.sol` bytecode in the node's embedded EVM |
+
+> The two backends are semantically identical **by construction**: the Go node executes
+> the same compiled `Voting.sol` / `HonkVerifier.sol` inside an in-process EVM rather than
+> reimplementing anything. Hardhat is the reference; the Go node is a drop-in replacement.
+
+Set the variables in `packages/nextjs/.env.local` (copy from `.env.example`). After changing
+`NEXT_PUBLIC_CHAIN_BACKEND` you must **restart the frontend** (`yarn start`).
+
+### Run in Hardhat mode (default)
+
+```bash
+# packages/nextjs/.env.local
+#   NEXT_PUBLIC_CHAIN_BACKEND=hardhat        (or just leave it unset)
+
+yarn chain      # terminal 1 — local EVM on :8545
+yarn deploy     # terminal 2 — deploy contracts
+yarn start      # terminal 3 — frontend on :3000
+```
+
+### Run in Custom (Go blockchain) mode
+
+**One-time setup**
+
+```bash
+cd packages/blockchain
+
+# 1. Sync the compiled contract artifacts into the node.
+#    Only needed the first time, or after ANY contract/circuit change.
+#    Requires `make` (use Git Bash on Windows). If you don't have make, run the
+#    equivalent by hand: `cd ../hardhat && npx hardhat compile`, then copy
+#    Voting.json, HonkVerifier.json, PoseidonT3.json, LeanIMT.json from
+#    ../hardhat/artifacts/... into packages/blockchain/assets/.
+make sync-artifacts
+
+# 2. Generate the admin keypair the node authenticates against (run in Git Bash).
+mkdir -p data_3001/keys
+openssl genrsa -out data_3001/keys/admin_private.pem 2048
+openssl rsa -in data_3001/keys/admin_private.pem -pubout -out data_3001/keys/admin_public.pem
+```
+
+**Configure the frontend** — in `packages/nextjs/.env.local`:
+
+```bash
+NEXT_PUBLIC_CHAIN_BACKEND=custom
+NEXT_PUBLIC_CHAIN_API_URL=http://localhost:3001
+ADMIN_API_PASSWORD=<password you'll type on the /voting/admin page>
+ADMIN_PRIVATE_KEY_PATH=../blockchain/data_3001/keys/admin_private.pem
+```
+
+**Start both processes**
+
+```bash
+# Terminal 1 — the Go node (public API on http://localhost:3001, plain HTTP).
+cd packages/blockchain
+go build -o bin/zk-node.exe ./cmd/node && ./bin/zk-node.exe    # or: make run
+
+# Terminal 2 — the frontend. Do NOT run `yarn chain` / `yarn deploy` in this mode.
+yarn start
+```
+
+Open http://localhost:3000/voting. No MetaMask needed — enter your allowlisted voter ID;
+the admin page at `/voting/admin` logs in with `ADMIN_API_PASSWORD`.
+
+### Switching back to Hardhat
+
+Set `NEXT_PUBLIC_CHAIN_BACKEND=hardhat` (or remove it), stop the Go node, then
+`yarn chain && yarn deploy && yarn start`.
+
+### Troubleshooting
+
+- **`fetch http://127.0.0.1:8545 ... eth_blockNumber` errors in custom mode** — means the
+  frontend is still set to `hardhat` (or you didn't restart it after changing the env). In
+  `custom` mode nothing should touch :8545.
+- **Node fails to replay the chain on startup** — the persisted chain in `data_3001` predates
+  a contract change. Wipe it for a fresh genesis (your keys live in a separate folder and are
+  kept): delete `data_3001/blockchain.db` and `data_3001/blockchain.json`, then start the node.
+- **`503` on admin actions** — the node can't find `data_3001/keys/admin_public.pem`. Re-run the
+  keypair step above; make sure `ADMIN_PRIVATE_KEY_PATH` points at the matching private key.
+
+See `packages/blockchain/API.md` for the node's REST contract and
+`packages/blockchain/CONTRACT_CHANGE_CHECKLIST.md` for evolving the contracts.
+The full design rationale is in `docs/CUSTOM_CHAIN_SWAP_PLAN.md`.
 
 ## Tools Required
 

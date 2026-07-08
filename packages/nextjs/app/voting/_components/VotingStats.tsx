@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { useCandidates, useVoteCounts, useVotingData } from "~~/services/chain/hooks";
 
 const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
 const PHASE_BADGE: Record<number, string> = {
@@ -34,20 +34,11 @@ function formatRemaining(seconds: number): string {
 }
 
 export const VotingStats = () => {
-  const { data: votingData } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVotingData",
-  });
-
-  const { data: candidates } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getCandidates",
-  });
-
-  const { data: voteCounts } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVoteCounts",
-  });
+  // Backend-agnostic election state (services/chain) — works identically
+  // against Hardhat/wagmi and the Go node's REST API.
+  const { data: votingData } = useVotingData();
+  const { data: list } = useCandidates();
+  const counts = useVoteCounts();
 
   // Live ticking clock for countdown.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -56,13 +47,11 @@ export const VotingStats = () => {
     return () => clearInterval(id);
   }, []);
 
-  const question = votingData?.[0] as string | undefined;
-  const phase = Number(votingData?.[2] ?? 0);
-  const registrationEnd = Number(votingData?.[3] ?? 0);
-  const votingEnd = Number(votingData?.[4] ?? 0);
+  const question = votingData?.question;
+  const phase = votingData?.phase ?? 0;
+  const registrationEnd = votingData?.registrationEndTime ?? 0;
+  const votingEnd = votingData?.votingEndTime ?? 0;
 
-  const list = (candidates as readonly string[] | undefined) ?? [];
-  const counts = (voteCounts as readonly bigint[] | undefined) ?? [];
   const total = counts.reduce((acc, c) => acc + c, 0n);
 
   const phaseLabel = PHASE_LABELS[phase] ?? "Unknown";

@@ -48,7 +48,7 @@ func newTestServer(t *testing.T) http.Handler {
 	InitServer(bc, &persistence.FileStore{}, bridge)
 	t.Cleanup(func() { InitServer(nil, nil, nil) })
 
-	return newMux()
+	return newPublicMux()
 }
 
 func TestHandleGetVotingData(t *testing.T) {
@@ -62,15 +62,24 @@ func TestHandleGetVotingData(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var got evm.VotingData
+	// Decode as a generic map: the wire format is what browser clients see,
+	// so assert on the JSON keys/types directly (root and election_id are
+	// strings by design — see VotingData.MarshalJSON).
+	var got map[string]interface{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v (body: %s)", err, rec.Body.String())
 	}
-	if got.Question != "Stage 4 API test question" {
-		t.Errorf("unexpected question: %q", got.Question)
+	if got["question"] != "Stage 4 API test question" {
+		t.Errorf("unexpected question: %v", got["question"])
 	}
-	if got.TreeSize == nil || got.TreeSize.Sign() != 0 {
-		t.Errorf("expected empty tree, got %v", got.TreeSize)
+	if size, ok := got["tree_size"].(float64); !ok || size != 0 {
+		t.Errorf("expected numeric tree_size 0, got %v", got["tree_size"])
+	}
+	if root, ok := got["root"].(string); !ok || len(root) < 2 || root[:2] != "0x" {
+		t.Errorf("expected root as 0x-hex string, got %v", got["root"])
+	}
+	if _, ok := got["election_id"].(string); !ok {
+		t.Errorf("expected election_id as string, got %v", got["election_id"])
 	}
 }
 
@@ -122,7 +131,7 @@ func TestHandleGetCommitments_OrderAndResetScoping(t *testing.T) {
 	bc := core.NewBlockchain("Commitments test", []string{"Yes", "No"})
 	InitServer(bc, &persistence.FileStore{}, nil)
 	t.Cleanup(func() { InitServer(nil, nil, nil) })
-	mux := newMux()
+	mux := newPublicMux()
 
 	addRegisterTx := func(voterID, commitment string) {
 		tx, err := core.NewTransaction(core.TxRegister, core.RegisterPayload{
@@ -190,7 +199,7 @@ func TestHandleGetVotingData_NoBridge(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/voting-data", nil)
 	rec := httptest.NewRecorder()
-	newMux().ServeHTTP(rec, req)
+	newPublicMux().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503 when bridge is nil, got %d", rec.Code)

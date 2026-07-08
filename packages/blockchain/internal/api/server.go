@@ -4,10 +4,11 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -37,10 +38,15 @@ func InitServer(blockchain *core.Blockchain, fs *persistence.FileStore, b *evm.C
 	bridge = b
 }
 
-// newMux builds the route table. Split out from StartServer so tests can drive
-// real route matching (method + path-parameter patterns like /voter/{voter_id})
-// through httptest without needing a live TLS listener.
-func newMux() *http.ServeMux {
+// newPublicMux builds the route table for the browser-facing API. Split out
+// from StartPublicServer so tests can drive real route matching (method +
+// path-parameter patterns like /voter/{voter_id}) through httptest without
+// needing a live listener.
+//
+// P2P endpoints deliberately do NOT appear here: they live on a separate
+// mTLS-only listener (see newP2PMux/StartP2PServer). The public listener must
+// be reachable by browsers, which cannot present client certificates.
+func newPublicMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Public read endpoints
@@ -54,6 +60,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /candidates", RequestLogger(handleGetCandidates))
 	mux.HandleFunc("GET /vote-counts", RequestLogger(handleGetVoteCounts))
 	mux.HandleFunc("GET /commitments", RequestLogger(handleGetCommitments))
+	mux.HandleFunc("GET /voters", RequestLogger(handleGetVoters))
 
 	// Admin-only write endpoints
 	mux.HandleFunc("/add-voter", RequestLogger(AdminAuthMiddleware(handleAddVoter)))
@@ -71,30 +78,60 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("/register", RequestLogger(RateLimitMiddleware(handleRegister)))
 	mux.HandleFunc("/vote", RequestLogger(RateLimitMiddleware(handleVote)))
 
-	// Internal P2P endpoints — reachable only via mTLS
-	mux.HandleFunc("/internal/block", RequestLogger(handleReceiveBlock))
-	mux.HandleFunc("/internal/chain", RequestLogger(handleSendChain))
-
 	return mux
 }
 
-// StartServer registers all routes and starts the TLS server.
-// tlsConfig must be fully initialized before calling this (load it in main and
-// call network.InitNetworkClient first so that peer sync works on startup).
-func StartServer(port string, tlsConfig *tls.Config) {
+// newP2PMux builds the route table for node-to-node traffic. These endpoints
+// are only ever served behind mTLS (StartP2PServer) — a client without a valid
+// peer certificate cannot even complete the TLS handshake.
+func newP2PMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/block", RequestLogger(handleReceiveBlock))
+	mux.HandleFunc("/internal/chain", RequestLogger(handleSendChain))
+	return mux
+}
+
+// StartPublicServer starts the browser-facing API listener and blocks.
+// tlsConfig semantics:
+//   - nil        → plain HTTP (local development; the default)
+//   - non-nil    → HTTPS with NO client-certificate requirement (production
+//     behind a real certificate). Never pass the mTLS peer config here —
+//     browsers cannot present client certificates.
+func StartPublicServer(addr string, tlsConfig *tls.Config) {
 	origin := os.Getenv("ALLOWED_ORIGIN")
 	if origin == "" {
 		origin = "http://localhost:3000" // default Next.js dev server
 	}
 
 	server := &http.Server{
-		Addr:      port,
-		Handler:   CORSMiddleware(origin, newMux()),
+		Addr:      addr,
+		Handler:   CORSMiddleware(origin, newPublicMux()),
 		TLSConfig: tlsConfig,
 	}
 
-	fmt.Printf("Secure Blockchain Node running on %s\n", port)
-	log.Fatal().Err(server.ListenAndServeTLS("", "")).Msg("Server stopped")
+	if tlsConfig != nil {
+		fmt.Printf("Public API (HTTPS) running on %s\n", addr)
+		log.Fatal().Err(server.ListenAndServeTLS("", "")).Msg("Public API server stopped")
+	} else {
+		fmt.Printf("Public API (HTTP) running on %s\n", addr)
+		log.Fatal().Err(server.ListenAndServe()).Msg("Public API server stopped")
+	}
+}
+
+// StartP2PServer starts the mTLS node-to-node listener in a goroutine.
+// tlsConfig must be the mutual-TLS config from security.LoadTLSConfig
+// (ClientAuth: RequireAndVerifyClientCert) — that requirement is exactly why
+// these endpoints live on their own listener instead of the public one.
+func StartP2PServer(addr string, tlsConfig *tls.Config) {
+	server := &http.Server{
+		Addr:      addr,
+		Handler:   newP2PMux(),
+		TLSConfig: tlsConfig,
+	}
+	go func() {
+		fmt.Printf("P2P listener (mTLS) running on %s\n", addr)
+		log.Fatal().Err(server.ListenAndServeTLS("", "")).Msg("P2P server stopped")
+	}()
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -112,9 +149,40 @@ func handleGetChain(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetBlocks returns the block list. Optional ?page=N&limit=M pagination
+// (1-based pages over the chronological list); without both params the full
+// chain is returned, preserving the original behavior.
 func handleGetBlocks(w http.ResponseWriter, r *http.Request) {
+	blocks := bc.GetBlocks()
+
+	pageStr, limitStr := r.URL.Query().Get("page"), r.URL.Query().Get("limit")
+	if pageStr != "" || limitStr != "" {
+		page, err1 := strconv.Atoi(pageStr)
+		limit, err2 := strconv.Atoi(limitStr)
+		if err1 != nil || err2 != nil || page < 1 || limit < 1 {
+			http.Error(w, "page and limit must be positive integers (both required for pagination)", http.StatusBadRequest)
+			return
+		}
+		start := (page - 1) * limit
+		if start > len(blocks) {
+			start = len(blocks)
+		}
+		end := start + limit
+		if end > len(blocks) {
+			end = len(blocks)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"total":  len(blocks),
+			"page":   page,
+			"limit":  limit,
+			"blocks": blocks[start:end],
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(bc.GetBlocks())
+	json.NewEncoder(w).Encode(blocks)
 }
 
 // ─── EVM Reads (Stage 4) ────────────────────────────────────────────────────────
@@ -187,9 +255,12 @@ func handleGetCandidates(w http.ResponseWriter, r *http.Request) {
 }
 
 // CandidateTally pairs a candidate name with its current vote count.
+// Votes is a decimal string, not a JSON number: on-chain counts are uint256,
+// and JavaScript's JSON.parse silently corrupts integers past 2^53. Same
+// policy as VotingData's root/election_id fields.
 type CandidateTally struct {
-	Candidate string   `json:"candidate"`
-	Votes     *big.Int `json:"votes"`
+	Candidate string `json:"candidate"`
+	Votes     string `json:"votes"`
 }
 
 // handleGetVoteCounts zips GetCandidates() and GetVoteCounts() together into a
@@ -216,9 +287,9 @@ func handleGetVoteCounts(w http.ResponseWriter, r *http.Request) {
 
 	tally := make([]CandidateTally, 0, len(candidates))
 	for i, name := range candidates {
-		votes := big.NewInt(0)
+		votes := "0"
 		if i < len(counts) {
-			votes = counts[i]
+			votes = counts[i].String()
 		}
 		tally = append(tally, CandidateTally{Candidate: name, Votes: votes})
 	}
@@ -267,10 +338,91 @@ func handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(commitments)
 }
 
+// ─── Write responses ──────────────────────────────────────────────────────────
+
+// TxResponse is the client contract for every accepted write: enough to cite
+// the on-chain record, nothing about the chain's internal block format. The
+// full block remains readable via GET /blocks and GET /chain.
+type TxResponse struct {
+	TxID       string `json:"tx_id"`
+	BlockIndex uint64 `json:"block_index"`
+}
+
+// RegisterResponse extends TxResponse with the Merkle leaf index assigned to
+// the commitment and the election it belongs to — both go into the voter's
+// downloaded Voter Pass.
+type RegisterResponse struct {
+	TxResponse
+	LeafIndex  uint64 `json:"leaf_index"`
+	ElectionID string `json:"election_id,omitempty"`
+}
+
+// nowBlockTime returns the wall-clock instant used to stamp both the EVM call
+// and the committed block, as (milliseconds for the block, seconds for the EVM).
+// Using one instant for both is what makes replay deterministic — see
+// ContractCaller.SetTime.
+func nowBlockTime() (tsMs int64, evmTime uint64) {
+	tsMs = time.Now().UnixMilli()
+	return tsMs, uint64(tsMs) / 1000
+}
+
+// VoterEntry is one allowlist entry in the GET /voters response.
+type VoterEntry struct {
+	VoterID string `json:"voter_id"`
+	Allowed bool   `json:"allowed"`
+}
+
+// handleGetVoters returns the current election's allowlist, derived from the
+// chain's ADD_VOTER transaction log the same way /commitments derives leaves:
+// insertion-ordered, last write per voter wins, everything before the most
+// recent RESET_ELECTION excluded. This is the REST replacement for the
+// Solidity VoterAdded event history the browser admin tools read on Hardhat.
+func handleGetVoters(w http.ResponseWriter, r *http.Request) {
+	var order []string
+	entries := make(map[string]*VoterEntry)
+
+	for _, block := range bc.GetBlocks() {
+		for _, tx := range block.Transactions {
+			switch tx.Type {
+			case core.TxResetElection:
+				order = order[:0]
+				entries = make(map[string]*VoterEntry)
+			case core.TxAddVoter:
+				var p core.AddVoterPayload
+				if err := tx.ParsePayload(&p); err != nil {
+					log.Error().Err(err).Str("tx_id", tx.ID).Msg("Failed to parse ADD_VOTER payload")
+					continue
+				}
+				if p.VoterID == "" {
+					continue // genesis block reuses TxAddVoter with a GenesisPayload
+				}
+				if existing, ok := entries[p.VoterID]; ok {
+					existing.Allowed = p.Allowed
+				} else {
+					e := &VoterEntry{VoterID: p.VoterID, Allowed: p.Allowed}
+					entries[p.VoterID] = e
+					order = append(order, p.VoterID)
+				}
+			}
+		}
+	}
+
+	result := make([]VoterEntry, 0, len(order))
+	for _, id := range order {
+		result = append(result, *entries[id])
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
 type AddVoterRequest struct {
 	VoterID string `json:"voter_id"`
+	// Allowed defaults to true when omitted; send false to revoke a voter
+	// (mirrors the admin page's Allow/Revoke radio per address).
+	Allowed *bool `json:"allowed,omitempty"`
 }
 
 // handleAddVoter calls EVM addVoters() BEFORE committing the ADD_VOTER block.
@@ -291,15 +443,21 @@ func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	allowed := true
+	if req.Allowed != nil {
+		allowed = *req.Allowed
+	}
+
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.AddVoter(req.VoterID, true); err != nil {
+		if err := bridge.AddVoter(req.VoterID, allowed, evmTime); err != nil {
 			log.Warn().Err(err).Str("voter_id", req.VoterID).Msg("EVM addVoters rejected")
 			http.Error(w, "add-voter rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 
-	commitAdminTx(w, core.TxAddVoter, core.AddVoterPayload{VoterID: req.VoterID, Allowed: true})
+	commitAdminTx(w, core.TxAddVoter, core.AddVoterPayload{VoterID: req.VoterID, Allowed: allowed}, tsMs)
 }
 
 // ─── Election lifecycle ─────────────────────────────────────────────────────────
@@ -312,16 +470,17 @@ func handleAddVoter(w http.ResponseWriter, r *http.Request) {
 // phase gating and a rejected transition must not become a permanent chain entry.
 
 // commitAdminTx is the shared tail of every election-lifecycle handler: create a
-// transaction, append it to the chain, persist it, and broadcast it to peers. The
-// EVM call has already succeeded by the time this runs.
-func commitAdminTx(w http.ResponseWriter, txType core.TxType, payload interface{}) {
+// transaction, append it to the chain (stamped with the same instant the EVM
+// executed at), persist it, and broadcast it to peers. The EVM call has already
+// succeeded by the time this runs.
+func commitAdminTx(w http.ResponseWriter, txType core.TxType, payload interface{}, tsMs int64) {
 	tx, err := core.NewTransaction(txType, payload)
 	if err != nil {
 		http.Error(w, "failed to create transaction", http.StatusInternalServerError)
 		return
 	}
 
-	block, err := bc.AddTransaction(tx)
+	block, err := bc.AddTransactionAt(tx, tsMs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -334,7 +493,7 @@ func commitAdminTx(w http.ResponseWriter, txType core.TxType, payload interface{
 	network.BroadcastBlock(*block)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(block)
+	json.NewEncoder(w).Encode(TxResponse{TxID: tx.ID, BlockIndex: block.Index})
 }
 
 type SetQuestionRequest struct {
@@ -351,14 +510,15 @@ func handleSetQuestion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request: question required", http.StatusBadRequest)
 		return
 	}
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.SetQuestion(req.Question); err != nil {
+		if err := bridge.SetQuestion(req.Question, evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM setQuestion rejected")
 			http.Error(w, "set-question rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	commitAdminTx(w, core.TxSetQuestion, core.SetQuestionPayload{Question: req.Question})
+	commitAdminTx(w, core.TxSetQuestion, core.SetQuestionPayload{Question: req.Question}, tsMs)
 }
 
 type SetCandidatesRequest struct {
@@ -375,14 +535,15 @@ func handleSetCandidates(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request: at least one candidate required", http.StatusBadRequest)
 		return
 	}
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.SetCandidates(req.Candidates); err != nil {
+		if err := bridge.SetCandidates(req.Candidates, evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM setCandidates rejected")
 			http.Error(w, "set-candidates rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	commitAdminTx(w, core.TxSetCandidates, core.SetCandidatesPayload{Candidates: req.Candidates})
+	commitAdminTx(w, core.TxSetCandidates, core.SetCandidatesPayload{Candidates: req.Candidates}, tsMs)
 }
 
 type DurationRequest struct {
@@ -399,14 +560,15 @@ func handleStartRegistration(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request: positive duration_sec required", http.StatusBadRequest)
 		return
 	}
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.StartRegistration(req.DurationSec); err != nil {
+		if err := bridge.StartRegistration(req.DurationSec, evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM startRegistration rejected")
 			http.Error(w, "start-registration rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	commitAdminTx(w, core.TxStartRegistration, core.StartRegistrationPayload{DurationSec: req.DurationSec})
+	commitAdminTx(w, core.TxStartRegistration, core.StartRegistrationPayload{DurationSec: req.DurationSec}, tsMs)
 }
 
 func handleStartVoting(w http.ResponseWriter, r *http.Request) {
@@ -419,14 +581,15 @@ func handleStartVoting(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request: positive duration_sec required", http.StatusBadRequest)
 		return
 	}
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.StartVoting(req.DurationSec); err != nil {
+		if err := bridge.StartVoting(req.DurationSec, evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM startVoting rejected")
 			http.Error(w, "start-voting rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	commitAdminTx(w, core.TxStartVoting, core.StartVotingPayload{DurationSec: req.DurationSec})
+	commitAdminTx(w, core.TxStartVoting, core.StartVotingPayload{DurationSec: req.DurationSec}, tsMs)
 }
 
 func handleEndElection(w http.ResponseWriter, r *http.Request) {
@@ -434,14 +597,15 @@ func handleEndElection(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.EndElection(); err != nil {
+		if err := bridge.EndElection(evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM endElection rejected")
 			http.Error(w, "end-election rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	commitAdminTx(w, core.TxEndElection, struct{}{})
+	commitAdminTx(w, core.TxEndElection, struct{}{}, tsMs)
 }
 
 func handleResetElection(w http.ResponseWriter, r *http.Request) {
@@ -449,14 +613,15 @@ func handleResetElection(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.ResetElection(); err != nil {
+		if err := bridge.ResetElection(evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM resetElection rejected")
 			http.Error(w, "reset-election rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
-	commitAdminTx(w, core.TxResetElection, struct{}{})
+	commitAdminTx(w, core.TxResetElection, struct{}{}, tsMs)
 }
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -501,15 +666,20 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	// can drift from the real Merkle index if any legacy/replay-rejected registration
 	// ever existed. bridge.Register computes this under its own internal lock, so the
 	// value is exact even if other requests are registering concurrently.
+	tsMs, evmTime := nowBlockTime()
 	var leafIndex uint64
+	var electionID string
 	if bridge != nil {
-		idx, err := bridge.Register(req.VoterID, req.Commitment)
+		idx, err := bridge.Register(req.VoterID, req.Commitment, evmTime)
 		if err != nil {
 			log.Warn().Err(err).Str("voter_id", req.VoterID).Msg("EVM register rejected")
 			http.Error(w, "registration rejected: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		leafIndex = idx
+		if vd, err := bridge.GetVotingData(); err == nil {
+			electionID = vd.ElectionID.String()
+		}
 	} else {
 		// Stage 1/2 fallback mode (no EVM bridge): the transaction count is the
 		// best available approximation since there is no on-chain tree to query.
@@ -526,7 +696,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	block, err := bc.AddTransaction(tx)
+	block, err := bc.AddTransactionAt(tx, tsMs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -539,7 +709,12 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	network.BroadcastBlock(*block)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(block)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(RegisterResponse{
+		TxResponse: TxResponse{TxID: tx.ID, BlockIndex: block.Index},
+		LeafIndex:  leafIndex,
+		ElectionID: electionID,
+	})
 }
 
 // ─── Vote ─────────────────────────────────────────────────────────────────────
@@ -581,8 +756,9 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 	//   - Root matches current Merkle tree root (prevents stale proof reuse)
 	//   - NullifierHash not previously used (prevents double-voting)
 	// Only if the EVM call succeeds do we commit the vote to the blockchain.
+	tsMs, evmTime := nowBlockTime()
 	if bridge != nil {
-		if err := bridge.Vote(req.Proof, req.NullifierHash, req.Root, req.CandidateIndex, req.Depth); err != nil {
+		if err := bridge.Vote(req.Proof, req.NullifierHash, req.Root, req.CandidateIndex, req.Depth, evmTime); err != nil {
 			log.Warn().Err(err).Msg("EVM vote verification failed")
 			http.Error(w, "vote rejected: "+err.Error(), http.StatusBadRequest)
 			return
@@ -601,7 +777,7 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	block, err := bc.AddTransaction(tx)
+	block, err := bc.AddTransactionAt(tx, tsMs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -614,7 +790,7 @@ func handleVote(w http.ResponseWriter, r *http.Request) {
 	network.BroadcastBlock(*block)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(block)
+	json.NewEncoder(w).Encode(TxResponse{TxID: tx.ID, BlockIndex: block.Index})
 }
 
 // ─── P2P Internal ─────────────────────────────────────────────────────────────
@@ -646,10 +822,11 @@ func handleReceiveBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Replay the peer block's transactions into the local EVM so that
-	// the EVM state mirrors what the originating node recorded.
+	// the EVM state mirrors what the originating node recorded, executing at
+	// the block's own timestamp so phase-deadline decisions match the origin.
 	if bridge != nil {
 		for _, tx := range block.Transactions {
-			if err := bridge.ReplayTransaction(tx); err != nil {
+			if err := bridge.ReplayTransaction(tx, evm.BlockEVMTime(block.Timestamp)); err != nil {
 				log.Warn().
 					Err(err).
 					Str("tx_id", tx.ID).

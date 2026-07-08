@@ -20,7 +20,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import https from "node:https";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,7 +36,10 @@ const ASSETS_DIR = path.resolve(BLOCKCHAIN_DIR, "assets");
 const NODE_ID = "9998";
 const PORT = 9998;
 const DATA_DIR = path.resolve(BLOCKCHAIN_DIR, `data_${NODE_ID}`);
-const BASE_URL = `https://127.0.0.1:${PORT}`;
+// Plain HTTP: the public API listener requires no TLS and no client certs —
+// exactly what a browser sees. (mTLS now guards only the separate P2P listener,
+// which this single-node test never starts: no PEERS, no certs.)
+const BASE_URL = `http://127.0.0.1:${PORT}`;
 const BIN_PATH = path.resolve(BLOCKCHAIN_DIR, process.platform === "win32" ? "zk-node-integration-test.exe" : "zk-node-integration-test");
 
 // ─── Logging & assertions ──────────────────────────────────────────────────────
@@ -55,26 +58,15 @@ function assertTrue(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-// ─── Certs & keys ───────────────────────────────────────────────────────────────
+// ─── Admin keys ─────────────────────────────────────────────────────────────────
+// Only the admin RSA keypair is needed now — the public API runs plain HTTP,
+// and P2P (the only TLS consumer) stays disabled with no PEERS configured.
 
-function generateCertsAndKeys() {
-  const certsDir = path.join(DATA_DIR, "certs");
+function generateAdminKeys() {
   const keysDir = path.join(DATA_DIR, "keys");
-  fs.mkdirSync(certsDir, { recursive: true });
   fs.mkdirSync(keysDir, { recursive: true });
 
   const opensslEnv = { ...process.env, MSYS_NO_PATHCONV: "1" };
-
-  execFileSync(
-    "openssl",
-    [
-      "req", "-x509", "-newkey", "rsa:4096", "-nodes",
-      "-keyout", path.join(certsDir, "server.key"),
-      "-out", path.join(certsDir, "server.crt"),
-      "-days", "365", "-subj", "/CN=localhost",
-    ],
-    { stdio: "pipe", env: opensslEnv },
-  );
 
   execFileSync("openssl", ["genrsa", "-out", path.join(keysDir, "admin_private.pem"), "2048"], {
     stdio: "pipe",
@@ -87,8 +79,6 @@ function generateCertsAndKeys() {
   );
 
   return {
-    cert: fs.readFileSync(path.join(certsDir, "server.crt")),
-    key: fs.readFileSync(path.join(certsDir, "server.key")),
     adminPrivateKey: fs.readFileSync(path.join(keysDir, "admin_private.pem"), "utf8"),
   };
 }
@@ -108,7 +98,8 @@ function spawnNode() {
       NODE_ID,
       ASSETS_DIR,
       PEERS: "",
-      REQUIRE_EVM: "true",
+      // No ALLOW_STORAGE_ONLY: a broken bridge must fail startup, not fall
+      // back to unverified mode (that flip is the Phase 1 default).
     },
   });
   const logLines = [];
@@ -135,7 +126,7 @@ async function waitForHealth(timeoutMs = 15000) {
   let lastErr;
   while (Date.now() < deadline) {
     try {
-      const { status } = await httpsRequest("GET", "/health");
+      const { status } = await httpRequest("GET", "/health");
       if (status === 200) return;
     } catch (err) {
       lastErr = err;
@@ -145,22 +136,19 @@ async function waitForHealth(timeoutMs = 15000) {
   throw new Error(`node did not become healthy within ${timeoutMs}ms: ${lastErr}`);
 }
 
-// ─── HTTP client (mTLS + admin RSA signing) ─────────────────────────────────────
+// ─── HTTP client (plain HTTP + admin RSA signing) ───────────────────────────────
 
-let clientCert, clientKey, adminPrivateKeyPem;
+let adminPrivateKeyPem;
 
-function httpsRequest(method, urlPath, bodyStr, extraHeaders = {}) {
+function httpRequest(method, urlPath, bodyStr, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const body = bodyStr !== undefined ? Buffer.from(bodyStr) : undefined;
-    const req = https.request(
+    const req = http.request(
       {
         hostname: "127.0.0.1",
         port: PORT,
         path: urlPath,
         method,
-        cert: clientCert,
-        key: clientKey,
-        rejectUnauthorized: false, // self-signed dev cert, acts as its own CA
         agent: false, // no keep-alive: an open socket would keep the event loop alive after main() finishes
         headers: {
           "Content-Type": "application/json",
@@ -191,27 +179,16 @@ function signBody(bodyStr) {
 
 async function adminPost(urlPath, bodyObj) {
   const bodyStr = JSON.stringify(bodyObj ?? {});
-  return httpsRequest("POST", urlPath, bodyStr, { "X-Admin-Signature": signBody(bodyStr) });
+  return httpRequest("POST", urlPath, bodyStr, { "X-Admin-Signature": signBody(bodyStr) });
 }
 
 async function publicPost(urlPath, bodyObj) {
-  return httpsRequest("POST", urlPath, JSON.stringify(bodyObj ?? {}));
+  return httpRequest("POST", urlPath, JSON.stringify(bodyObj ?? {}));
 }
 
 async function getJson(urlPath) {
-  const { status, text } = await httpsRequest("GET", urlPath);
+  const { status, text } = await httpRequest("GET", urlPath);
   return { status, text, json: text ? JSON.parse(text) : null };
-}
-
-// /voting-data's large field elements (root, etc.) are encoded as bare JSON
-// numbers. Standard JSON.parse silently truncates integers beyond ~53 bits of
-// precision, which `root` regularly exceeds. Extract precision-critical fields
-// directly from the raw response text via regex instead of trusting the parsed
-// JSON's number for them.
-function bigField(text, name) {
-  const m = text.match(new RegExp(`"${name}"\\s*:\\s*(-?\\d+)`));
-  if (!m) throw new Error(`field "${name}" not found in response: ${text.slice(0, 300)}`);
-  return BigInt(m[1]);
 }
 
 function toHex32(n) {
@@ -302,9 +279,7 @@ async function main() {
     // ── Step 1: start a Go node ──────────────────────────────────────────────
     log("1/6", "Starting Go node (embedded EVM)...");
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
-    const creds = generateCertsAndKeys();
-    clientCert = creds.cert;
-    clientKey = creds.key;
+    const creds = generateAdminKeys();
     adminPrivateKeyPem = creds.adminPrivateKey;
 
     buildBinary();
@@ -330,31 +305,34 @@ async function main() {
 
     // ── Step 3: verify EVM state updates as voters register ─────────────────
     log("3/6", "Registering commitments and checking the Merkle root updates...");
-    const treeSizeBefore = bigField(vd.text, "tree_size");
-    assertEqual(treeSizeBefore, 0n, "expected empty tree before any registration");
+    // root is a 0x-hex STRING and tree_size a plain number now — the old
+    // bigField() regex hack existed only because root used to be emitted as a
+    // bare JSON number that JSON.parse silently truncated.
+    assertEqual(vd.json.tree_size, 0, "expected empty tree before any registration");
 
     const { nullifier, secret, commitment } = generateCommitment();
     res = await publicPost("/register", { voter_id: voter1, commitment: toHex32(commitment) });
-    assertEqual(res.status, 200, "register voter1 failed: " + res.text);
-    const voter1LeafIndex = JSON.parse(res.text).transactions[0].payload.leaf_index;
+    assertEqual(res.status, 201, "register voter1 failed: " + res.text);
+    const reg1 = JSON.parse(res.text);
+    const voter1LeafIndex = reg1.leaf_index;
+    assertTrue(typeof reg1.tx_id === "string" && reg1.tx_id.length > 0, "register response missing tx_id");
+    assertTrue(typeof reg1.election_id === "string", "register response missing election_id");
 
     vd = await getJson("/voting-data");
-    let treeSize = bigField(vd.text, "tree_size");
-    assertEqual(treeSize, 1n, "expected tree_size 1 after first registration");
-    const rootAfter1 = bigField(vd.text, "root");
+    assertEqual(vd.json.tree_size, 1, "expected tree_size 1 after first registration");
+    const rootAfter1 = BigInt(vd.json.root);
     assertTrue(rootAfter1 !== 0n, "expected non-zero root after first registration");
 
     // Second voter, throwaway commitment — makes the tree non-trivial (depth > 0)
     // so the Merkle proof generated below actually exercises a real sibling path.
     res = await publicPost("/register", { voter_id: voter2, commitment: "0x2" });
-    assertEqual(res.status, 200, "register voter2 failed: " + res.text);
+    assertEqual(res.status, 201, "register voter2 failed: " + res.text);
 
     vd = await getJson("/voting-data");
-    treeSize = bigField(vd.text, "tree_size");
-    assertEqual(treeSize, 2n, "expected tree_size 2 after second registration");
-    const rootAfter2 = bigField(vd.text, "root");
+    assertEqual(vd.json.tree_size, 2, "expected tree_size 2 after second registration");
+    const rootAfter2 = BigInt(vd.json.root);
     assertTrue(rootAfter2 !== rootAfter1, "expected root to change after second registration");
-    const depth = bigField(vd.text, "depth");
+    const depth = BigInt(vd.json.depth);
     assertTrue(depth > 0n, "expected non-zero tree depth with 2 leaves");
     log("3/6", `Merkle root updates correctly: tree_size=2 depth=${depth} root=0x${rootAfter2.toString(16)}`);
 
@@ -392,7 +370,8 @@ async function main() {
     log("4/6", "Valid proof accepted by the real HonkVerifier");
 
     const voteCounts = await getJson("/vote-counts");
-    assertEqual(voteCounts.json[0].votes, 1, "expected candidate 0 (Yes) to have 1 vote");
+    // votes is a decimal string (uint256-safe), same policy as root/election_id.
+    assertEqual(voteCounts.json[0].votes, "1", "expected candidate 0 (Yes) to have 1 vote");
 
     // ── Step 5: verify invalid-proof and double-vote rejection ──────────────
     log("5/6", "Verifying rejection of an invalid proof and a double-vote...");
@@ -438,7 +417,31 @@ async function main() {
     }
     log("6/6", "State perfectly reconstructed from persisted blocks after restart");
 
-    console.log("\n✅ Stage 6 integration test passed — all 6 steps verified.");
+    // ── Step 7: time-based phase expiry (the EVM clock advances) ────────────
+    // Regression test for the frozen-clock bug (BlockContext.Time hardcoded to
+    // 1): a 1-second registration window must READ BACK as Ended once the wall
+    // clock passes it, with no admin transition in between.
+    log("7/7", "Verifying registration windows auto-expire (EVM clock)...");
+    res = await adminPost("/reset-election", {});
+    assertEqual(res.status, 200, "reset-election failed: " + res.text);
+
+    vd = await getJson("/voting-data");
+    assertTrue(vd.json.election_id !== reg1.election_id, "expected election_id to bump after reset");
+
+    res = await adminPost("/set-candidates", { candidates: ["Yes", "No"] });
+    assertEqual(res.status, 200, "set-candidates failed: " + res.text);
+    res = await adminPost("/start-registration", { duration_sec: 1 });
+    assertEqual(res.status, 200, "start-registration (1s) failed: " + res.text);
+
+    vd = await getJson("/voting-data");
+    assertEqual(vd.json.phase_label, "Registration", "expected Registration right after opening a 1s window");
+
+    await new Promise(r => setTimeout(r, 2500));
+    vd = await getJson("/voting-data");
+    assertEqual(vd.json.phase_label, "Ended", "expected Ended after the 1s registration window expired");
+    log("7/7", "Registration window auto-expired correctly");
+
+    console.log("\n✅ Integration test passed — all 7 steps verified.");
   } catch (err) {
     console.error("\n❌ Integration test failed:", err.message);
     if (node?.logLines?.length) {

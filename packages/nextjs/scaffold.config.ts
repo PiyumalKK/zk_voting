@@ -7,6 +7,16 @@ export type BaseConfig = {
   rpcOverrides?: Record<number, string>;
   walletConnectProjectId: string;
   burnerWalletMode: "localNetworksOnly" | "allNetworks" | "disabled";
+  /**
+   * Which blockchain backend the voting UI talks to:
+   * - "hardhat": Ethereum via wagmi/viem (Hardhat local node or Sepolia) — the original Scaffold-ETH path
+   * - "custom":  the Go blockchain node's REST API (packages/blockchain) — no wallets, no gas
+   * Switch with NEXT_PUBLIC_CHAIN_BACKEND=custom; the voting UI adapts through
+   * the hooks in services/chain/ with no component changes.
+   */
+  chainBackend: "hardhat" | "custom";
+  /** Base URL of the Go node's public API (custom backend only). */
+  chainApiUrl: string;
 };
 
 export type ScaffoldConfig = BaseConfig;
@@ -39,6 +49,9 @@ const scaffoldConfig = {
   // - "allNetworks": show on any configured target networks
   // - "disabled": completely disable
   burnerWalletMode: "localNetworksOnly",
+  // Chain backend selection — the plug-and-play switch (see services/chain/).
+  chainBackend: process.env.NEXT_PUBLIC_CHAIN_BACKEND === "custom" ? "custom" : "hardhat",
+  chainApiUrl: process.env.NEXT_PUBLIC_CHAIN_API_URL || "http://localhost:3001",
 } as const satisfies ScaffoldConfig;
 
 export default scaffoldConfig;

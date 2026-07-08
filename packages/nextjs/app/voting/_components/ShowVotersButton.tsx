@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Address } from "@scaffold-ui/components";
 import { EyeIcon, UsersIcon } from "@heroicons/react/24/outline";
-import { useScaffoldEventHistory, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { isCustomChain, useVoterList, useVoterStatusById } from "~~/services/chain/hooks";
 
 export const ShowVotersButton = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -9,66 +9,38 @@ export const ShowVotersButton = () => {
   const openModal = () => setIsModalOpen(true);
   const closeModal = () => setIsModalOpen(false);
 
-  const {
-    data: voters,
-    isLoading,
-    error,
-  } = useScaffoldEventHistory({
-    contractName: "Voting",
-    eventName: "VoterAdded",
-    watch: true,
-    enabled: true,
-  });
-
-  const uniqueVoters = useMemo(() => {
-    if (!voters) return [];
-
-    const addresses = Array.from(
-      new Set(
-        (voters as any[])
-          .filter(Boolean)
-          .map((row: any) => row?.args?.voter ?? row?.args?.[0])
-          .filter((voter: unknown): voter is string => typeof voter === "string" && voter.length > 0),
-      ),
-    );
-    return addresses;
-  }, [voters]);
+  // Backend-agnostic allowlist: VoterAdded events on the EVM backend,
+  // GET /voters on the custom chain (see services/chain).
+  const voters = useVoterList();
+  const voterIds = voters.map(v => v.id);
 
   return (
     <>
       <label htmlFor="show-voters-modal" className="btn btn-outline btn-sm font-normal gap-1" onClick={openModal}>
         <UsersIcon className="h-4 w-4" />
-        <span>View Voters ({uniqueVoters.length})</span>
+        <span>View Voters ({voterIds.length})</span>
       </label>
 
       {/* Modal - only mounted when open */}
-      {isModalOpen && (
-        <ShowVotersModal
-          isOpen={isModalOpen}
-          onClose={closeModal}
-          uniqueVoters={uniqueVoters}
-          isLoading={isLoading}
-          error={error}
-        />
-      )}
+      {isModalOpen && <ShowVotersModal isOpen={isModalOpen} onClose={closeModal} uniqueVoters={voterIds} />}
     </>
   );
 };
 
-const VoterStatus = ({ address }: { address: string }) => {
-  const { data: voterData } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVoterData",
-    args: [address as `0x${string}`],
-  });
+const VoterStatus = ({ voterId }: { voterId: string }) => {
+  const status = useVoterStatusById(voterId);
 
-  const isVoter = voterData?.[0];
-  const hasRegistered = voterData?.[1];
+  const isVoter = status?.allowed;
+  const hasRegistered = status?.registered;
 
   return (
     <div className="flex items-center justify-between p-3 border border-base-300 rounded-lg">
       <div className="flex-1">
-        <Address address={address as `0x${string}`} />
+        {isCustomChain ? (
+          <span className="font-mono text-sm break-all">{voterId}</span>
+        ) : (
+          <Address address={voterId as `0x${string}`} />
+        )}
       </div>
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-1">
@@ -92,14 +64,10 @@ const ShowVotersModal = ({
   isOpen,
   onClose,
   uniqueVoters,
-  isLoading,
-  error,
 }: {
   isOpen: boolean;
   onClose: () => void;
   uniqueVoters: string[];
-  isLoading: boolean;
-  error: Error | null;
 }) => {
   return (
     <>
@@ -122,9 +90,7 @@ const ShowVotersModal = ({
 
           <div className="">
             <div className="flex items-center justify-between">
-              <p className="text-sm opacity-70">
-                List of all addresses that have been added as voters for this proposal.
-              </p>
+              <p className="text-sm opacity-70">List of all voters that have been added for this proposal.</p>
               <div className="stats stats-horizontal">
                 <div className="stat py-2 px-3">
                   <div className="stat-title text-xs">Total Voters</div>
@@ -133,27 +99,16 @@ const ShowVotersModal = ({
               </div>
             </div>
 
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <span className="loading loading-spinner loading-md"></span>
-                <span className="ml-2">Loading voters...</span>
-              </div>
-            ) : error ? (
-              <div className="alert alert-error">
-                <span>Error loading voters: {error.message}</span>
-              </div>
-            ) : uniqueVoters.length === 0 ? (
+            {uniqueVoters.length === 0 ? (
               <div className="text-center py-8 opacity-70">
                 <UsersIcon className="h-12 w-12 mx-auto mb-2 opacity-50" />
                 <p>No voters have been added yet.</p>
               </div>
             ) : (
               <div className="space-y-3 max-h-96 overflow-y-auto">
-                <div className="text-sm font-medium opacity-80 pb-2 border-b border-base-300">
-                  Voter Addresses & Status
-                </div>
-                {uniqueVoters.map((voterAddress, index) => (
-                  <VoterStatus key={`${voterAddress}-${index}`} address={voterAddress} />
+                <div className="text-sm font-medium opacity-80 pb-2 border-b border-base-300">Voters & Status</div>
+                {uniqueVoters.map((voterId, index) => (
+                  <VoterStatus key={`${voterId}-${index}`} voterId={voterId} />
                 ))}
               </div>
             )}
