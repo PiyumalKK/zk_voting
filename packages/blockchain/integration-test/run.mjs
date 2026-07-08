@@ -170,16 +170,23 @@ function httpRequest(method, urlPath, bodyStr, extraHeaders = {}) {
 
 // Matches internal/security's server-side rsa.VerifyPKCS1v15(pub, sha256(data), sig) —
 // Node's createSign('RSA-SHA256').sign(pem) produces PKCS1v15 by default for RSA keys.
-function signBody(bodyStr) {
+// The signed string is "<unix-seconds>\n<path>\n<body>" per the node's
+// AdminSignedMessage (internal/api/middleware.go) — binding path + timestamp
+// prevents cross-endpoint and long-window replay of captured signatures.
+function signAdmin(timestamp, urlPath, bodyStr) {
   const signer = crypto.createSign("RSA-SHA256");
-  signer.update(bodyStr, "utf8");
+  signer.update(`${timestamp}\n${urlPath}\n${bodyStr}`, "utf8");
   signer.end();
   return signer.sign(adminPrivateKeyPem).toString("base64");
 }
 
 async function adminPost(urlPath, bodyObj) {
   const bodyStr = JSON.stringify(bodyObj ?? {});
-  return httpRequest("POST", urlPath, bodyStr, { "X-Admin-Signature": signBody(bodyStr) });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  return httpRequest("POST", urlPath, bodyStr, {
+    "X-Admin-Signature": signAdmin(timestamp, urlPath, bodyStr),
+    "X-Admin-Timestamp": timestamp,
+  });
 }
 
 async function publicPost(urlPath, bodyObj) {

@@ -5,11 +5,13 @@ import { readFileSync } from "fs";
 /**
  * Admin signing proxy for the CUSTOM chain backend.
  *
- * The Go node authenticates admin writes with an RSA signature of the exact
- * request body (X-Admin-Signature, RSA-SHA256 / PKCS#1 v1.5). That key must
+ * The Go node authenticates admin writes with an RSA signature over
+ * "<unix-seconds>\n<path>\n<body>" (X-Admin-Signature + X-Admin-Timestamp,
+ * RSA-SHA256 / PKCS#1 v1.5 — see internal/api/middleware.go's
+ * AdminSignedMessage). Binding path + timestamp prevents a captured signature
+ * from being replayed later or against a different endpoint. The key must
  * never reach the browser, so the admin page calls THIS route instead: it
- * checks a dashboard password, signs the body server-side, and forwards the
- * request to the node.
+ * checks a dashboard password, signs server-side, and forwards to the node.
  *
  * Environment (server-side only — no NEXT_PUBLIC_ prefix):
  *   ADMIN_API_PASSWORD       password the admin page must present (x-admin-password header)
@@ -77,10 +79,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ act
     );
   }
 
-  // Sign the EXACT body string we forward — the node verifies signature-over-body.
+  // Sign "<unix-seconds>\n<node-path>\n<body>" — the node rebuilds the same
+  // string (AdminSignedMessage) and verifies it, so the body forwarded below
+  // must be byte-identical to what is signed here.
   const bodyStr = JSON.stringify((await req.json().catch(() => ({}))) ?? {});
+  const timestamp = Math.floor(Date.now() / 1000).toString();
   const signer = createSign("RSA-SHA256");
-  signer.update(bodyStr, "utf8");
+  signer.update(`${timestamp}\n${nodePath}\n${bodyStr}`, "utf8");
   signer.end();
   const signature = signer.sign(privateKey).toString("base64");
 
@@ -94,7 +99,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ act
   try {
     nodeRes = await fetch(`${chainApiUrl}${nodePath}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Admin-Signature": signature },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Signature": signature,
+        "X-Admin-Timestamp": timestamp,
+      },
       body: bodyStr,
     });
   } catch {

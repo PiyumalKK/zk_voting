@@ -716,7 +716,11 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Stage 1/2 fallback mode (no EVM bridge): the transaction count is the
 		// best available approximation since there is no on-chain tree to query.
-		leafIndex = uint64(len(bc.GetAllTransactions(core.TxRegister)))
+		// Count only REGISTER transactions belonging to the CURRENT election —
+		// anything before the most recent RESET_ELECTION belongs to a dead
+		// election whose tree no longer exists (same scoping rule as
+		// handleGetCommitments), so counting those would skip leaf indices.
+		leafIndex = countCurrentElectionRegistrations()
 	}
 
 	tx, err := core.NewTransaction(core.TxRegister, core.RegisterPayload{
@@ -748,6 +752,26 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		LeafIndex:  leafIndex,
 		ElectionID: electionID,
 	})
+}
+
+// countCurrentElectionRegistrations returns the number of REGISTER transactions
+// recorded since the most recent RESET_ELECTION (or since genesis if no reset
+// has happened) — i.e. the next leaf index in the current election's tree.
+// Only used by the storage-only fallback path in handleRegister; when the EVM
+// bridge is available the index is read from the live tree instead.
+func countCurrentElectionRegistrations() uint64 {
+	var count uint64
+	for _, block := range bc.GetBlocks() {
+		for _, tx := range block.Transactions {
+			switch tx.Type {
+			case core.TxResetElection:
+				count = 0
+			case core.TxRegister:
+				count++
+			}
+		}
+	}
+	return count
 }
 
 // ─── Vote ─────────────────────────────────────────────────────────────────────

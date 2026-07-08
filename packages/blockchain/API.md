@@ -41,11 +41,15 @@ certificates are NOT needed for local frontend development.
 - **Public endpoints** — none.
 - **Voter endpoints** (`/register`, `/vote`) — none, but rate-limited per IP
   (1 req/sec sustained, burst 5 → `429 Too Many Requests`).
-- **Admin endpoints** — RSA signature of the **exact request body** with the
-  admin private key, sent base64-encoded in `X-Admin-Signature`
-  (RSA-SHA256 / PKCS#1 v1.5; verified against
-  `data_<NODE_ID>/keys/admin_public.pem`). `503` if the node has no admin key
-  configured, `401` if the header is missing, `403` on a bad signature.
+- **Admin endpoints** — RSA signature of `"<unix-seconds>\n<path>\n<body>"`
+  with the admin private key, sent base64-encoded in `X-Admin-Signature`
+  alongside the signed timestamp in `X-Admin-Timestamp` (unix seconds).
+  RSA-SHA256 / PKCS#1 v1.5; verified against
+  `data_<NODE_ID>/keys/admin_public.pem`. Binding the path and timestamp into
+  the signature prevents a captured signature from being replayed against a
+  different endpoint or outside a ±5-minute window. `503` if the node has no
+  admin key configured, `401` if a header is missing, `403` on a bad signature
+  or stale timestamp.
   The Next.js server-side proxy (`app/api/admin/[action]/route.ts`) does this
   signing — the browser never holds the key.
 
