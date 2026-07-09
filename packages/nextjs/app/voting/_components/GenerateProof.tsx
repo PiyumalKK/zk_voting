@@ -1,17 +1,20 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UltraHonkBackend } from "@aztec/bb.js";
 // @ts-ignore
 import { Noir } from "@noir-lang/noir_js";
 import { LeanIMT } from "@zk-kit/lean-imt";
 import { poseidon1, poseidon2 } from "poseidon-lite";
 import { encodeAbiParameters, toHex } from "viem";
+import { hardhat, sepolia } from "viem/chains";
 import { useAccount } from "wagmi";
-import { useDeployedContractInfo, useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
+import { VoteWithBurnerHardhat } from "~~/app/voting/_components/VoteWithBurnerHardhat";
+import { VoteWithBurnerSepolia } from "~~/app/voting/_components/VoteWithBurnerSepolia";
+import { useDeployedContractInfo, useScaffoldReadContract, useTargetNetwork } from "~~/hooks/scaffold-eth";
 import { useChallengeState } from "~~/services/store/challengeStore";
 import {
-  hasStoredProof,
   loadCommitmentFromLocalStorage,
   saveCommitmentToLocalStorage,
   saveProofToLocalStorage,
@@ -47,6 +50,35 @@ const generateProof = async (
       return sib.toString();
     });
 
+    // Calculate Circuit Index to fix LeanIMT vs Noir binary_merkle_root incompatibility
+    let circuitIndex = 0;
+    const siblingsNum = calculatedProof.siblings.length;
+    const maxIndex = 1 << siblingsNum;
+    const leaf = poseidon2([BigInt(_nullifier), BigInt(_secret)]);
+    let foundCircuitIndex = false;
+
+    for (let cIndex = 0; cIndex < maxIndex; cIndex++) {
+      let current = leaf;
+      for (let i = 0; i < siblingsNum; i++) {
+        const isRight = (cIndex >> i) & 1;
+        const sibling = calculatedProof.siblings[i] as bigint;
+        if (isRight) {
+          current = poseidon2([sibling, current]);
+        } else {
+          current = poseidon2([current, sibling]);
+        }
+      }
+      if (current === calculatedProof.root) {
+        circuitIndex = cIndex;
+        foundCircuitIndex = true;
+        break;
+      }
+    }
+
+    if (!foundCircuitIndex) {
+      throw new Error("Could not find a valid circuit index for the given Merkle path.");
+    }
+
     // Step 4: Pad siblings to fixed length 16 (circuit expects [Field; 16])
     const lengthDiff = 16 - sibs.length;
     for (let i = 0; i < lengthDiff; i++) {
@@ -63,7 +95,7 @@ const generateProof = async (
       // contract enforces upper bound vs candidates.length.
       vote: BigInt(_vote).toString(),
       depth: _depth.toString(),
-      index: _index.toString(),
+      index: circuitIndex.toString(),
       siblings: sibs,
     };
 
@@ -104,15 +136,16 @@ interface CreateCommitmentProps {
 export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const [, setCircuitData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { commitmentData, setCommitmentData, proofData, setProofData, voteChoice } = useChallengeState();
+  const { commitmentData, setCommitmentData, setProofData, voteChoice } = useChallengeState();
   const { address: userAddress, isConnected } = useAccount();
   const { data: deployedContractData } = useDeployedContractInfo({ contractName: "Voting" });
-  const proofFileInputRef = useRef<HTMLInputElement>(null);
   const secretFileInputRef = useRef<HTMLInputElement>(null);
 
   const [nullifierInput, setNullifierInput] = useState<string>("");
   const [secretInput, setSecretInput] = useState<string>("");
   const [indexInput, setIndexInput] = useState<string>("");
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [hasLocalKey, setHasLocalKey] = useState(false);
 
   const { data: votingData } = useScaffoldReadContract({
     contractName: "Voting",
@@ -136,11 +169,22 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const isVoter = voterData?.[0];
   const hasRegistered = voterData?.[1];
 
+  useEffect(() => {
+    if (deployedContractData?.address && userAddress) {
+      const stored = loadCommitmentFromLocalStorage(deployedContractData.address, userAddress, electionId);
+      if (stored?.secret || commitmentData?.secret) {
+        setHasLocalKey(true);
+      } else {
+        setHasLocalKey(false);
+      }
+    }
+  }, [deployedContractData?.address, userAddress, electionId, commitmentData]);
+
   const canVote = Boolean(isConnected && isVoter === true && hasRegistered === true);
 
-  const hasExistingProof = hasStoredProof(deployedContractData?.address, userAddress, electionId);
+  const network = useTargetNetwork();
 
-  const getCircuitDataAndGenerateProof = async () => {
+  const getCircuitDataAndGenerateProof = async (): Promise<boolean> => {
     setIsLoading(true);
     try {
       // Ensure commitment inputs are loaded from localStorage when available
@@ -209,65 +253,14 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         userAddress,
         electionId,
       );
+      return true;
     } catch (error) {
       console.error("Error in getCircuitDataAndGenerateProof:", error);
       notification.error((error as Error).message || "Failed to generate proof");
+      return false;
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleDownloadProof = () => {
-    if (!proofData) {
-      notification.error("Generate or load a proof first.");
-      return;
-    }
-    const payload = {
-      proof: Array.from(proofData.proof),
-      publicInputs: proofData.publicInputs,
-      electionId: electionId?.toString(),
-      root: (root as bigint | undefined)?.toString(),
-      contractAddress: deployedContractData?.address,
-      savedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `zk-voting-proof-election-${electionId?.toString() ?? "x"}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    notification.success("Proof downloaded.");
-  };
-
-  const handleUploadProof = async (file: File) => {
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed?.proof) || !Array.isArray(parsed?.publicInputs)) {
-        notification.error("File is not a valid proof.");
-        return;
-      }
-      const restored = { proof: new Uint8Array(parsed.proof), publicInputs: parsed.publicInputs };
-      setProofData(restored);
-      saveProofToLocalStorage(
-        restored,
-        deployedContractData?.address,
-        voteChoice ?? undefined,
-        userAddress,
-        electionId,
-      );
-      notification.success("Proof loaded. You can now cast your vote.");
-    } catch (error) {
-      console.error("Error using uploaded proof:", error);
-      notification.error("Invalid proof file.");
-    }
-  };
-
-  const handleProofFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) void handleUploadProof(file);
   };
 
   const handleUploadSecret = async (file: File) => {
@@ -297,96 +290,116 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
           electionId,
         );
       }
-      notification.success("Secret restored. You can now generate your proof.");
+      notification.success("Voter Pass restored. You can now cast your vote.");
     } catch (error) {
       console.error("Error using uploaded secret:", error);
-      notification.error("Invalid secret file.");
+      notification.error("Invalid Voter Pass file.");
     }
   };
 
   const handleSecretFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (file) void handleUploadSecret(file);
+    if (file) {
+      setUploadedFileName(file.name);
+      void handleUploadSecret(file);
+    }
   };
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-5 border border-base-300/50 hover-lift">
-      <div className="space-y-1">
-        <h2 className="text-2xl font-bold text-center"> Generate ZK proof off-chain </h2>
-        <p className="text-sm opacity-60">
-          Prove membership in the Merkle tree and add your voting decision to the proof.
-        </p>
-      </div>
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-8 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
+      <VoteSelector />
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2 justify-center">
-          <button
-            type="button"
-            className={`btn ${canVote && !hasExistingProof && voteChoice !== null ? "btn-primary shadow-lg shadow-primary/25" : "btn-disabled"}`}
-            onClick={canVote && !hasExistingProof && voteChoice !== null ? getCircuitDataAndGenerateProof : undefined}
-            disabled={isLoading || !canVote || hasExistingProof || voteChoice === null}
-          >
-            {isLoading
-              ? "Generating proof..."
-              : hasExistingProof
-                ? "Proof already exists"
-                : !canVote
-                  ? "Must register first"
-                  : voteChoice === null
-                    ? "Select choice first"
-                    : "Generate proof"}
-          </button>
-        </div>
+      {voteChoice !== null && (
+        <div className="pt-6 border-t border-base-300/50">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {network.targetNetwork.id === hardhat.id && (
+                <VoteWithBurnerHardhat
+                  onGenerateProof={getCircuitDataAndGenerateProof}
+                  isGenerating={isLoading}
+                  canVote={canVote}
+                />
+              )}
+              {network.targetNetwork.id === sepolia.id && (
+                <VoteWithBurnerSepolia
+                  onGenerateProof={getCircuitDataAndGenerateProof}
+                  isGenerating={isLoading}
+                  canVote={canVote}
+                />
+              )}
+            </div>
 
-        <div className="flex justify-center">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            onClick={() => secretFileInputRef.current?.click()}
-            title="Restore your secret and nullifier from a downloaded backup file"
-          >
-            Upload secret to generate proof
-          </button>
-          <input
-            ref={secretFileInputRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={handleSecretFileChange}
-          />
+            <div className="flex flex-col gap-4 mt-4">
+              {hasLocalKey && !uploadedFileName ? (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="badge badge-success badge-outline gap-2 p-3 font-medium bg-success/5 border-success/20">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    Voter Pass Secured
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-center">
+                  {uploadedFileName ? (
+                    <div className="flex items-center gap-2 bg-base-200/50 px-4 py-2 rounded-xl border border-base-300">
+                      <span className="text-sm font-medium opacity-80 truncate max-w-[200px]" title={uploadedFileName}>
+                        {uploadedFileName}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs btn-circle"
+                        onClick={() => {
+                          setUploadedFileName(null);
+                          setNullifierInput("");
+                          setSecretInput("");
+                          setIndexInput("");
+                        }}
+                        title="Remove uploaded file"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => secretFileInputRef.current?.click()}
+                      title="Restore your Voter Pass from a downloaded backup file"
+                    >
+                      Upload Voter Pass
+                    </button>
+                  )}
+                </div>
+              )}
+              <input
+                ref={secretFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleSecretFileChange}
+              />
+              {!hasLocalKey && !uploadedFileName && (
+                <p className="text-xs opacity-60 text-center">
+                  Cleared your browser data? Upload the Voter Pass you downloaded during registration.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-        <p className="text-xs opacity-60 text-center">
-          Cleared your browser data? Upload the secret file you downloaded during registration to regenerate your proof.
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-2 justify-center">
-          <button
-            type="button"
-            className="btn btn-outline btn-sm flex-1"
-            onClick={() => proofFileInputRef.current?.click()}
-            title="Load a previously downloaded proof file"
-          >
-            Upload proof
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline btn-sm flex-1"
-            onClick={handleDownloadProof}
-            disabled={!proofData}
-            title="Download your generated proof as a backup file"
-          >
-            Download proof
-          </button>
-          <input
-            ref={proofFileInputRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={handleProofFileChange}
-          />
-        </div>
-      </div>
+      )}
     </div>
   );
 };

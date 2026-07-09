@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Address } from "@scaffold-ui/components";
 import { createSmartAccountClient } from "permissionless";
 import { toSafeSmartAccount } from "permissionless/accounts";
 import { createPimlicoClient } from "permissionless/clients/pimlico";
@@ -70,15 +69,23 @@ const voteOnSepolia = async ({
   throw new Error("Checkpoint 10: implement voteOSepolia"); // placeholder
 };
 
-export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `0x${string}` }) => {
+export const VoteWithBurnerSepolia = ({
+  contractAddress,
+  onGenerateProof,
+  isGenerating,
+  canVote,
+}: {
+  contractAddress?: `0x${string}`;
+  onGenerateProof?: () => Promise<boolean>;
+  isGenerating?: boolean;
+  canVote?: boolean;
+}) => {
   const [smartAccount, setSmartAccount] = useState<`0x${string}` | null>(null);
   const [txStatus, setTxStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
-  const [hasProofStored, setHasProofStored] = useState<boolean>(false);
   const [hasSuccessfulVote, setHasSuccessfulVote] = useState<boolean>(false);
   const [walletOwner, setWalletOwner] = useState<`0x${string}` | null>(null);
   const [smartAccountClient, setSmartAccountClient] = useState<any>(null);
-  const [votedSmartAccount, setVotedSmartAccount] = useState<`0x${string}` | null>(null);
-  const { proofData, setProofData } = useChallengeState();
+  const { proofData, setProofData, voteChoice } = useChallengeState();
   const { address: userAddress } = useAccount();
 
   const { data: contractInfo } = useDeployedContractInfo({ contractName: "Voting" });
@@ -107,8 +114,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
         const proofExists = hasStoredProof(effectiveContractAddress, userAddress, electionId);
         const transactionResultExists = hasStoredTransactionResult(effectiveContractAddress, userAddress);
 
-        setHasProofStored(proofExists);
-
         if (proofExists && !proofData) {
           try {
             const storedProof = loadProofFromLocalStorage(effectiveContractAddress, userAddress, electionId);
@@ -126,8 +131,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
             if (storedResult) {
               setTxStatus(storedResult.success ? "success" : "error");
               setHasSuccessfulVote(Boolean(storedResult.success));
-              const fromReceiptSA = storedResult.receipt?.smartAccountAddress as `0x${string}` | undefined;
-              setVotedSmartAccount((fromReceiptSA as `0x${string}`) || null);
               // We only display the smart account publicly; owner is kept internal
             }
           } catch (error) {
@@ -135,12 +138,8 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
           }
         } else {
           setHasSuccessfulVote(false);
-          setVotedSmartAccount(null);
           // Reset displayed smart account
         }
-      } else {
-        setHasProofStored(false);
-        setVotedSmartAccount(null);
       }
     };
 
@@ -151,33 +150,36 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
     <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Vote</h2>
-        <p className="text-sm opacity-60">
-          Use an ERC-4337 smart account to submit the on-chain vote with the proof and let the tx be paid by a
-          paymaster.
-        </p>
+        <p className="text-sm opacity-60">Submit your vote privately to the blockchain. Gas fees are sponsored.</p>
       </div>
-
-      {hasSuccessfulVote && votedSmartAccount && (
-        <div className="flex items-center gap-2 justify-center">
-          <span className="text-sm">Voted With Smart Account:</span>
-          <Address address={votedSmartAccount} />
-        </div>
-      )}
 
       <div className="flex justify-center">
         <button
-          className={`btn btn-primary ${txStatus === "pending" ? "loading" : ""} ${!hasProofStored || !proofData || txStatus === "pending" || hasSuccessfulVote ? "" : "shadow-lg shadow-primary/25"}`}
-          disabled={!hasProofStored || !proofData || txStatus === "pending" || hasSuccessfulVote}
+          className={`btn btn-primary ${txStatus === "pending" || isGenerating ? "loading" : ""} ${!canVote || hasSuccessfulVote || voteChoice === null ? "" : "shadow-lg shadow-primary/25"}`}
+          disabled={!canVote || txStatus === "pending" || isGenerating || hasSuccessfulVote || voteChoice === null}
           onClick={async () => {
             try {
-              if (!proofData) {
+              const currentProof = proofData;
+
+              if (!currentProof && onGenerateProof) {
+                const success = await onGenerateProof();
+                if (!success) return;
+              }
+
+              const effectiveContractAddress = contractAddress || contractInfo?.address;
+              let latestProof = proofData;
+              if (!latestProof && effectiveContractAddress && userAddress) {
+                const stored = loadProofFromLocalStorage(effectiveContractAddress, userAddress, electionId);
+                if (stored) latestProof = stored;
+              }
+
+              if (!latestProof) {
                 console.error("Please generate proof first");
                 return;
               }
               if (!contractInfo && !contractAddress) throw new Error("Contract not found");
 
               setTxStatus("pending");
-              const effectiveContractAddress = contractAddress || contractInfo?.address;
 
               let client = smartAccountClient;
               let currentSmartAccount = smartAccount;
@@ -203,7 +205,7 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
               }
 
               const { userOpHash } = await voteOnSepolia({
-                proofData,
+                proofData: latestProof,
                 contractInfo,
                 contractAddress,
                 smartAccountClient: client,
@@ -232,7 +234,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
                       userAddress,
                       enhancedReceipt,
                     );
-                    setVotedSmartAccount((currentSmartAccount as `0x${string}`) || null);
                     // owner is not displayed; keep internal if needed
                   }
                 } else {
@@ -253,7 +254,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
                       enhancedReceipt,
                       "User operation failed",
                     );
-                    setVotedSmartAccount((currentSmartAccount as `0x${string}`) || null);
                     // owner is not displayed; keep internal if needed
                   }
                 }
@@ -277,7 +277,6 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
                       },
                       "Transaction submitted successfully but receipt timed out",
                     );
-                    setVotedSmartAccount((currentSmartAccount as `0x${string}`) || null);
                     // owner is not displayed; keep internal if needed
                   }
                 } else {
@@ -302,15 +301,21 @@ export const VoteWithBurnerSepolia = ({ contractAddress }: { contractAddress?: `
             }
           }}
         >
-          {txStatus === "pending" ? (
+          {isGenerating ? (
+            "Anonymizing your vote..."
+          ) : txStatus === "pending" ? (
             <>
               <span className="loading loading-spinner loading-xs"></span>
               <span>Voting...</span>
             </>
           ) : hasSuccessfulVote ? (
             "Already voted"
+          ) : !canVote ? (
+            "Must register first"
+          ) : voteChoice === null ? (
+            "Select choice first"
           ) : (
-            "Vote with smart account"
+            "Cast Vote"
           )}
         </button>
       </div>

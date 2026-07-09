@@ -9,7 +9,7 @@ import (
 // --- Genesis Block Tests ---
 
 func TestNewBlockchain(t *testing.T) {
-	bc := NewBlockchain("Do you support this proposal?")
+	bc := NewBlockchain("Do you support this proposal?", []string{"Yes", "No"})
 
 	if bc.Len() != 1 {
 		t.Fatalf("expected 1 block (genesis), got %d", bc.Len())
@@ -42,6 +42,9 @@ func TestNewBlockchain(t *testing.T) {
 	}
 	if payload.Action != "GENESIS" {
 		t.Errorf("expected action 'GENESIS', got '%s'", payload.Action)
+	}
+	if len(payload.Candidates) != 2 || payload.Candidates[0] != "Yes" || payload.Candidates[1] != "No" {
+		t.Errorf("expected candidates [Yes No], got %v", payload.Candidates)
 	}
 	if payload.Version != "1.0.0" {
 		t.Errorf("expected version '1.0.0', got '%s'", payload.Version)
@@ -100,7 +103,7 @@ func TestTransactionTamperDetection(t *testing.T) {
 // --- Block Addition Tests ---
 
 func TestAddBlock(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	tx1, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
 	tx2, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter2", Allowed: true})
@@ -128,7 +131,7 @@ func TestAddBlock(t *testing.T) {
 }
 
 func TestAddTransaction(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	tx, _ := NewTransaction(TxRegister, RegisterPayload{
 		VoterID:    "voter1",
@@ -147,7 +150,7 @@ func TestAddTransaction(t *testing.T) {
 }
 
 func TestAddEmptyBlock(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	_, err := bc.AddBlock([]Transaction{})
 	if err == nil {
@@ -158,7 +161,7 @@ func TestAddEmptyBlock(t *testing.T) {
 // --- Chain Building Tests ---
 
 func TestMultipleBlocks(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	// Add 5 blocks with different transaction types
 	for i := 0; i < 5; i++ {
@@ -192,17 +195,17 @@ func TestMultipleBlocks(t *testing.T) {
 // --- Chain Validation Tests ---
 
 func TestValidateChain(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
 	bc.AddTransaction(tx)
 
 	tx2, _ := NewTransaction(TxVote, VotePayload{
-		Proof:         "0xproof",
-		NullifierHash: "0xnull",
-		Root:          "0xroot",
-		Vote:          true,
-		Depth:         3,
+		Proof:          "0xproof",
+		NullifierHash:  "0xnull",
+		Root:           "0xroot",
+		CandidateIndex: 1,
+		Depth:          3,
 	})
 	bc.AddTransaction(tx2)
 
@@ -213,7 +216,7 @@ func TestValidateChain(t *testing.T) {
 }
 
 func TestTamperDetection_ModifyBlockHash(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
 	bc.AddTransaction(tx)
@@ -228,7 +231,7 @@ func TestTamperDetection_ModifyBlockHash(t *testing.T) {
 }
 
 func TestTamperDetection_ModifyPrevHash(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	tx1, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
 	bc.AddTransaction(tx1)
@@ -246,24 +249,24 @@ func TestTamperDetection_ModifyPrevHash(t *testing.T) {
 }
 
 func TestTamperDetection_ModifyTransactionData(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	tx, _ := NewTransaction(TxVote, VotePayload{
-		Proof:         "0xlegit_proof",
-		NullifierHash: "0xnull",
-		Root:          "0xroot",
-		Vote:          true,
-		Depth:         3,
+		Proof:          "0xlegit_proof",
+		NullifierHash:  "0xnull",
+		Root:           "0xroot",
+		CandidateIndex: 1,
+		Depth:          3,
 	})
 	bc.AddTransaction(tx)
 
 	// Tamper with vote payload inside the block
 	tamperedPayload, _ := json.Marshal(VotePayload{
-		Proof:         "0xlegit_proof",
-		NullifierHash: "0xnull",
-		Root:          "0xroot",
-		Vote:          false, // Changed from true to false!
-		Depth:         3,
+		Proof:          "0xlegit_proof",
+		NullifierHash:  "0xnull",
+		Root:           "0xroot",
+		CandidateIndex: 0, // Changed from 1 to 0!
+		Depth:          3,
 	})
 	bc.blocks[1].Transactions[0].Payload = tamperedPayload
 
@@ -276,7 +279,7 @@ func TestTamperDetection_ModifyTransactionData(t *testing.T) {
 // --- Query Tests ---
 
 func TestGetBlock(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	genesis, err := bc.GetBlock(0)
 	if err != nil {
@@ -293,7 +296,7 @@ func TestGetBlock(t *testing.T) {
 }
 
 func TestGetAllTransactions(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	// Add different transaction types
 	tx1, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
@@ -302,7 +305,7 @@ func TestGetAllTransactions(t *testing.T) {
 	tx2, _ := NewTransaction(TxRegister, RegisterPayload{VoterID: "voter1", Commitment: "0xabc"})
 	bc.AddTransaction(tx2)
 
-	tx3, _ := NewTransaction(TxVote, VotePayload{Vote: true})
+	tx3, _ := NewTransaction(TxVote, VotePayload{CandidateIndex: 1})
 	bc.AddTransaction(tx3)
 
 	// Get all transactions (including genesis)
@@ -324,7 +327,7 @@ func TestGetAllTransactions(t *testing.T) {
 }
 
 func TestGetTransactionsByType(t *testing.T) {
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 
 	// Add a block with mixed transaction types
 	tx1, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
@@ -348,7 +351,7 @@ func TestGetTransactionsByType(t *testing.T) {
 
 func TestLoadFromBlocks(t *testing.T) {
 	// Create a valid chain
-	original := NewBlockchain("Test question")
+	original := NewBlockchain("Test question", nil)
 	tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
 	original.AddTransaction(tx)
 
@@ -370,7 +373,7 @@ func TestLoadFromBlocks(t *testing.T) {
 
 func TestLoadFromBlocks_Invalid(t *testing.T) {
 	// Try to load with tampered blocks
-	bc := NewBlockchain("Test question")
+	bc := NewBlockchain("Test question", nil)
 	tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
 	bc.AddTransaction(tx)
 
@@ -387,6 +390,62 @@ func TestLoadFromBlocks_Empty(t *testing.T) {
 	_, err := LoadFromBlocks([]*Block{})
 	if err == nil {
 		t.Error("loading empty blocks should fail")
+	}
+}
+
+// --- ReplaceBlocks Tests ---
+
+// TestReplaceBlocks_PreservesIdentity verifies that ReplaceBlocks mutates the
+// receiver in place rather than requiring callers to swap a pointer — the whole
+// point of the method (see its doc comment): every package holding a copy of the
+// original *Blockchain pointer must transparently see the replacement.
+func TestReplaceBlocks_PreservesIdentity(t *testing.T) {
+	bc := NewBlockchain("Test question", nil)
+	before := bc // same pointer value, held independently of the variable we mutate
+
+	longer := NewBlockchain("Longer chain", nil)
+	for i := 0; i < 3; i++ {
+		tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: fmt.Sprintf("voter%d", i), Allowed: true})
+		longer.AddTransaction(tx)
+	}
+
+	if err := bc.ReplaceBlocks(longer.GetBlocks()); err != nil {
+		t.Fatalf("ReplaceBlocks: %v", err)
+	}
+
+	if before != bc {
+		t.Fatal("bc variable identity changed — ReplaceBlocks must mutate in place, not return a new pointer")
+	}
+	if before.Len() != 4 { // genesis + 3
+		t.Errorf("expected 4 blocks after replace, got %d", before.Len())
+	}
+}
+
+func TestReplaceBlocks_RejectsInvalidChain(t *testing.T) {
+	bc := NewBlockchain("Test question", nil)
+	tx, _ := NewTransaction(TxAddVoter, AddVoterPayload{VoterID: "voter1", Allowed: true})
+	bc.AddTransaction(tx)
+	originalLen := bc.Len()
+
+	invalid := []*Block{
+		{Index: 0, Hash: "not-a-real-genesis-hash"},
+	}
+
+	if err := bc.ReplaceBlocks(invalid); err == nil {
+		t.Error("expected error replacing with an invalid chain, got nil")
+	}
+
+	// The chain must be left exactly as it was — no partial replacement.
+	if bc.Len() != originalLen {
+		t.Errorf("expected chain to be rolled back to %d blocks after rejected replace, got %d", originalLen, bc.Len())
+	}
+}
+
+func TestReplaceBlocks_RejectsEmpty(t *testing.T) {
+	bc := NewBlockchain("Test question", nil)
+
+	if err := bc.ReplaceBlocks([]*Block{}); err == nil {
+		t.Error("expected error replacing with an empty chain, got nil")
 	}
 }
 

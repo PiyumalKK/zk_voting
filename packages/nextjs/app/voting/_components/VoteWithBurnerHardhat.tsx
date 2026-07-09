@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Address } from "@scaffold-ui/components";
 import { createPublicClient, createTestClient, createWalletClient, getContract, http, parseEther } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { hardhat } from "viem/chains";
@@ -56,12 +55,21 @@ const sendVoteWithBurner = async ({
   return receipt.transactionHash;
 };
 
-export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `0x${string}` }) => {
+export const VoteWithBurnerHardhat = ({
+  contractAddress,
+  onGenerateProof,
+  isGenerating,
+  canVote,
+}: {
+  contractAddress?: `0x${string}`;
+  onGenerateProof?: () => Promise<boolean>;
+  isGenerating?: boolean;
+  canVote?: boolean;
+}) => {
   const [burnerWallet, setBurnerWallet] = useState<{ address: `0x${string}`; privateKey: `0x${string}` } | null>(null);
   const [txStatus, setTxStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
-  const [hasProofStored, setHasProofStored] = useState<boolean>(false);
   const [hasVoted, setHasVoted] = useState<boolean>(false);
-  const { proofData, setProofData } = useChallengeState();
+  const { proofData, setProofData, voteChoice } = useChallengeState();
   const { address: userAddress } = useAccount();
 
   const generateBurnerWallet = () => {
@@ -120,7 +128,6 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
       const effectiveContractAddress = contractAddress || contractInfo?.address;
       if (effectiveContractAddress && userAddress) {
         const proofExists = hasStoredProof(effectiveContractAddress, userAddress, electionId);
-        setHasProofStored(proofExists);
 
         if (proofExists && !proofData) {
           try {
@@ -132,8 +139,6 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
             console.error("Error auto-loading proof:", error);
           }
         }
-      } else {
-        setHasProofStored(false);
       }
     };
 
@@ -164,26 +169,38 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
   }, [contractAddress, contractInfo?.address, userAddress]);
 
   return (
-    <div className="bg-base-100 shadow-lg rounded-2xl p-6 space-y-4 border border-base-300/50 hover-lift">
+    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden">
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-bold">Vote</h2>
-        <p className="text-sm opacity-60">Use a local burner wallet to submit the on-chain vote with the proof.</p>
+        <p className="text-sm opacity-60">Submit your vote privately to the blockchain.</p>
       </div>
-
-      {burnerWallet && (
-        <div className="flex items-center gap-2 justify-center">
-          <span className="text-sm">Burner Wallet:</span>
-          <Address address={burnerWallet.address} />
-        </div>
-      )}
 
       <div className="flex justify-center">
         <button
-          className={`btn btn-primary ${!hasProofStored || !proofData || txStatus === "pending" || hasVoted ? "" : "shadow-lg shadow-primary/25"}`}
-          disabled={!hasProofStored || !proofData || txStatus === "pending" || hasVoted}
+          className={`btn btn-primary ${txStatus === "pending" || isGenerating ? "loading" : ""} ${!canVote || hasVoted || voteChoice === null ? "" : "shadow-lg shadow-primary/25"}`}
+          disabled={!canVote || hasVoted || txStatus === "pending" || isGenerating || voteChoice === null}
           onClick={async () => {
             try {
-              if (!proofData) {
+              const currentProof = proofData;
+
+              if (!currentProof && onGenerateProof) {
+                const success = await onGenerateProof();
+                if (!success) return; // Error handled by generate proof
+                // The store might not be updated immediately in the closure,
+                // so we rely on onGenerateProof setting it, but we can't easily grab the return value unless we change it.
+                // Actually, if success is true, we should have it in local storage or challenge store.
+                // But it's safer to just fetch it from local storage if proofData is stale.
+              }
+
+              // We need the latest proof data
+              const effectiveContractAddress = contractAddress || contractInfo?.address;
+              let latestProof = proofData;
+              if (!latestProof && effectiveContractAddress && userAddress) {
+                const stored = loadProofFromLocalStorage(effectiveContractAddress, userAddress, electionId);
+                if (stored) latestProof = stored;
+              }
+
+              if (!latestProof) {
                 console.error("Please generate proof first");
                 return;
               }
@@ -191,13 +208,12 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
               // The contract requires the proof's root to match the current on-chain
               // tree root. If the voter set changed or the contract was redeployed/reset
               // after this proof was made, the root won't match and vote() reverts.
-              const proofRoot = proofData.publicInputs?.[1];
+              const proofRoot = latestProof.publicInputs?.[1];
               if (currentRoot !== undefined && proofRoot !== undefined) {
                 try {
                   if (BigInt(proofRoot as string) !== BigInt(currentRoot as bigint)) {
                     notification.error(
-                      "This proof is stale: its Merkle root no longer matches the current voter tree. " +
-                        "Upload your secret on the proof page and regenerate the proof, then try again.",
+                      "Your voting key is outdated or invalid. " + "Upload your latest Voting Key and try again.",
                     );
                     return;
                   }
@@ -224,7 +240,7 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
                 viemContract,
                 publicClient,
                 walletAddress: wallet.address,
-                proofData: proofData as LocalProofData,
+                proofData: latestProof as LocalProofData,
               });
 
               setTxStatus("success");
@@ -237,11 +253,9 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
                 friendly = "You have already voted with this identity.";
                 setHasVoted(true);
               } else if (raw.includes("InvalidRoot")) {
-                friendly =
-                  "This proof is stale: its Merkle root no longer matches the current voter tree. " +
-                  "Upload your secret on the proof page and regenerate the proof.";
+                friendly = "Your voting key is outdated. " + "Upload your latest Voting Key and try again.";
               } else if (raw.includes("InvalidProof")) {
-                friendly = "The proof is invalid for the current election. Regenerate it from your secret.";
+                friendly = "The proof is invalid for the current election. Regenerate it from your Voting Key.";
               } else if (raw.includes("WrongPhase")) {
                 friendly = "Voting is not open right now.";
               } else if (raw.includes("InvalidCandidate")) {
@@ -254,7 +268,17 @@ export const VoteWithBurnerHardhat = ({ contractAddress }: { contractAddress?: `
             }
           }}
         >
-          {txStatus === "pending" ? "Voting..." : hasVoted ? "Already voted" : "Vote with burner wallet"}
+          {isGenerating
+            ? "Anonymizing your vote..."
+            : txStatus === "pending"
+              ? "Voting..."
+              : hasVoted
+                ? "Already voted"
+                : !canVote
+                  ? "Must register first"
+                  : voteChoice === null
+                    ? "Select choice first"
+                    : "Cast Vote"}
         </button>
       </div>
     </div>

@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"sync"
+	
 )
 
 // Blockchain manages an append-only chain of blocks.
@@ -20,9 +21,12 @@ type Blockchain struct {
 }
 
 // NewBlockchain creates a new blockchain with a genesis block.
-// The question parameter is embedded in the genesis block as the voting question.
-func NewBlockchain(question string) *Blockchain {
-	genesis := CreateGenesisBlock(question)
+// question and candidates are embedded in the genesis block and used to seed the
+// Voting contract's constructor when the EVM bridge deploys it (see
+// evm.NewContractBridge). candidates may be empty — the election simply starts
+// with no candidates configured until an admin calls SetCandidates.
+func NewBlockchain(question string, candidates []string) *Blockchain {
+	genesis := CreateGenesisBlock(question, candidates)
 	return &Blockchain{
 		blocks: []*Block{genesis},
 	}
@@ -43,6 +47,41 @@ func LoadFromBlocks(blocks []*Block) (*Blockchain, error) {
 	}
 
 	return bc, nil
+}
+
+// ReplaceBlocks atomically swaps this Blockchain's entire block list, validating
+// the replacement before committing it. Unlike LoadFromBlocks (which returns a
+// brand-new *Blockchain), this mutates the receiver in place — the *Blockchain
+// object's identity never changes, only its contents.
+//
+// This distinction matters for live nodes: every other package (api, evm) holds
+// its own copy of the *Blockchain pointer captured once at startup. A function
+// that swapped the pointer (`*bcPtr = newBlockchain`) would only update whichever
+// local variable happened to hold the pointer-to-pointer at call time — it would
+// never reach the copies already captured by api.InitServer or evm.ReplayBlockchain.
+// Mutating the existing object in place means every holder of the original
+// pointer transparently sees the update, which is what makes it safe to call this
+// from a periodic background sync running long after startup (see
+// network.StartPeriodicSync) rather than only once before any other package has
+// captured the pointer.
+//
+// On validation failure, the original blocks are restored and an error is
+// returned — the chain is left exactly as it was, never partially replaced.
+func (bc *Blockchain) ReplaceBlocks(newBlocks []*Block) error {
+	if len(newBlocks) == 0 {
+		return fmt.Errorf("cannot replace with an empty blockchain")
+	}
+
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	previous := bc.blocks
+	bc.blocks = newBlocks
+	if err := bc.validateChainInternal(); err != nil {
+		bc.blocks = previous
+		return fmt.Errorf("chain validation failed during replace: %w", err)
+	}
+	return nil
 }
 
 // AddBlock creates a new block containing the given transactions and
@@ -69,7 +108,8 @@ func (bc *Blockchain) AddBlock(transactions []Transaction) (*Block, error) {
 	latestBlock := bc.blocks[len(bc.blocks)-1]
 	newBlock := NewBlock(latestBlock.Index+1, transactions, latestBlock.Hash)
 	bc.blocks = append(bc.blocks, newBlock)
-
+	
+	
 	return newBlock, nil
 }
 
@@ -212,6 +252,42 @@ func (bc *Blockchain) validateChainInternal() error {
 		}
 	}
 
+	return nil
+}
+
+// AppendExternalBlock adds a block received from a peer, preserving its original
+// hash, timestamp, and index. Unlike AddBlock, this does not re-create the block.
+// It validates hash integrity, chain linkage, sequential index, and all transaction
+// hashes before accepting.
+func (bc *Blockchain) AppendExternalBlock(block *Block) error {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+
+	if !block.VerifyHash() {
+		return fmt.Errorf("block %d has invalid hash", block.Index)
+	}
+
+	latest := bc.blocks[len(bc.blocks)-1]
+
+	if block.PrevHash != latest.Hash {
+		return fmt.Errorf("block %d prev_hash does not match current chain tip", block.Index)
+	}
+
+	if block.Index != latest.Index+1 {
+		return fmt.Errorf("block %d index not sequential (expected %d)", block.Index, latest.Index+1)
+	}
+
+	if block.Timestamp < latest.Timestamp {
+		return fmt.Errorf("block %d has timestamp before previous block", block.Index)
+	}
+
+	for i, tx := range block.Transactions {
+		if !tx.VerifyHash() {
+			return fmt.Errorf("block %d transaction %d has invalid hash", block.Index, i)
+		}
+	}
+
+	bc.blocks = append(bc.blocks, block)
 	return nil
 }
 
