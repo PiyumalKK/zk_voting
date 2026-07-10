@@ -6,13 +6,14 @@ import { UltraHonkBackend } from "@aztec/bb.js";
 import { Noir } from "@noir-lang/noir_js";
 import { LeanIMT } from "@zk-kit/lean-imt";
 import { poseidon1, poseidon2 } from "poseidon-lite";
-import { encodeAbiParameters, toHex } from "viem";
+import { toHex } from "viem";
 import { hardhat, sepolia } from "viem/chains";
-import { useAccount } from "wagmi";
+import { CastVoteButton } from "~~/app/voting/_components/CastVoteButton";
 import { VoteSelector } from "~~/app/voting/_components/VoteChoice";
 import { VoteWithBurnerHardhat } from "~~/app/voting/_components/VoteWithBurnerHardhat";
 import { VoteWithBurnerSepolia } from "~~/app/voting/_components/VoteWithBurnerSepolia";
-import { useDeployedContractInfo, useScaffoldReadContract, useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { isCustomChain, useStorageNamespace, useVoterId, useVoterStatus, useVotingData } from "~~/services/chain/hooks";
 import { useChallengeState } from "~~/services/store/challengeStore";
 import {
   loadCommitmentFromLocalStorage,
@@ -28,21 +29,17 @@ const generateProof = async (
   _nullifier: string,
   _secret: string,
   _index: number,
-  _leaves: any[],
+  _leaves: bigint[],
   _circuitData: any,
 ) => {
   try {
     // Step 1: Compute nullifier hash (matches circuit's hash_1([nullifier]))
     const nullifierHash = poseidon1([BigInt(_nullifier)]);
 
-    // Step 2: Rebuild the Merkle tree from on-chain leaf events
+    // Step 2: Rebuild the Merkle tree from the normalized leaf list
+    // (already oldest-first / insertion order — see useLeaves()).
     const calculatedTree = new LeanIMT((a: bigint, b: bigint) => poseidon2([a, b]));
-    const leaves = _leaves.map(event => {
-      return event?.args.value;
-    });
-    // Events are newest-first, tree needs oldest-first
-    const leavesReversed = leaves.reverse();
-    calculatedTree.insertMany(leavesReversed as bigint[]);
+    calculatedTree.insertMany(_leaves);
 
     // Step 3: Generate Merkle inclusion proof for our leaf
     const calculatedProof = calculatedTree.generateProof(_index);
@@ -114,14 +111,6 @@ const generateProof = async (
     console.log = originalLog;
     console.log("proof generated successfully, size:", proof.length, "bytes");
 
-    // Step 8: Format for Solidity — encode proof + publicInputs as ABI params
-    const proofHex = toHex(proof);
-    const inputsHex = publicInputs.map(x =>
-      typeof x === "string" ? (x as `0x${string}`) : toHex(x as Uint8Array, { size: 32 }),
-    );
-    const result = encodeAbiParameters([{ type: "bytes" }, { type: "bytes32[]" }], [proofHex, inputsHex]);
-    console.log("encoded result for Solidity:", result.slice(0, 66) + "...");
-
     return { proof, publicInputs };
   } catch (error) {
     console.log(error);
@@ -129,16 +118,15 @@ const generateProof = async (
   }
 };
 
-interface CreateCommitmentProps {
-  leafEvents?: any[];
+interface GenerateProofProps {
+  /** Merkle leaves of the current election, oldest-first (from useLeaves()) */
+  leaves?: bigint[];
 }
 
-export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
+export const GenerateProof = ({ leaves = [] }: GenerateProofProps) => {
   const [, setCircuitData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { commitmentData, setCommitmentData, setProofData, voteChoice } = useChallengeState();
-  const { address: userAddress, isConnected } = useAccount();
-  const { data: deployedContractData } = useDeployedContractInfo({ contractName: "Voting" });
   const secretFileInputRef = useRef<HTMLInputElement>(null);
 
   const [nullifierInput, setNullifierInput] = useState<string>("");
@@ -147,40 +135,31 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [hasLocalKey, setHasLocalKey] = useState(false);
 
-  const { data: votingData } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVotingData",
-  });
+  // Backend-agnostic chain state (services/chain).
+  const { data: votingData } = useVotingData();
+  const { voterId, ready: identityReady } = useVoterId();
+  const voterStatus = useVoterStatus();
+  const storageNamespace = useStorageNamespace();
 
-  const root = votingData?.[7];
-  const treeDepth = votingData?.[6];
+  const root = votingData?.root;
+  const treeDepth = votingData?.depth;
+  const electionId = votingData?.electionId;
 
-  const { data: electionId } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getCurrentElectionId",
-  });
-
-  const { data: voterData } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVoterData",
-    args: [userAddress as `0x${string}`],
-  });
-
-  const isVoter = voterData?.[0];
-  const hasRegistered = voterData?.[1];
+  const isVoter = voterStatus?.allowed;
+  const hasRegistered = voterStatus?.registered;
 
   useEffect(() => {
-    if (deployedContractData?.address && userAddress) {
-      const stored = loadCommitmentFromLocalStorage(deployedContractData.address, userAddress, electionId);
+    if (storageNamespace && voterId) {
+      const stored = loadCommitmentFromLocalStorage(storageNamespace, voterId, electionId);
       if (stored?.secret || commitmentData?.secret) {
         setHasLocalKey(true);
       } else {
         setHasLocalKey(false);
       }
     }
-  }, [deployedContractData?.address, userAddress, electionId, commitmentData]);
+  }, [storageNamespace, voterId, electionId, commitmentData]);
 
-  const canVote = Boolean(isConnected && isVoter === true && hasRegistered === true);
+  const canVote = Boolean(identityReady && isVoter === true && hasRegistered === true);
 
   const network = useTargetNetwork();
 
@@ -189,9 +168,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
     try {
       // Ensure commitment inputs are loaded from localStorage when available
       const storedCommitment =
-        deployedContractData?.address && userAddress
-          ? loadCommitmentFromLocalStorage(deployedContractData.address, userAddress, electionId)
-          : null;
+        storageNamespace && voterId ? loadCommitmentFromLocalStorage(storageNamespace, voterId, electionId) : null;
 
       // Reflect stored values in the UI if inputs are empty
       if ((!nullifierInput || !secretInput || indexInput?.trim() === "") && storedCommitment) {
@@ -221,7 +198,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         throw new Error("Please select a candidate first");
       }
 
-      if (!leafEvents || leafEvents.length === 0) {
+      if (!leaves || leaves.length === 0) {
         throw new Error("There are no commitments in the tree yet. Please insert a commitment first.");
       }
 
@@ -238,7 +215,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         effectiveNullifier,
         effectiveSecret,
         effectiveIndex as number,
-        leafEvents as any,
+        leaves,
         fetchedCircuitData,
       );
       setProofData({
@@ -248,9 +225,9 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
 
       saveProofToLocalStorage(
         { proof: generatedProof.proof, publicInputs: generatedProof.publicInputs },
-        deployedContractData?.address,
+        storageNamespace,
         voteChoice,
-        userAddress,
+        voterId,
         electionId,
       );
       return true;
@@ -283,12 +260,7 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
       const restored = { commitment, nullifier, secret, index };
       setCommitmentData(restored);
       if (index !== undefined) {
-        saveCommitmentToLocalStorage(
-          { commitment, nullifier, secret, index },
-          deployedContractData?.address,
-          userAddress,
-          electionId,
-        );
+        saveCommitmentToLocalStorage({ commitment, nullifier, secret, index }, storageNamespace, voterId, electionId);
       }
       notification.success("Voter Pass restored. You can now cast your vote.");
     } catch (error) {
@@ -314,19 +286,29 @@ export const GenerateProof = ({ leafEvents = [] }: CreateCommitmentProps) => {
         <div className="pt-6 border-t border-base-300/50">
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap gap-2 justify-center">
-              {network.targetNetwork.id === hardhat.id && (
-                <VoteWithBurnerHardhat
+              {isCustomChain ? (
+                <CastVoteButton
                   onGenerateProof={getCircuitDataAndGenerateProof}
                   isGenerating={isLoading}
                   canVote={canVote}
                 />
-              )}
-              {network.targetNetwork.id === sepolia.id && (
-                <VoteWithBurnerSepolia
-                  onGenerateProof={getCircuitDataAndGenerateProof}
-                  isGenerating={isLoading}
-                  canVote={canVote}
-                />
+              ) : (
+                <>
+                  {network.targetNetwork.id === hardhat.id && (
+                    <VoteWithBurnerHardhat
+                      onGenerateProof={getCircuitDataAndGenerateProof}
+                      isGenerating={isLoading}
+                      canVote={canVote}
+                    />
+                  )}
+                  {network.targetNetwork.id === sepolia.id && (
+                    <VoteWithBurnerSepolia
+                      onGenerateProof={getCircuitDataAndGenerateProof}
+                      isGenerating={isLoading}
+                      canVote={canVote}
+                    />
+                  )}
+                </>
               )}
             </div>
 

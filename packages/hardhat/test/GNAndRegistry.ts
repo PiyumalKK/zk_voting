@@ -27,12 +27,11 @@ describe("GN Officer & ElectionRegistry", function () {
     const VotingFactory = await ethers.getContractFactory("Voting", {
       libraries: { LeanIMT: await leanIMT.getAddress() },
     });
-    voting = (await VotingFactory.deploy(
-      owner.address,
-      await verifier.getAddress(),
-      "Who should be president?",
-      ["Candidate A", "Candidate B", "Candidate C"],
-    )) as Voting;
+    voting = (await VotingFactory.deploy(owner.address, await verifier.getAddress(), "Who should be president?", [
+      "Candidate A",
+      "Candidate B",
+      "Candidate C",
+    ])) as Voting;
 
     // Deploy ElectionRegistry
     const RegistryFactory = await ethers.getContractFactory("ElectionRegistry");
@@ -41,23 +40,22 @@ describe("GN Officer & ElectionRegistry", function () {
 
   describe("GN Officer Management", function () {
     it("owner can set GN officer", async function () {
-      await expect(voting.setGNOfficer(gn.address))
-        .to.emit(voting, "GNOfficerUpdated")
-        .withArgs(gn.address);
+      await expect(voting.setGNOfficer(gn.address)).to.emit(voting, "GNOfficerUpdated").withArgs(gn.address);
       expect(await voting.s_gnOfficer()).to.equal(gn.address);
     });
 
     it("non-owner cannot set GN officer", async function () {
-      await expect(
-        voting.connect(gn).setGNOfficer(gn.address),
-      ).to.be.revertedWithCustomError(voting, "OwnableUnauthorizedAccount");
+      await expect(voting.connect(gn).setGNOfficer(gn.address)).to.be.revertedWithCustomError(
+        voting,
+        "OwnableUnauthorizedAccount",
+      );
     });
 
     it("GN can add voters during Setup phase", async function () {
       await voting.setGNOfficer(gn.address);
-      await expect(
-        voting.connect(gn).addVoters([voter1.address], [true]),
-      ).to.emit(voting, "VoterAdded").withArgs(voter1.address);
+      await expect(voting.connect(gn).addVoters([voter1.address], [true]))
+        .to.emit(voting, "VoterAdded")
+        .withArgs(voter1.address);
     });
 
     it("GN can add voters during Registration phase", async function () {
@@ -65,16 +63,14 @@ describe("GN Officer & ElectionRegistry", function () {
       // Move to Registration
       await voting.startRegistration(3600);
       // GN adds voter during registration (late enrollment)
-      await expect(
-        voting.connect(gn).addVoters([voter2.address], [true]),
-      ).to.emit(voting, "VoterAdded").withArgs(voter2.address);
+      await expect(voting.connect(gn).addVoters([voter2.address], [true]))
+        .to.emit(voting, "VoterAdded")
+        .withArgs(voter2.address);
     });
 
     it("non-GN cannot add voters", async function () {
       await voting.setGNOfficer(gn.address);
-      await expect(
-        voting.connect(nonGN).addVoters([voter1.address], [true]),
-      ).to.be.revertedWith("Not owner or GN");
+      await expect(voting.connect(nonGN).addVoters([voter1.address], [true])).to.be.revertedWith("Not owner or GN");
     });
 
     it("GN cannot add voters during Voting phase", async function () {
@@ -82,23 +78,19 @@ describe("GN Officer & ElectionRegistry", function () {
       await voting.addVoters([voter1.address], [true]);
       await voting.startRegistration(3600);
       await voting.startVoting(3600);
-      await expect(
-        voting.connect(gn).addVoters([voter2.address], [true]),
-      ).to.be.revertedWith("Cannot add voters now");
+      await expect(voting.connect(gn).addVoters([voter2.address], [true])).to.be.revertedWith("Cannot add voters now");
     });
 
     it("owner can still add voters (backwards compatible)", async function () {
-      await expect(
-        voting.addVoters([voter1.address, voter2.address], [true, true]),
-      ).to.emit(voting, "VoterAdded");
+      await expect(voting.addVoters([voter1.address, voter2.address], [true, true])).to.emit(voting, "VoterAdded");
     });
   });
 
   describe("ElectionRegistry", function () {
     it("owner can add a division", async function () {
-      await expect(
-        registry.addDivision("Kaduwela", await voting.getAddress(), gn.address),
-      ).to.emit(registry, "DivisionAdded").withArgs(0, "Kaduwela", await voting.getAddress(), gn.address);
+      await expect(registry.addDivision("Kaduwela", await voting.getAddress(), gn.address))
+        .to.emit(registry, "DivisionAdded")
+        .withArgs(0, "Kaduwela", await voting.getAddress(), gn.address);
     });
 
     it("non-owner cannot add division", async function () {
@@ -134,9 +126,10 @@ describe("GN Officer & ElectionRegistry", function () {
 
     it("owner can update division", async function () {
       await registry.addDivision("Kaduwela", await voting.getAddress(), gn.address);
-      await expect(
-        registry.updateDivision(0, await voting.getAddress(), nonGN.address),
-      ).to.emit(registry, "DivisionUpdated");
+      await expect(registry.updateDivision(0, await voting.getAddress(), nonGN.address)).to.emit(
+        registry,
+        "DivisionUpdated",
+      );
       const div = await registry.divisions(0);
       expect(div.gnOfficer).to.equal(nonGN.address);
     });

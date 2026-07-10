@@ -3,6 +3,7 @@ package persistence
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -15,6 +16,12 @@ const (
 	dbFileName = "blockchain.db"
 	blocksBucket = "blocks"
 )
+
+// ErrNoBlockchain is returned by LoadBlockchain when the database exists but holds
+// no blocks (a fresh, never-written node). Callers must distinguish this from a
+// genuine load/validation failure: the former means "create genesis", the latter
+// must be fatal so a corrupt chain is never silently discarded.
+var ErrNoBlockchain = errors.New("no blocks found in database")
 
 // FileStore provides BoltDB-based persistence for the blockchain.
 type FileStore struct {
@@ -110,7 +117,7 @@ func (fs *FileStore) LoadBlockchain() (*core.Blockchain, error) {
 	}
 
 	if len(blocks) == 0 {
-		return nil, fmt.Errorf("no blocks found in database")
+		return nil, ErrNoBlockchain
 	}
 
 	// Validate the loaded blocks

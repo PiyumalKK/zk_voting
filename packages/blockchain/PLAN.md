@@ -287,7 +287,14 @@ packages/blockchain/
   - [x] **[Network Fix]** Periodic background sync ticker to detect and recover live node drift (see Stage 1.4 Known Gap)
 - [x] Stage 5: REST API Server — CORS, admin auth, and the full read/write endpoint set are live
 - [x] Stage 6: Integration Testing — `packages/blockchain/integration-test/run.mjs`, passing end-to-end
-- [ ] Stage 7: Frontend Connection  ← NEXT
+- [x] Stage 7: Frontend Connection — DONE (2026-07-04). The frontend now swaps backends with one
+  env var (`NEXT_PUBLIC_CHAIN_BACKEND=custom`): all voting components consume the
+  backend-agnostic hooks in `packages/nextjs/services/chain/`, admin writes go through a Next.js
+  RSA-signing proxy, and a REST chain explorer lives at `/chain-explorer`. This landed together
+  with a backend hardening pass (public API split off mTLS onto plain HTTP, big-number-safe JSON,
+  election_id exposure, clean write responses, an advancing EVM clock so phase deadlines actually
+  expire, and fatal-by-default startup without the EVM bridge). Full analysis and change log:
+  [`docs/CUSTOM_CHAIN_SWAP_PLAN.md`](../../docs/CUSTOM_CHAIN_SWAP_PLAN.md).
 
 > **Post-Stage-3 hardening (2026-07-01):** a review of the Stage 3 diff found and fixed one critical
 > and two moderate/minor issues in the contract-bridge wiring. See

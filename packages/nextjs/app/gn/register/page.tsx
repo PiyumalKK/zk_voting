@@ -228,7 +228,7 @@ const GNRegisterVoter: NextPage = () => {
         {/* Step 2: Scan QR */}
         {step === 2 && (
           <Card>
-            <h3 className="font-bold mb-4">📷 Scan Voter's Address QR</h3>
+            <h3 className="font-bold mb-4">📷 Scan Voter&apos;s Address QR</h3>
             <p className="text-sm opacity-60 mb-4">Ask voter to show the QR code from their app.</p>
 
             {scanning ? (

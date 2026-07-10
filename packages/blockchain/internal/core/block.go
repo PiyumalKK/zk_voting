@@ -31,9 +31,18 @@ const GenesisBlockPrevHash = "00000000000000000000000000000000000000000000000000
 // The block is linked to the previous block via prevHash, and its own
 // hash is computed from its contents (index, timestamp, prevHash, tx hashes).
 func NewBlock(index uint64, transactions []Transaction, prevHash string) *Block {
+	return NewBlockAt(index, transactions, prevHash, time.Now().UnixMilli())
+}
+
+// NewBlockAt is NewBlock with an explicit timestamp (unix milliseconds).
+// Handlers use this so the persisted block timestamp is the exact same instant
+// the EVM executed the transaction at (see ContractCaller.SetTime) — that makes
+// replay deterministic: re-running the block with its own stored timestamp
+// reproduces the same phase-deadline decisions the original execution made.
+func NewBlockAt(index uint64, transactions []Transaction, prevHash string, timestampMs int64) *Block {
 	block := &Block{
 		Index:        index,
-		Timestamp:    time.Now().UnixMilli(),
+		Timestamp:    timestampMs,
 		Transactions: transactions,
 		PrevHash:     prevHash,
 	}

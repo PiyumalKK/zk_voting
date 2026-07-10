@@ -15,11 +15,6 @@ const AuditPage: NextPage = () => {
     enabled: true,
   });
 
-  const { data: votingData } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getVotingData",
-  });
-
   const { data: candidates } = useScaffoldReadContract({
     contractName: "Voting",
     functionName: "getCandidates",

@@ -7,9 +7,18 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	"zk-blockchain/internal/core"
 )
+
+// testNow returns the current wall clock as the unix-seconds blockTime that
+// every bridge write method now requires (see ContractCaller.SetTime).
+func testNow() uint64 {
+	return uint64(time.Now().Unix())
+}
 
 // assetsDir returns the path to the compiled contract artifacts.
 // Tests are run from the package directory, so we navigate up to find assets/.
@@ -100,7 +109,7 @@ func TestVoterIDToAddress_NonZero(t *testing.T) {
 func TestAddVoter_Success(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter failed: %v", err)
 	}
 
@@ -121,10 +130,10 @@ func TestAddVoter_Revoke(t *testing.T) {
 	bridge := newTestBridge(t)
 
 	// Add then revoke.
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter(true): %v", err)
 	}
-	if err := bridge.AddVoter("alice@example.com", false); err != nil {
+	if err := bridge.AddVoter("alice@example.com", false, testNow()); err != nil {
 		t.Fatalf("AddVoter(false): %v", err)
 	}
 
@@ -146,14 +155,14 @@ func TestRegister_Success(t *testing.T) {
 	bridge := newTestBridge(t)
 
 	// Must add voter first (Setup phase), then open registration.
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 
-	leafIndex, err := bridge.Register("alice@example.com", sampleCommitmentHex)
+	leafIndex, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow())
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
@@ -174,12 +183,12 @@ func TestRegister_Success(t *testing.T) {
 func TestRegister_NotAllowed(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 
 	// Attempt registration without adding voter first.
-	_, err := bridge.Register("bob@example.com", sampleCommitmentHex)
+	_, err := bridge.Register("bob@example.com", sampleCommitmentHex, testNow())
 	if err == nil {
 		t.Error("expected error for unallowlisted voter, got nil")
 	}
@@ -188,23 +197,23 @@ func TestRegister_NotAllowed(t *testing.T) {
 func TestRegister_DuplicateCommitment(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter alice: %v", err)
 	}
-	if err := bridge.AddVoter("bob@example.com", true); err != nil {
+	if err := bridge.AddVoter("bob@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter bob: %v", err)
 	}
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 
 	// Register alice with the commitment.
-	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex); err != nil {
+	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow()); err != nil {
 		t.Fatalf("Register alice: %v", err)
 	}
 
 	// Bob tries to register with the same commitment — must be rejected.
-	_, err := bridge.Register("bob@example.com", sampleCommitmentHex)
+	_, err := bridge.Register("bob@example.com", sampleCommitmentHex, testNow())
 	if err == nil {
 		t.Error("expected error for duplicate commitment, got nil")
 	}
@@ -213,19 +222,19 @@ func TestRegister_DuplicateCommitment(t *testing.T) {
 func TestRegister_AlreadyRegistered(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
-	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex); err != nil {
+	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow()); err != nil {
 		t.Fatalf("Register first time: %v", err)
 	}
 
 	// Second registration for the same voter must be rejected.
 	differentCommitment := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	_, err := bridge.Register("alice@example.com", differentCommitment)
+	_, err := bridge.Register("alice@example.com", differentCommitment, testNow())
 	if err == nil {
 		t.Error("expected error for already-registered voter, got nil")
 	}
@@ -239,12 +248,12 @@ func TestRegister_AlreadyRegistered(t *testing.T) {
 func TestRegister_WrongPhase(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
 	// No StartRegistration call — still in Phase.Setup.
 
-	_, err := bridge.Register("alice@example.com", sampleCommitmentHex)
+	_, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow())
 	if err == nil {
 		t.Fatal("expected Register to be rejected outside Phase.Registration, got nil")
 	}
@@ -257,7 +266,7 @@ func TestRegister_WrongPhase(t *testing.T) {
 func TestVote_WrongPhase(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 	// No StartVoting call — still in Phase.Registration.
@@ -266,7 +275,7 @@ func TestVote_WrongPhase(t *testing.T) {
 		"0xdeadbeef",
 		"0x0000000000000000000000000000000000000000000000000000000000000001",
 		"0x0000000000000000000000000000000000000000000000000000000000000001",
-		0, 1,
+		0, 1, testNow(),
 	)
 	if err == nil {
 		t.Fatal("expected Vote to be rejected outside Phase.Voting, got nil")
@@ -282,7 +291,7 @@ func TestVote_WrongPhase(t *testing.T) {
 func TestResetElection_ClearsVoterCache(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
 	before, err := bridge.GetVoterData("alice@example.com")
@@ -293,7 +302,7 @@ func TestResetElection_ClearsVoterCache(t *testing.T) {
 		t.Fatal("expected voter to be allowed before reset")
 	}
 
-	if err := bridge.ResetElection(); err != nil {
+	if err := bridge.ResetElection(testNow()); err != nil {
 		t.Fatalf("ResetElection: %v", err)
 	}
 
@@ -325,7 +334,7 @@ func TestResetElection_ClearsVoterCache(t *testing.T) {
 func TestElectionLifecycle_FullCycle(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.SetCandidates([]string{"Alice", "Bob", "Carol"}); err != nil {
+	if err := bridge.SetCandidates([]string{"Alice", "Bob", "Carol"}, testNow()); err != nil {
 		t.Fatalf("SetCandidates: %v", err)
 	}
 	candidates, err := bridge.GetCandidates()
@@ -336,11 +345,11 @@ func TestElectionLifecycle_FullCycle(t *testing.T) {
 		t.Fatalf("expected [Alice Bob Carol], got %v", candidates)
 	}
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
 
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 	data, err := bridge.GetVotingData()
@@ -351,11 +360,11 @@ func TestElectionLifecycle_FullCycle(t *testing.T) {
 		t.Fatalf("expected Phase.Registration, got %s", data.PhaseLabel)
 	}
 
-	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex); err != nil {
+	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	if err := bridge.StartVoting(3600); err != nil {
+	if err := bridge.StartVoting(3600, testNow()); err != nil {
 		t.Fatalf("StartVoting: %v", err)
 	}
 	data, err = bridge.GetVotingData()
@@ -366,7 +375,7 @@ func TestElectionLifecycle_FullCycle(t *testing.T) {
 		t.Fatalf("expected Phase.Voting, got %s", data.PhaseLabel)
 	}
 
-	if err := bridge.EndElection(); err != nil {
+	if err := bridge.EndElection(testNow()); err != nil {
 		t.Fatalf("EndElection: %v", err)
 	}
 	data, err = bridge.GetVotingData()
@@ -386,35 +395,56 @@ func TestElectionLifecycle_FullCycle(t *testing.T) {
 	}
 }
 
-// ─── Read caching (Stage 4) ─────────────────────────────────────────────────────
+// ─── Time-based phase expiry ────────────────────────────────────────────────────
 
-// TestGetVotingData_Cached verifies that two reads with no intervening writes
-// return the exact same *VotingData instance (a cache hit), not two freshly
-// unmarshaled structs. Pointer identity is the simplest way to observe "no EVM
-// call happened on the second read" from outside the package.
-func TestGetVotingData_Cached(t *testing.T) {
+// TestPhaseAutoExpires verifies the EVM clock actually advances: a registration
+// window opened in the past (blockTime backdated) must read back as Ended when
+// queried at the current wall clock — behavior a frozen BlockContext.Time (the
+// pre-fix state, hardcoded Time: 1) could never produce.
+func TestPhaseAutoExpires(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	first, err := bridge.GetVotingData()
-	if err != nil {
-		t.Fatalf("GetVotingData (1st): %v", err)
+	// Open a 5-second registration window as if it happened 60 seconds ago.
+	past := testNow() - 60
+	if err := bridge.StartRegistration(5, past); err != nil {
+		t.Fatalf("StartRegistration: %v", err)
 	}
-	second, err := bridge.GetVotingData()
+
+	// GetVotingData stamps the EVM clock with the current wall time, so the
+	// contract's view logic must report the window as expired.
+	data, err := bridge.GetVotingData()
 	if err != nil {
-		t.Fatalf("GetVotingData (2nd): %v", err)
+		t.Fatalf("GetVotingData: %v", err)
 	}
-	if first != second {
-		t.Error("expected cached VotingData pointer to be reused when nothing changed")
+	if data.Phase != PhaseEnded {
+		t.Errorf("expected Phase.Ended for an expired registration window, got %s", data.PhaseLabel)
 	}
 }
 
-// TestGetVotingData_InvalidatedByRegister verifies that Register() invalidates
-// the VotingData cache, so a subsequent read reflects the new tree size instead
-// of a stale cached value.
+// TestPhaseStillOpenWithinWindow is the control for TestPhaseAutoExpires: a
+// window opened just now must still read back as Registration.
+func TestPhaseStillOpenWithinWindow(t *testing.T) {
+	bridge := newTestBridge(t)
+
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
+		t.Fatalf("StartRegistration: %v", err)
+	}
+	data, err := bridge.GetVotingData()
+	if err != nil {
+		t.Fatalf("GetVotingData: %v", err)
+	}
+	if data.Phase != PhaseRegistration {
+		t.Errorf("expected Phase.Registration inside an open window, got %s", data.PhaseLabel)
+	}
+}
+
+// TestGetVotingData_InvalidatedByRegister verifies that a read after Register()
+// reflects the new tree size (VotingData is never cached — see the
+// voterDataCache comment in bridge.go for why).
 func TestGetVotingData_InvalidatedByRegister(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
 	before, err := bridge.GetVotingData()
@@ -425,10 +455,10 @@ func TestGetVotingData_InvalidatedByRegister(t *testing.T) {
 		t.Fatalf("expected empty tree before registration, got %s", before.TreeSize)
 	}
 
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
-	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex); err != nil {
+	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -448,7 +478,7 @@ func TestGetVotingData_InvalidatedByRegister(t *testing.T) {
 func TestGetVoterData_Cached(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
 	first, err := bridge.GetVoterData("alice@example.com")
@@ -478,7 +508,7 @@ func TestGetVoterData_InvalidatedByAddVoter(t *testing.T) {
 		t.Fatal("expected voter to not be allowed before AddVoter")
 	}
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
 
@@ -507,16 +537,16 @@ func TestRegister_LeafIndexIsSequential(t *testing.T) {
 	commitments := []string{"0x1", "0x2", "0x3"}
 
 	for _, voter := range voters {
-		if err := bridge.AddVoter(voter, true); err != nil {
+		if err := bridge.AddVoter(voter, true, testNow()); err != nil {
 			t.Fatalf("AddVoter(%s): %v", voter, err)
 		}
 	}
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 
 	for i, voter := range voters {
-		leafIndex, err := bridge.Register(voter, commitments[i])
+		leafIndex, err := bridge.Register(voter, commitments[i], testNow())
 		if err != nil {
 			t.Fatalf("Register(%s): %v", voter, err)
 		}
@@ -543,7 +573,7 @@ func TestBridge_ConcurrentAccess(t *testing.T) {
 		voter := fmt.Sprintf("voter-%d@example.com", i)
 		go func(voter string) {
 			defer wg.Done()
-			_ = bridge.AddVoter(voter, true)
+			_ = bridge.AddVoter(voter, true, testNow())
 		}(voter)
 		go func() {
 			defer wg.Done()
@@ -554,7 +584,7 @@ func TestBridge_ConcurrentAccess(t *testing.T) {
 
 	// addVoters only works during Phase.Setup; open registration now that every
 	// concurrent AddVoter call above has completed.
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
 
@@ -568,7 +598,7 @@ func TestBridge_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			voter := fmt.Sprintf("voter-%d@example.com", i)
 			commitment := fmt.Sprintf("0x%063x1", i+1) // distinct per-voter commitment
-			idx, err := bridge.Register(voter, commitment)
+			idx, err := bridge.Register(voter, commitment, testNow())
 			indexes[i] = idx
 			errs[i] = err
 		}(i)
@@ -615,13 +645,13 @@ func TestGetVotingData_InitialState(t *testing.T) {
 func TestGetVotingData_AfterRegistration(t *testing.T) {
 	bridge := newTestBridge(t)
 
-	if err := bridge.AddVoter("alice@example.com", true); err != nil {
+	if err := bridge.AddVoter("alice@example.com", true, testNow()); err != nil {
 		t.Fatalf("AddVoter: %v", err)
 	}
-	if err := bridge.StartRegistration(3600); err != nil {
+	if err := bridge.StartRegistration(3600, testNow()); err != nil {
 		t.Fatalf("StartRegistration: %v", err)
 	}
-	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex); err != nil {
+	if _, err := bridge.Register("alice@example.com", sampleCommitmentHex, testNow()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -697,5 +727,49 @@ func TestHexToBytes32(t *testing.T) {
 		"ff" + "ff" + "ff" + "ff" + "ff" + "ff" + "ff" + "ff" + "ff")
 	if err == nil {
 		t.Error("expected error for input > 32 bytes, got nil")
+	}
+}
+
+// TestResyncFromChain_RebuildsState verifies the periodic-sync EVM rebuild:
+// ResyncFromChain deploys a fresh EVM and replays a whole chain into it, so the
+// resulting state must match what the chain describes (voter allowed + registered,
+// tree size 1) rather than whatever the old EVM happened to hold.
+func TestResyncFromChain_RebuildsState(t *testing.T) {
+	bridge := newTestBridge(t)
+
+	// Build a chain the fresh EVM will replay: add a voter (Setup), open
+	// registration, then register a commitment.
+	bc := core.NewBlockchain("Should we proceed?", []string{"Yes", "No"})
+	addTx := func(txType core.TxType, payload interface{}) {
+		tx, err := core.NewTransaction(txType, payload)
+		if err != nil {
+			t.Fatalf("NewTransaction(%s): %v", txType, err)
+		}
+		if _, err := bc.AddTransaction(tx); err != nil {
+			t.Fatalf("AddTransaction(%s): %v", txType, err)
+		}
+	}
+	addTx(core.TxAddVoter, core.AddVoterPayload{VoterID: "alice", Allowed: true})
+	addTx(core.TxStartRegistration, core.StartRegistrationPayload{DurationSec: 3600})
+	addTx(core.TxRegister, core.RegisterPayload{VoterID: "alice", Commitment: "0x123", LeafIndex: 0})
+
+	if err := bridge.ResyncFromChain(bc); err != nil {
+		t.Fatalf("ResyncFromChain: %v", err)
+	}
+
+	vd, err := bridge.GetVotingData()
+	if err != nil {
+		t.Fatalf("GetVotingData: %v", err)
+	}
+	if vd.TreeSize.Uint64() != 1 {
+		t.Errorf("expected tree_size 1 after resync, got %s", vd.TreeSize)
+	}
+
+	voter, err := bridge.GetVoterData("alice")
+	if err != nil {
+		t.Fatalf("GetVoterData: %v", err)
+	}
+	if !voter.Allowed || !voter.Registered {
+		t.Errorf("expected alice allowed+registered after resync, got %+v", voter)
 	}
 }

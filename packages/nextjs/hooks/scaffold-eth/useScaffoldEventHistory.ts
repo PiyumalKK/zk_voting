@@ -112,7 +112,14 @@ export const useScaffoldEventHistory = <
   const [lastFetchedBlock, setLastFetchedBlock] = useState<bigint | null>(null);
   const [isPollingActive, setIsPollingActive] = useState(false);
 
-  const { data: blockNumber } = useBlockNumber({ watch: watch, chainId: selectedNetwork.id });
+  // Don't watch or fetch block numbers when the hook is disabled (e.g. the inactive EVM
+  // branch when the custom backend is selected) — otherwise it polls an RPC that may not
+  // be running. When enabled (the Hardhat path) this preserves the original behavior.
+  const { data: blockNumber } = useBlockNumber({
+    watch: Boolean(watch) && enabled,
+    chainId: selectedNetwork.id,
+    query: { enabled },
+  });
 
   const { data: deployedContractData } = useDeployedContractInfo({
     contractName,

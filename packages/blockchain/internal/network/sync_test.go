@@ -140,7 +140,7 @@ func TestStartPeriodicSync_TicksAndInvokesCallback(t *testing.T) {
 	var onSyncCalls int32
 	stop := StartPeriodicSync(bc, store, 20*time.Millisecond, func() {
 		atomic.AddInt32(&onSyncCalls, 1)
-	})
+	}, nil, nil)
 	defer stop()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -164,7 +164,7 @@ func TestStartPeriodicSync_DisabledWithZeroInterval(t *testing.T) {
 	store := &mockStore{}
 
 	called := false
-	StartPeriodicSync(bc, store, 0, func() { called = true })
+	StartPeriodicSync(bc, store, 0, func() { called = true }, nil, nil)
 
 	time.Sleep(50 * time.Millisecond)
 	if called {
