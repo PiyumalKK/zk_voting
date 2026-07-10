@@ -71,11 +71,11 @@ describe("Voting", function () {
       await expect(voting.setQuestion("new?")).to.be.revertedWithCustomError(voting, "Voting__WrongPhase");
     });
 
-    it("rejects addVoters outside Setup phase", async function () {
-      await expect(voting.addVoters([nonVoter.address], [true])).to.be.revertedWithCustomError(
-        voting,
-        "Voting__WrongPhase",
-      );
+    it("rejects addVoters outside Setup and Registration phases", async function () {
+      // addVoters is now allowed in Setup + Registration, but NOT Voting/Ended
+      // Current phase is Registration (from beforeEach), so advance to Voting first
+      await voting.startVoting(3600);
+      await expect(voting.addVoters([nonVoter.address], [true])).to.be.revertedWith("Cannot add voters now");
     });
 
     it("rejects setCandidates with too many entries", async function () {

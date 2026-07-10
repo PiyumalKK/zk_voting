@@ -26,7 +26,19 @@ export const baseMenuLinks: HeaderMenuLink[] = [
     icon: <UserGroupIcon className="h-4 w-4" />,
   },
   {
-    label: "Debug Contracts",
+    label: "GN Portal",
+    href: "/gn",
+  },
+  {
+    label: "Results",
+    href: "/results",
+  },
+  {
+    label: "Audit",
+    href: "/audit",
+  },
+  {
+    label: "Debug",
     href: "/debug",
     icon: <BugAntIcon className="h-4 w-4" />,
   },

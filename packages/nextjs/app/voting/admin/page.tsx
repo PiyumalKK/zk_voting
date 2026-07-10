@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AddressInput } from "@scaffold-ui/components";
+import { createPublicClient, http } from "viem";
+import { useAccount } from "wagmi";
+import { getWalletClient } from "wagmi/actions";
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
-import { mapChainError } from "~~/services/chain/errors";
-import { isCustomChain, useAdminAccess, useAdminActions, useCandidates, useVotingData } from "~~/services/chain/hooks";
+import deployedContracts from "~~/contracts/deployedContracts";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
+import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
+import { wagmiConfig } from "~~/services/web3/wagmiConfig";
 import { notification } from "~~/utils/scaffold-eth";
 
 const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
@@ -33,18 +38,92 @@ function parseDurationToSeconds(raw: string): bigint | null {
 
 const AdminPage = () => {
   const router = useRouter();
-  // Backend-agnostic admin gate: EVM → connected wallet must be the contract
-  // owner; custom chain → dashboard password unlocking the signing proxy.
-  const { isAdmin, requiresWallet, walletConnected, login, logout } = useAdminAccess();
+  const { address: connected } = useAccount();
+  const { targetNetwork } = useTargetNetwork();
+  const { divisions, isLoading: divisionsLoading } = useDivisions();
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const selectedDiv = divisions[selectedIdx];
 
-  const { data: votingData, refetch: refetchVoting } = useVotingData();
-  const { data: candList, refetch: refetchCandidates } = useCandidates();
-  const actions = useAdminActions();
+  // Full Voting ABI (all admin functions) for reads/writes to any division contract.
+  const VOTING_ABI = useMemo(
+    () => (deployedContracts as Record<number, any>)[targetNetwork.id]?.Voting?.abi ?? [],
+    [targetNetwork.id],
+  );
 
-  const question = votingData?.question ?? "";
-  const phase = votingData?.phase ?? 0;
-  const registrationEnd = votingData?.registrationEndTime ?? 0;
-  const votingEnd = votingData?.votingEndTime ?? 0;
+  const publicClient = useMemo(
+    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
+    [targetNetwork],
+  );
+
+  const [votingData, setVotingData] = useState<readonly unknown[] | undefined>(undefined);
+  const [candidates, setCandidates] = useState<readonly string[] | undefined>(undefined);
+  const [ownerAddr, setOwnerAddr] = useState<string | undefined>(undefined);
+
+  // Read the SELECTED division's live election data.
+  const refetchDivision = useCallback(async () => {
+    if (!selectedDiv) return;
+    try {
+      const [vd, cands, owner] = await Promise.all([
+        publicClient.readContract({
+          address: selectedDiv.votingContract,
+          abi: VOTING_ABI,
+          functionName: "getVotingData",
+          args: [],
+        }),
+        publicClient.readContract({
+          address: selectedDiv.votingContract,
+          abi: VOTING_ABI,
+          functionName: "getCandidates",
+          args: [],
+        }),
+        publicClient.readContract({
+          address: selectedDiv.votingContract,
+          abi: VOTING_ABI,
+          functionName: "owner",
+          args: [],
+        }),
+      ]);
+      setVotingData(vd as readonly unknown[]);
+      setCandidates(cands as readonly string[]);
+      setOwnerAddr(owner as string);
+    } catch (e) {
+      console.error("refetchDivision", e);
+    }
+  }, [selectedDiv, publicClient, VOTING_ABI]);
+
+  useEffect(() => {
+    setVotingData(undefined);
+    setCandidates(undefined);
+    refetchDivision();
+  }, [refetchDivision]);
+
+  // Every division contract is owned by the Election Authority (deployer). Treat the
+  // page as accessible while ownership is still loading; block only if confirmed not-owner.
+  const isOwner = ownerAddr ? connected?.toLowerCase() === ownerAddr.toLowerCase() : true;
+
+  // Division-targeting write: routes every admin action to the SELECTED division contract.
+  const writeContractAsync = useCallback(
+    async ({ functionName, args }: { functionName: string; args?: unknown[] }) => {
+      if (!selectedDiv) throw new Error("No division selected");
+      const walletClient = await getWalletClient(wagmiConfig);
+      if (!walletClient) throw new Error("No wallet connected");
+      const hash = await walletClient.writeContract({
+        address: selectedDiv.votingContract,
+        abi: VOTING_ABI,
+        functionName,
+        args: args ?? [],
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      return hash;
+    },
+    [selectedDiv, publicClient, VOTING_ABI],
+  );
+
+  const question = (votingData?.[0] as string | undefined) ?? "";
+  const phase = Number(votingData?.[2] ?? 0);
+  const registrationEnd = Number(votingData?.[3] ?? 0);
+  const votingEnd = Number(votingData?.[4] ?? 0);
+  const candList = (candidates as readonly string[] | undefined) ?? [];
 
   const phaseLabel = PHASE_LABELS[phase] ?? "Unknown";
   const inSetup = phase === 0;
@@ -78,21 +157,14 @@ const AdminPage = () => {
   }, []);
 
   // Access gate.
-  if (requiresWallet && !walletConnected) {
+  if (!connected) {
     return (
       <Wrapper>
         <p className="text-center opacity-70">Connect a wallet to view this page.</p>
       </Wrapper>
     );
   }
-  if (!isAdmin) {
-    if (isCustomChain) {
-      return (
-        <Wrapper>
-          <AdminLogin onLogin={login} />
-        </Wrapper>
-      );
-    }
+  if (!isOwner) {
     return (
       <Wrapper>
         <p className="text-center opacity-70">
@@ -112,16 +184,17 @@ const AdminPage = () => {
     try {
       setBusy(label);
       await fn();
-      await Promise.all([refetchVoting(), refetchCandidates()]);
+      await refetchDivision();
     } catch (e: any) {
       console.error(label, e);
-      notification.error(mapChainError(e?.raw ?? e?.shortMessage ?? e?.message ?? "", "Transaction failed"));
+      notification.error(e?.shortMessage || e?.message || "Transaction failed");
     } finally {
       setBusy(null);
     }
   };
 
-  const handleSetQuestion = () => run("question", () => actions.setQuestion(questionDraft));
+  const handleSetQuestion = () =>
+    run("question", () => writeContractAsync({ functionName: "setQuestion", args: [questionDraft] }));
 
   const handleSetCandidates = () => {
     const cleaned = candidateDrafts.map(c => c.trim()).filter(c => c.length > 0);
@@ -133,17 +206,19 @@ const AdminPage = () => {
       notification.error("Maximum 100 candidates.");
       return;
     }
-    return run("candidates", () => actions.setCandidates(cleaned));
+    return run("candidates", () => writeContractAsync({ functionName: "setCandidates", args: [cleaned] }));
   };
 
   const handleAddVoters = () => {
     const valid = voterDrafts.filter(v => v.address.trim() !== "");
     if (valid.length === 0) {
-      notification.error(isCustomChain ? "Add at least one voter ID." : "Add at least one voter address.");
+      notification.error("Add at least one voter address.");
       return;
     }
+    const addrs = valid.map(v => v.address as `0x${string}`);
+    const statuses = valid.map(v => v.status);
     return run("voters", async () => {
-      await actions.addVoters(valid.map(v => ({ id: v.address.trim(), allowed: v.status })));
+      await writeContractAsync({ functionName: "addVoters", args: [addrs, statuses] });
       setVoterDrafts([{ address: "", status: true }]);
     });
   };
@@ -154,7 +229,7 @@ const AdminPage = () => {
       notification.error("Enter a positive duration (e.g. 01:00:00 or 3600).");
       return;
     }
-    return run("startRegistration", () => actions.startRegistration(sec));
+    return run("startRegistration", () => writeContractAsync({ functionName: "startRegistration", args: [sec] }));
   };
 
   const handleStartVoting = () => {
@@ -163,10 +238,73 @@ const AdminPage = () => {
       notification.error("Enter a positive duration.");
       return;
     }
-    return run("startVoting", () => actions.startVoting(sec));
+    return run("startVoting", () => writeContractAsync({ functionName: "startVoting", args: [sec] }));
   };
 
-  const handleEndElection = () => run("endElection", () => actions.endElection());
+  const handleEndElection = () => run("endElection", () => writeContractAsync({ functionName: "endElection" }));
+
+  // --- Apply a phase change to EVERY division at once (national control) ---
+  const writeToDivision = async (contract: `0x${string}`, functionName: string, args?: unknown[]) => {
+    const walletClient = await getWalletClient(wagmiConfig);
+    if (!walletClient) throw new Error("No wallet connected");
+    const hash = await walletClient.writeContract({
+      address: contract,
+      abi: VOTING_ABI,
+      functionName,
+      args: args ?? [],
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+  };
+
+  const runAll = async (label: string, functionName: string, argsFor: () => unknown[] | null, verb: string) => {
+    const args = argsFor();
+    if (args === null) return;
+    await run(label, async () => {
+      let ok = 0;
+      let skipped = 0;
+      for (const d of divisions) {
+        try {
+          await writeToDivision(d.votingContract, functionName, args);
+          ok += 1;
+        } catch {
+          skipped += 1; // wrong phase for this division — skip it
+        }
+      }
+      notification.success(`${verb} on ${ok} division(s)${skipped ? ` · ${skipped} skipped (wrong phase)` : ""}`);
+    });
+  };
+
+  const handleStartRegistrationAll = () =>
+    runAll(
+      "all-registration",
+      "startRegistration",
+      () => {
+        const sec = parseDurationToSeconds(registrationDuration);
+        if (!sec) {
+          notification.error("Enter a positive registration duration.");
+          return null;
+        }
+        return [sec];
+      },
+      "Registration started",
+    );
+
+  const handleStartVotingAll = () =>
+    runAll(
+      "all-voting",
+      "startVoting",
+      () => {
+        const sec = parseDurationToSeconds(votingDuration);
+        if (!sec) {
+          notification.error("Enter a positive voting duration.");
+          return null;
+        }
+        return [sec];
+      },
+      "Voting started",
+    );
+
+  const handleEndAll = () => runAll("all-end", "endElection", () => [], "Ended");
 
   const handleResetElection = () => {
     const ok = window.confirm(
@@ -175,7 +313,7 @@ const AdminPage = () => {
     );
     if (!ok) return;
     return run("resetElection", async () => {
-      await actions.resetElection();
+      await writeContractAsync({ functionName: "resetElection" });
       setQuestionDraft("");
       setCandidateDrafts(["", ""]);
       setVoterDrafts([{ address: "", status: true }]);
@@ -187,14 +325,51 @@ const AdminPage = () => {
   // --- Render ---
   return (
     <Wrapper>
+      {/* Division selector — every control below targets the chosen division contract. */}
+      <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-6 border border-base-300/50">
+        <div className="text-sm font-bold block mb-2">🏛️ Configuring division</div>
+        {divisionsLoading && divisions.length === 0 ? (
+          <div className="flex items-center gap-2 opacity-60 text-sm">
+            <span className="loading loading-spinner loading-sm">&nbsp;</span>
+            Loading divisions…
+          </div>
+        ) : (
+          <DivisionPicker
+            divisions={divisions}
+            selectedIdx={selectedIdx}
+            setSelectedIdx={setSelectedIdx}
+            selectedName={selectedDiv?.name}
+          />
+        )}
+      </div>
+
       <PhaseHeader
         phaseLabel={phaseLabel}
         phase={phase}
         registrationEnd={registrationEnd}
         votingEnd={votingEnd}
         now={now}
-        onLogout={isCustomChain ? logout : undefined}
       />
+
+      <Section
+        title="🌐 Run election on ALL divisions"
+        hint="One click advances the phase on every division. Divisions in the wrong phase are skipped automatically."
+      >
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-info btn-sm" disabled={!!busy} onClick={handleStartRegistrationAll}>
+            {busy === "all-registration" ? "Starting…" : "▶ Start Registration — ALL"}
+          </button>
+          <button className="btn btn-success btn-sm" disabled={!!busy} onClick={handleStartVotingAll}>
+            {busy === "all-voting" ? "Starting…" : "▶ Start Voting — ALL"}
+          </button>
+          <button className="btn btn-error btn-outline btn-sm" disabled={!!busy} onClick={handleEndAll}>
+            {busy === "all-end" ? "Ending…" : "⏹ End — ALL"}
+          </button>
+        </div>
+        <p className="text-xs opacity-50 mt-2">
+          Uses the durations set in sections 4 &amp; 5 below. Applies to all {divisions.length} division(s).
+        </p>
+      </Section>
 
       <Section title="1. Ballot question" disabled={!inSetup} hint="Editable only during Setup phase.">
         <textarea
@@ -264,43 +439,20 @@ const AdminPage = () => {
         </div>
       </Section>
 
-      <Section
-        title="3. Allowlist voters"
-        disabled={!inSetup}
-        hint={
-          isCustomChain
-            ? "Editable only during Setup phase. Voter IDs are the identifiers voters will register with (e.g. email addresses)."
-            : "Editable only during Setup phase."
-        }
-      >
+      <Section title="3. Allowlist voters" disabled={!inSetup} hint="Editable only during Setup phase.">
         <div className="space-y-2">
           {voterDrafts.map((v, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
               <div className="flex-1 min-w-[260px]">
-                {isCustomChain ? (
-                  <input
-                    type="text"
-                    className="input input-bordered w-full"
-                    placeholder="voter@example.com"
-                    value={v.address}
-                    onChange={e => {
-                      const next = voterDrafts.slice();
-                      next[i] = { ...next[i], address: e.target.value };
-                      setVoterDrafts(next);
-                    }}
-                    disabled={!inSetup}
-                  />
-                ) : (
-                  <AddressInput
-                    placeholder="0x..."
-                    value={v.address}
-                    onChange={val => {
-                      const next = voterDrafts.slice();
-                      next[i] = { ...next[i], address: val as string };
-                      setVoterDrafts(next);
-                    }}
-                  />
-                )}
+                <AddressInput
+                  placeholder="0x..."
+                  value={v.address}
+                  onChange={val => {
+                    const next = voterDrafts.slice();
+                    next[i] = { ...next[i], address: val as string };
+                    setVoterDrafts(next);
+                  }}
+                />
               </div>
               <label className="label cursor-pointer gap-2">
                 <span className="label-text text-sm">Allow</span>
@@ -442,6 +594,8 @@ const AdminPage = () => {
           </button>
         </div>
       </Section>
+
+      <GNManagementSection />
     </Wrapper>
   );
 };
@@ -450,42 +604,38 @@ export default AdminPage;
 
 // ----- helpers -----
 
-/** Password gate for the custom chain backend (unlocks the admin signing proxy). */
-const AdminLogin = ({ onLogin }: { onLogin: (password: string) => Promise<void> }) => {
-  const [password, setPassword] = useState("");
-  const [pending, setPending] = useState(false);
-
-  const submit = async () => {
-    if (!password) return;
-    setPending(true);
-    try {
-      await onLogin(password);
-    } catch (e: any) {
-      notification.error(e?.message ?? "Login failed");
-    } finally {
-      setPending(false);
-    }
-  };
-
+const DivisionPicker = ({
+  divisions,
+  selectedIdx,
+  setSelectedIdx,
+  selectedName,
+}: {
+  divisions: LiveDivision[];
+  selectedIdx: number;
+  setSelectedIdx: (i: number) => void;
+  selectedName?: string;
+}) => {
+  if (divisions.length === 0) {
+    return <p className="text-sm opacity-60">No divisions registered. Deploy divisions first.</p>;
+  }
   return (
-    <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-4 border border-base-300/50 max-w-md mx-auto">
-      <h2 className="text-xl font-bold text-center">Admin sign-in</h2>
-      <p className="text-xs opacity-60 text-center">
-        Enter the election dashboard password. Admin requests are RSA-signed server-side — the key never reaches the
-        browser.
+    <>
+      <select
+        className="select select-bordered w-full"
+        value={selectedIdx}
+        onChange={e => setSelectedIdx(Number(e.target.value))}
+      >
+        {divisions.map((d, i) => (
+          <option key={d.votingContract} value={i}>
+            {d.name} — {PHASE_LABELS[d.phase]} — {d.votingContract.slice(0, 10)}…
+          </option>
+        ))}
+      </select>
+      <p className="text-xs opacity-50 mt-2">
+        All actions on this page (question, candidates, allowlist, phases, reset) apply to{" "}
+        <strong>{selectedName}</strong>.
       </p>
-      <input
-        type="password"
-        className="input input-bordered w-full"
-        placeholder="Dashboard password"
-        value={password}
-        onChange={e => setPassword(e.target.value)}
-        onKeyDown={e => e.key === "Enter" && submit()}
-      />
-      <button className="btn btn-primary w-full" disabled={!password || pending} onClick={submit}>
-        {pending ? "Checking..." : "Sign in"}
-      </button>
-    </div>
+    </>
   );
 };
 
@@ -499,7 +649,7 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
             Election Admin
           </h1>
           <p className="text-base md:text-lg opacity-70 mt-3 font-medium">
-            {`Owner-only controls for the Voting ${isCustomChain ? "chain" : "contract"}`}
+            Owner-only controls for the Voting contract
           </p>
         </div>
         <div className="w-full max-w-3xl space-y-5">{children}</div>
@@ -536,14 +686,12 @@ const PhaseHeader = ({
   registrationEnd,
   votingEnd,
   now,
-  onLogout,
 }: {
   phaseLabel: string;
   phase: number;
   registrationEnd: number;
   votingEnd: number;
   now: number;
-  onLogout?: () => void;
 }) => {
   const remaining =
     phase === 1 && registrationEnd > now
@@ -558,14 +706,186 @@ const PhaseHeader = ({
   return (
     <div className="bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-6 border border-base-300/50 flex flex-wrap justify-between items-center gap-3 relative overflow-hidden">
       <span className={`badge ${badge} badge-lg`}>Phase: {phaseLabel}</span>
-      <div className="flex items-center gap-3">
-        {remaining && <span className="text-xs font-mono opacity-80">{remaining}</span>}
-        {onLogout && (
-          <button className="btn btn-ghost btn-xs" onClick={onLogout}>
-            Sign out
-          </button>
-        )}
-      </div>
+      {remaining && <span className="text-xs font-mono opacity-80">{remaining}</span>}
     </div>
+  );
+};
+
+const GNManagementSection = () => {
+  const [gnAddress, setGnAddress] = useState("");
+  const [selectedDivision, setSelectedDivision] = useState(0);
+  const { divisions, isLoading: divisionsLoading, error: divisionsError, refetch } = useDivisions();
+
+  // Keep selection valid as divisions load in.
+  useEffect(() => {
+    if (divisions.length > 0 && selectedDivision >= divisions.length) {
+      setSelectedDivision(0);
+    }
+  }, [divisions.length, selectedDivision]);
+
+  const handleAssignGN = async () => {
+    if (!gnAddress || !gnAddress.startsWith("0x") || gnAddress.length !== 42) {
+      notification.error("Enter a valid Ethereum address.");
+      return;
+    }
+    const div = divisions[selectedDivision];
+    if (!div) {
+      notification.error("No division selected.");
+      return;
+    }
+    try {
+      const { createPublicClient, http } = await import("viem");
+      const { hardhat } = await import("viem/chains");
+      const { getWalletClient } = await import("wagmi/actions");
+      const { wagmiConfig } = await import("~~/services/web3/wagmiConfig");
+
+      // Get the currently connected wallet from wagmi (RainbowKit)
+      const walletClient = await getWalletClient(wagmiConfig);
+      if (!walletClient) {
+        notification.error("No wallet connected. Connect your wallet first.");
+        return;
+      }
+
+      const abi = [
+        {
+          name: "setGNOfficer",
+          type: "function",
+          stateMutability: "nonpayable",
+          inputs: [{ name: "_gnOfficer", type: "address" }],
+          outputs: [],
+        },
+      ] as const;
+
+      const hash = await walletClient.writeContract({
+        address: div.votingContract,
+        abi,
+        functionName: "setGNOfficer",
+        args: [gnAddress as `0x${string}`],
+      });
+
+      const publicClient = createPublicClient({ chain: hardhat, transport: http("http://127.0.0.1:8545") });
+      await publicClient.waitForTransactionReceipt({ hash });
+      notification.success(`✅ GN assigned to ${div.name}!`);
+      setGnAddress("");
+      refetch();
+    } catch (e: any) {
+      notification.error(e?.shortMessage || e?.message || "Failed to assign GN");
+    }
+  };
+
+  const selected = divisions[selectedDivision];
+  const currentDivGN = selected?.gnOfficer || "";
+  const isZeroAddr = !currentDivGN || currentDivGN === "0x0000000000000000000000000000000000000000";
+
+  return (
+    <Section title="6. GN Officer Management" hint="Assign GN officers to specific polling divisions.">
+      {divisionsError && (
+        <div className="alert alert-error mb-4 text-sm">
+          <span>⚠️ {divisionsError}</span>
+        </div>
+      )}
+      {divisionsLoading && divisions.length === 0 ? (
+        <div className="flex items-center gap-2 py-6 opacity-60">
+          <span className="loading loading-spinner loading-sm"></span>
+          <span>Loading divisions from the ElectionRegistry…</span>
+        </div>
+      ) : divisions.length === 0 ? (
+        <div className="text-sm opacity-60 py-4">No divisions registered yet. Deploy divisions first.</div>
+      ) : (
+        <>
+          {/* Division Selector */}
+          <div className="form-control mb-4">
+            <label className="label">
+              <span className="label-text text-sm font-bold">Select Division</span>
+            </label>
+            <select
+              className="select select-bordered w-full"
+              value={selectedDivision}
+              onChange={e => setSelectedDivision(Number(e.target.value))}
+            >
+              {divisions.map((div, idx) => (
+                <option key={div.votingContract} value={idx}>
+                  {div.name} — {div.votingContract.slice(0, 10)}...
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Current GN for selected division */}
+          <div className="p-3 bg-base-200/50 rounded-lg mb-4">
+            <div className="text-xs opacity-60 mb-1">
+              Current GN for <strong>{selected?.name}</strong>
+            </div>
+            <div className="font-mono text-sm">
+              {!isZeroAddr ? (
+                <span className="text-success">{currentDivGN}</span>
+              ) : (
+                <span className="opacity-40">None assigned</span>
+              )}
+            </div>
+          </div>
+
+          {/* All divisions overview */}
+          <div className="overflow-x-auto mb-4">
+            <table className="table table-sm">
+              <thead>
+                <tr>
+                  <th>Division</th>
+                  <th>GN Officer</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {divisions.map((div, idx) => {
+                  const gn = div.gnOfficer || "";
+                  const assigned = gn && gn !== "0x0000000000000000000000000000000000000000";
+                  return (
+                    <tr key={div.votingContract} className={selectedDivision === idx ? "bg-primary/10" : ""}>
+                      <td className="font-bold">{div.name}</td>
+                      <td className="font-mono text-xs">{assigned ? `${gn.slice(0, 10)}...${gn.slice(-4)}` : "—"}</td>
+                      <td>
+                        {assigned ? (
+                          <span className="badge badge-success badge-xs">Assigned</span>
+                        ) : (
+                          <span className="badge badge-ghost badge-xs">Empty</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Assign new GN */}
+          <div className="space-y-3">
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text text-sm">New GN Address for {selected?.name}</span>
+              </label>
+              <AddressInput value={gnAddress} onChange={setGnAddress} placeholder="0x..." />
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button className="btn btn-primary btn-sm" disabled={!gnAddress} onClick={handleAssignGN}>
+                Assign GN to {selected?.name}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Test accounts */}
+      <div className="text-xs opacity-40 mt-3">
+        <details>
+          <summary className="cursor-pointer">Test GN accounts (Hardhat)</summary>
+          <div className="mt-2 space-y-1 font-mono text-xs">
+            <div>GN Kaduwela (#1): 0x70997970C51812dc3A010C7d01b50e0d17dc79C8</div>
+            <div>GN Colombo (#2): 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC</div>
+            <div>GN Gampaha (#3): 0x90F79bf6EB2c4f870365E785982E1f101E93b906</div>
+          </div>
+        </details>
+      </div>
+    </Section>
   );
 };

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { NextPage } from "next";
-import { ShieldCheckIcon, LockClosedIcon, FingerPrintIcon, CheckBadgeIcon } from "@heroicons/react/24/outline";
+import { CheckBadgeIcon, FingerPrintIcon, LockClosedIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
 
 const Home: NextPage = () => {
   return (
@@ -48,7 +48,8 @@ const Home: NextPage = () => {
           </p>
 
           <p className="text-sm text-base-content/50 mb-8">
-            Department of Electrical and Information Engineering &bull; Faculty of Engineering &bull; University of Ruhuna
+            Department of Electrical and Information Engineering &bull; Faculty of Engineering &bull; University of
+            Ruhuna
           </p>
 
           {/* CTA Buttons */}
@@ -88,6 +89,68 @@ const Home: NextPage = () => {
         </div>
       </div>
 
+      {/* Vote & Portals Section */}
+      <div className="bg-base-200 border-t border-base-300 py-16 px-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+            {/* Voter: download the app */}
+            <div className="bg-gradient-to-br from-primary/10 to-secondary/10 rounded-3xl p-8 border border-primary/20">
+              <div className="text-3xl mb-3">📱</div>
+              <h2 className="text-2xl font-bold mb-2">Cast Your Vote</h2>
+              <p className="text-sm opacity-70 mb-5">
+                Voting is done from the secure <strong>SL Vote</strong> mobile app — protected by your phone&apos;s
+                hardware security chip, fingerprint/Face unlock, PIN, and one-time SMS code. Your vote stays anonymous.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <span className="btn btn-neutral btn-sm gap-2 pointer-events-none opacity-90">▶ Google Play</span>
+                <span className="btn btn-neutral btn-sm gap-2 pointer-events-none opacity-90"> App Store</span>
+                <span className="badge badge-warning badge-sm self-center">Coming soon</span>
+              </div>
+              <p className="text-xs opacity-50 mt-4">
+                At your GN office: open the app, show your address QR, and the officer adds you to the roll.
+              </p>
+            </div>
+
+            {/* Officials: web portals */}
+            <div>
+              <h2 className="text-2xl font-bold mb-1">Officials &amp; Observers</h2>
+              <p className="text-sm opacity-60 mb-5">Election staff and public observers work from the web.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Link
+                  href="/voting/admin"
+                  className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50"
+                >
+                  <div className="text-2xl mb-1">🏛️</div>
+                  <h3 className="font-bold text-sm">Election Authority</h3>
+                  <p className="text-xs opacity-60 mt-1">Configure election, manage GNs, control phases</p>
+                </Link>
+                <Link href="/gn" className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
+                  <div className="text-2xl mb-1">👨‍💼</div>
+                  <h3 className="font-bold text-sm">GN Officer</h3>
+                  <p className="text-xs opacity-60 mt-1">Enrol voters in your division</p>
+                </Link>
+                <Link
+                  href="/audit"
+                  className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50"
+                >
+                  <div className="text-2xl mb-1">👁️</div>
+                  <h3 className="font-bold text-sm">Observer</h3>
+                  <p className="text-xs opacity-60 mt-1">Independently verify proofs &amp; tally</p>
+                </Link>
+                <Link
+                  href="/results"
+                  className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50"
+                >
+                  <div className="text-2xl mb-1">📊</div>
+                  <h3 className="font-bold text-sm">Live Results</h3>
+                  <p className="text-xs opacity-60 mt-1">National &amp; per-division tally</p>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Team Section */}
       <div className="bg-base-100 border-t border-base-300 py-16 px-6">
         <div className="max-w-4xl mx-auto text-center">
@@ -95,22 +158,30 @@ const Home: NextPage = () => {
           <p className="text-sm opacity-60 mb-8">BSc Engineering (Hons) &bull; University of Ruhuna, Sri Lanka</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">KK</div>
+              <div className="w-12 h-12 mx-auto rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                KK
+              </div>
               <p className="font-medium text-sm">Kumarasinghe K.K.R.</p>
               <p className="text-xs opacity-50">EG/2021/4632</p>
             </div>
             <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-secondary/10 flex items-center justify-center text-secondary font-bold">RM</div>
+              <div className="w-12 h-12 mx-auto rounded-full bg-secondary/10 flex items-center justify-center text-secondary font-bold">
+                RM
+              </div>
               <p className="font-medium text-sm">Madhusankha R.M.D.</p>
               <p className="text-xs opacity-50">EG/2021/4655</p>
             </div>
             <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold">RM</div>
+              <div className="w-12 h-12 mx-auto rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold">
+                RM
+              </div>
               <p className="font-medium text-sm">Pradeepani R.M.T.</p>
               <p className="text-xs opacity-50">EG/2021/4725</p>
             </div>
             <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-success/10 flex items-center justify-center text-success font-bold">KK</div>
+              <div className="w-12 h-12 mx-auto rounded-full bg-success/10 flex items-center justify-center text-success font-bold">
+                KK
+              </div>
               <p className="font-medium text-sm">Ranasinghe K.K.M.P</p>
               <p className="text-xs opacity-50">EG/2021/4735</p>
             </div>
@@ -123,8 +194,20 @@ const Home: NextPage = () => {
         <div className="max-w-4xl mx-auto text-center">
           <h3 className="text-lg font-bold mb-6 opacity-70">Built With</h3>
           <div className="flex flex-wrap justify-center gap-3">
-            {["Noir ZK Circuits", "Solidity", "Barretenberg", "Next.js", "Ethereum", "Poseidon Hash", "LeanIMT", "ERC-4337"].map(tech => (
-              <span key={tech} className="px-4 py-2 bg-base-100 rounded-full text-xs font-medium shadow-sm border border-base-300/50">
+            {[
+              "Noir ZK Circuits",
+              "Solidity",
+              "Barretenberg",
+              "Next.js",
+              "Ethereum",
+              "Poseidon Hash",
+              "LeanIMT",
+              "ERC-4337",
+            ].map(tech => (
+              <span
+                key={tech}
+                className="px-4 py-2 bg-base-100 rounded-full text-xs font-medium shadow-sm border border-base-300/50"
+              >
                 {tech}
               </span>
             ))}

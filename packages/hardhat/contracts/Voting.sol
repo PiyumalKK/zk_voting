@@ -57,6 +57,9 @@ contract Voting is Ownable {
 
     IVerifier public immutable i_verifier;
 
+    // GN officer address — can call addVoters() for this division
+    address public s_gnOfficer;
+
     // Monotonic election counter. All per-election state is keyed by this id so
     // that resetElection() can start a brand-new election by simply bumping it,
     // which cheaply "clears" every mapping below without costly iteration.
@@ -87,6 +90,7 @@ contract Voting is Ownable {
     //////////////
 
     event VoterAdded(address indexed voter);
+    event GNOfficerUpdated(address indexed gnOfficer);
     event NewLeaf(uint256 index, uint256 value);
     event QuestionUpdated(string question);
     event CandidatesUpdated(string[] candidates);
@@ -111,6 +115,12 @@ contract Voting is Ownable {
         if (s_phase != expected) {
             revert Voting__WrongPhase(expected, s_phase);
         }
+        _;
+    }
+
+    /// @dev Allows both owner and assigned GN officer.
+    modifier onlyOwnerOrGN() {
+        require(msg.sender == owner() || msg.sender == s_gnOfficer, "Not owner or GN");
         _;
     }
 
@@ -161,12 +171,20 @@ contract Voting is Ownable {
         emit CandidatesUpdated(_candidates);
     }
 
-    /// @notice Batch updates the allowlist of voter EOAs. Allowed during Setup.
+    /// @notice Assigns a GN officer who can add voters. Only owner.
+    function setGNOfficer(address _gnOfficer) external onlyOwner {
+        s_gnOfficer = _gnOfficer;
+        emit GNOfficerUpdated(_gnOfficer);
+    }
+
+    /// @notice Batch updates the allowlist of voter EOAs.
+    ///         Allowed during Setup (owner or GN) and Registration (GN can still add late voters).
     function addVoters(address[] calldata voters, bool[] calldata statuses)
         external
-        onlyOwner
-        inPhase(Phase.Setup)
+        onlyOwnerOrGN
     {
+        _maybeAdvancePhase();
+        require(s_phase == Phase.Setup || s_phase == Phase.Registration, "Cannot add voters now");
         require(voters.length == statuses.length, "Voters and statuses length mismatch");
         for (uint256 i = 0; i < voters.length; i++) {
             s_voters[s_electionId][voters[i]] = statuses[i];

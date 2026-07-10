@@ -8,6 +8,8 @@ import { GenerateProof } from "~~/app/voting/_components/GenerateProof";
 import { LogStorageButton } from "~~/app/voting/_components/LogStorageButton";
 import { VoterIdCard } from "~~/app/voting/_components/VoterIdCard";
 import { VotingStats } from "~~/app/voting/_components/VotingStats";
+import { useDeployedContractInfo } from "~~/hooks/scaffold-eth";
+import { useDivisions } from "~~/hooks/useDivisions";
 import { isCustomChain, useLeaves, useVotingData } from "~~/services/chain/hooks";
 import { PHASE } from "~~/services/chain/types";
 
@@ -36,6 +38,8 @@ const VotingPage: NextPage = () => {
           </div>
 
           <div className="w-full max-w-2xl space-y-5">
+            <DivisionContextBanner />
+
             <VotingStats />
 
             {isCustomChain && (showRegistration || showVoting) && <VoterIdCard />}
@@ -91,6 +95,34 @@ const PhaseNotice = ({
     <div className={`rounded-2xl border ${cls} p-5 text-center`}>
       <h3 className="font-semibold mb-1">{title}</h3>
       <p className="text-sm opacity-70">{children}</p>
+    </div>
+  );
+};
+
+// Shows which registered division this web voter flow is bound to (the default
+// scaffold "Voting" contract). Real multi-division voting happens in the mobile app.
+const DivisionContextBanner = () => {
+  const { data: deployedVoting } = useDeployedContractInfo({ contractName: "Voting" });
+  const { divisions } = useDivisions();
+
+  const votingAddress = deployedVoting?.address?.toLowerCase();
+  const matched = divisions.find(d => d.votingContract.toLowerCase() === votingAddress);
+
+  if (!votingAddress) return null;
+
+  return (
+    <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">🏛️</span>
+        <div>
+          <div className="text-sm font-semibold">{matched ? `${matched.name} Division` : "Prototype Division"}</div>
+          <div className="text-[11px] opacity-50 font-mono">{votingAddress}</div>
+        </div>
+      </div>
+      <div className="text-[11px] opacity-60 max-w-xs text-right">
+        This web demo votes on one division contract. In production, voters use the mobile app which targets their own
+        division automatically.
+      </div>
     </div>
   );
 };

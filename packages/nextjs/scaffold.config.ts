@@ -25,8 +25,12 @@ export const DEFAULT_ALCHEMY_API_KEY = "cR4WnXePioePZ5fFrnSiR";
 
 const scaffoldConfig = {
   // The networks on which your DApp is live
-  targetNetworks:
-    process.env.NEXT_PUBLIC_CHAIN_BACKEND === "custom" ? ([chains.mainnet] as const) : ([chains.hardhat] as const),
+  // Static type is pinned to the hardhat tuple so scaffold-eth's contract-type
+  // inference keeps working (deployedContracts is 31337-only); at runtime the
+  // custom backend swaps in mainnet. Both are Chain-shaped, so wagmi still works.
+  targetNetworks: (process.env.NEXT_PUBLIC_CHAIN_BACKEND === "custom"
+    ? [chains.mainnet]
+    : [chains.hardhat]) as readonly [typeof chains.hardhat],
   // The interval at which your front-end polls the RPC servers for new data (it has no effect if you only target the local network (default is 4000))
   pollingInterval: 3000,
   // This is ours Alchemy's default API key.

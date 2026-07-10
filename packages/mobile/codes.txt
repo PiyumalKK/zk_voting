@@ -1,0 +1,38 @@
+# ============================================================
+#  SL VOTE - START EVERYTHING  (run each block in its OWN terminal)
+#  Order: 0 (check IP) -> 1 -> wait -> 2 -> 3 -> 4
+#  Current Wi-Fi IP: 10.163.7.216  (re-check with step 0 if it changed)
+# ============================================================
+
+
+# ---- 0) CHECK YOUR IP (run first; use the Wi-Fi IPv4) ----
+Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | Select-Object IPAddress, InterfaceAlias
+
+
+# ---- 1) BLOCKCHAIN  (Terminal 1 - leave running) ----
+cd "d:\Final year\FYP\Stage_1\zk_voting\packages\hardhat"; npx hardhat node --hostname 0.0.0.0 --network hardhat
+
+
+# ---- 2) DEPLOY  (Terminal 2 - run once, after Terminal 1 shows accounts) ----
+cd "d:\Final year\FYP\Stage_1\zk_voting\packages\hardhat"; npx hardhat deploy --network localhost --export-all ../nextjs/contracts/deployedContracts.ts
+
+
+# ---- 3) WEB APP  (Terminal 3 - leave running) ----
+cd "d:\Final year\FYP\Stage_1\zk_voting\packages\nextjs"; npx next dev -H 0.0.0.0
+
+
+# ---- 4) MOBILE APP  (Terminal 4 - leave running; change IP if step 0 differs) ----
+cd "d:\Final year\FYP\Stage_1\zk_voting\packages\mobile"; $env:REACT_NATIVE_PACKAGER_HOSTNAME="10.163.7.216"; $env:EXPO_PUBLIC_API_URL="http://10.163.7.216:3000"; $env:EXPO_PUBLIC_RPC_URL="http://10.163.7.216:8545"; yarn expo start
+
+
+# ============================================================
+#  AFTER STARTING:
+#   - Admin:   http://localhost:3000/voting/admin  (MetaMask = account #0)
+#              Set question/candidates -> "Run election on ALL divisions"
+#   - Mobile:  scan QR from Terminal 4  (or enter exp://10.163.7.216:8081)
+#   - MetaMask: Localhost 8545, Chain ID 31337
+# ============================================================
+
+
+# ---- KILL EVERYTHING (if you need to stop all servers) ----
+foreach ($p in 8545,3000,8081) { Get-NetTCPConnection -LocalPort $p -State Listen -EA SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -EA SilentlyContinue } }

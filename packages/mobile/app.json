@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "SL Vote",
+    "slug": "sl-vote",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "slvote",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0F1B2D"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "lk.gov.slvote",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "SL Vote uses Face ID to protect your voting key."
+      }
+    },
+    "android": {
+      "package": "lk.gov.slvote",
+      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "SL Vote uses Face ID to protect your voting key."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
