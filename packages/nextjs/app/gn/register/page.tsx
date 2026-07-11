@@ -148,8 +148,8 @@ const GNRegisterVoter: NextPage = () => {
       const msg = error?.shortMessage || error?.message || "Transaction failed";
       if (msg.includes("Not owner or GN")) {
         notification.error("You are not authorized as GN for this division.");
-      } else if (msg.includes("Cannot add voters now")) {
-        notification.error("Cannot add voters in current phase (Voting or Ended).");
+      } else if (msg.includes("WrongPhase") || msg.includes("Cannot add voters")) {
+        notification.error("Voters can only be added during the Setup phase.");
       } else {
         notification.error(msg);
       }

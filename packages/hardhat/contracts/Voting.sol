@@ -177,14 +177,12 @@ contract Voting is Ownable {
         emit GNOfficerUpdated(_gnOfficer);
     }
 
-    /// @notice Batch updates the allowlist of voter EOAs.
-    ///         Allowed during Setup (owner or GN) and Registration (GN can still add late voters).
+    /// @notice Batch updates the allowlist of voter EOAs. Only allowed during Setup.
     function addVoters(address[] calldata voters, bool[] calldata statuses)
         external
         onlyOwnerOrGN
+        inPhase(Phase.Setup)
     {
-        _maybeAdvancePhase();
-        require(s_phase == Phase.Setup || s_phase == Phase.Registration, "Cannot add voters now");
         require(voters.length == statuses.length, "Voters and statuses length mismatch");
         for (uint256 i = 0; i < voters.length; i++) {
             s_voters[s_electionId][voters[i]] = statuses[i];
