@@ -39,6 +39,14 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
     autoMine: true,
   });
 
+  const nicRegistry = await deploy("NicRegistry", {
+    from: deployer,
+    args: [deployer],
+    log: true,
+    autoMine: true,
+  });
+  const nicRegistryContract = await hre.ethers.getContractAt("NicRegistry", nicRegistry.address);
+
   // Deploy 3 division Voting contracts
   const divisions = [
     { name: "Kaduwela", gn: gnKaduwela, tag: "Voting_Kaduwela" },
@@ -63,6 +71,9 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
     await votingContract.setGNOfficer(div.gn);
     console.log(`  ✅ ${div.name}: GN officer set to ${div.gn}`);
 
+    await nicRegistryContract.setVotingContract(votingDeploy.address, true);
+    console.log(`  ✅ ${div.name}: allowlisted in NicRegistry`);
+
     // Register division in the registry — skip if already registered (idempotent).
     const registryContract = await hre.ethers.getContractAt("ElectionRegistry", registry.address);
     const existing = await registryContract.getAllDivisions();
@@ -79,6 +90,7 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
 
   console.log("\n🇱🇰 Multi-division election deployed:");
   console.log(`   Registry: ${registry.address}`);
+  console.log(`   NicRegistry: ${nicRegistry.address}`);
   console.log(`   Divisions: ${divisions.length}`);
   console.log(`   Candidates: ${candidates.join(", ")}`);
   console.log(`   GN Kaduwela: ${gnKaduwela}`);

@@ -426,6 +426,187 @@ const deployedContracts = {
       inheritedFunctions: {},
       deployedOnBlock: 3,
     },
+    NicRegistry: {
+      address: "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE",
+      abi: [
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "_owner",
+              type: "address",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "constructor",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          name: "NicRegistry__AlreadyUsed",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "owner",
+              type: "address",
+            },
+          ],
+          name: "OwnableInvalidOwner",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "account",
+              type: "address",
+            },
+          ],
+          name: "OwnableUnauthorizedAccount",
+          type: "error",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          name: "NicHashReserved",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "address",
+              name: "previousOwner",
+              type: "address",
+            },
+            {
+              indexed: true,
+              internalType: "address",
+              name: "newOwner",
+              type: "address",
+            },
+          ],
+          name: "OwnershipTransferred",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "bool",
+              name: "authorized",
+              type: "bool",
+            },
+          ],
+          name: "VotingContractUpdated",
+          type: "event",
+        },
+        {
+          inputs: [],
+          name: "owner",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "renounceOwnership",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+            {
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+          ],
+          name: "reserveNicHash",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "_votingContract",
+              type: "address",
+            },
+            {
+              internalType: "bool",
+              name: "_authorized",
+              type: "bool",
+            },
+          ],
+          name: "setVotingContract",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "newOwner",
+              type: "address",
+            },
+          ],
+          name: "transferOwnership",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+      ],
+      inheritedFunctions: {
+        owner: "@openzeppelin/contracts/access/Ownable.sol",
+        renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
+        transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
+      },
+      deployedOnBlock: 26,
+    },
     PoseidonT3: {
       address: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
       abi: [
