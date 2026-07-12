@@ -392,4 +392,10 @@ contract Voting is Ownable {
         voter = s_voters[s_electionId][_voter];
         registered = s_hasRegistered[s_electionId][_voter];
     }
+
+    /// @notice Returns true if the given nullifier hash was used in the current election.
+    ///         Voters can use this to verify their vote was counted without revealing their identity.
+    function isNullifierUsed(bytes32 _nullifierHash) external view returns (bool) {
+        return s_nullifierHashes[s_electionId][_nullifierHash];
+    }
 }

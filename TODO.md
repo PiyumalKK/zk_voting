@@ -17,8 +17,8 @@
 
 ## 🟠 Important (production quality)
 
-- [ ] **Remove voting from web** — fully migrate voter flow to mobile only; web shows "Download the app" + results/admin/GN only
-- [ ] **Improve mobile UI** — proper design system, animations, dark/light theme, better error states, loading skeletons
+- [x] **Remove voting from web** — ✅ Done. `/voting` now shows "Download the App" page; nav link renamed to "Download App"; home CTA updated. Admin/GN/results/audit untouched.
+- [x] **Improve mobile UI** — ✅ Done. New premium dark design system (theme.ts), 6 reusable components (GradientButton, GlassCard, StatusBadge, StepIndicator, AnimatedResult, FadeIn), all screens redesigned with glassmorphism, animations, step progress, journey tracker.
 - [ ] **iOS Face ID / Touch ID fix** — current `expo-local-authentication` throws an error on iPhone; needs correct `NSFaceIDUsageDescription` in Info.plist, proper `expo-dev-client` build (not Expo Go which lacks entitlements), and testing biometric fallback to device passcode
 - [ ] **In-app PIN** — custom 6-digit PIN verified by hardware (chip-level lockout after 3 wrong), not just device passcode
 - [ ] **Root/jailbreak detection** — refuse to run on compromised devices (SafetyNet / App Attest)
@@ -40,7 +40,7 @@
 - [ ] **Accessibility** — screen reader support, high contrast, large text
 - [ ] **CI/CD** — GitHub Actions: contract tests, type-check, lint, Expo EAS build on push
 - [ ] **Monitoring** — observability for the API (error rates, OTP delivery success, proof gen times)
-- [ ] **Voter receipt** — after voting, show a unique receipt hash the voter can verify later on the audit page
+- [x] **Voter receipt** — ✅ Done. Voters can verify their vote on-chain via nullifier hash (Verify My Vote screen + `/api/verify-vote` endpoint + `isNullifierUsed()` contract function)
 - [ ] **Rate limiting** — edge gateway (Cloudflare/Vercel) rate limits on API + OTP to prevent abuse
 - [ ] **Secrets management** — move OTP signing key, admin key (if relay) to a vault (not env vars)
 
@@ -70,3 +70,7 @@
 - [x] Dev faucet for burner gas
 - [x] 49 contract tests passing
 - [x] Full end-to-end demo: register → OTP → biometric → ZK proof → anonymous vote → live results
+- [x] Remove voting from web — `/voting` → "Download the App" page; nav & CTA updated
+- [x] Mobile UI overhaul — premium dark design system, 6 reusable components, all screens redesigned
+- [x] Vote verification — `isNullifierUsed()` view function, `/api/verify-vote` endpoint, "Verify My Vote" mobile screen
+- [x] Vote confirmation step — added confirmation dialog before casting irreversible vote

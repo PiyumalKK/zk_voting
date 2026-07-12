@@ -61,7 +61,18 @@ const GNRegisterVoter: NextPage = () => {
   const startQRScan = async () => {
     try {
       setScanning(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        notification.error("Camera requires HTTPS or localhost.");
+        setScanning(false);
+        return;
+      }
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
@@ -80,9 +91,19 @@ const GNRegisterVoter: NextPage = () => {
             } catch {}
           }
         }, 300);
+      } else {
+        notification.error("Barcode scanning not supported by this browser.");
       }
-    } catch {
-      notification.error("Camera access denied.");
+    } catch (err: any) {
+      if (err.name === "NotAllowedError") {
+        notification.error("Camera access denied by user or browser.");
+      } else if (err.name === "NotFoundError") {
+        notification.error("No camera found on this device.");
+      } else if (err.name === "NotReadableError" || err.message === "Could not start video source") {
+        notification.error("Camera is already in use by another app or tab.");
+      } else {
+        notification.error(err.message || "Camera access failed.");
+      }
       setScanning(false);
     }
   };
