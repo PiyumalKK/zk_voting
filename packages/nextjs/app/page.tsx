@@ -55,8 +55,7 @@ const Home: NextPage = () => {
           {/* CTA Buttons */}
           <div className="flex flex-wrap gap-4 justify-center mb-12">
             <Link href="/voting" className="btn btn-primary btn-lg gap-2 shadow-lg shadow-primary/25">
-              <ShieldCheckIcon className="h-5 w-5" />
-              Launch Voting App
+              📱 Download SL Vote App
             </Link>
             <Link href="/debug" className="btn btn-outline btn-lg gap-2">
               Explore Contracts

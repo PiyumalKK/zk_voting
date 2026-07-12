@@ -4,7 +4,7 @@ import React, { useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bars3Icon, BugAntIcon, Cog6ToothIcon, UserGroupIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon, BugAntIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
 import { isCustomChain } from "~~/services/chain/hooks";
@@ -21,9 +21,8 @@ export const baseMenuLinks: HeaderMenuLink[] = [
     href: "/",
   },
   {
-    label: "Voting",
+    label: "Download App",
     href: "/voting",
-    icon: <UserGroupIcon className="h-4 w-4" />,
   },
   {
     label: "GN Portal",

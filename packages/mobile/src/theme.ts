@@ -1,72 +1,269 @@
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 
+/**
+ * Premium dark design system for SL Vote.
+ *
+ * Uses a rich navy-to-deep-blue palette with accent gradients.
+ * All spacing, typography, and component styles are defined here
+ * so screens stay consistent.
+ */
+
+// ─── Color tokens ────────────────────────────────────────────────
 export const colors = {
-  bg: "#0F1B2D",
-  card: "#182B45",
-  cardBorder: "#25405F",
+  // Backgrounds
+  bg: "#070E1A",
+  bgSecondary: "#0C1628",
+  card: "#111D32",
+  cardBorder: "#1E3050",
+  cardGlow: "rgba(59, 130, 246, 0.08)",
+
+  // Primary
   primary: "#3B82F6",
-  primaryText: "#fff",
-  success: "#22C55E",
+  primaryDark: "#2563EB",
+  primaryLight: "#60A5FA",
+  primaryText: "#FFFFFF",
+
+  // Accents
+  secondary: "#8B5CF6",
+  accent: "#06B6D4",
+
+  // Semantic
+  success: "#10B981",
+  successLight: "#34D399",
   warning: "#F59E0B",
+  warningLight: "#FBBF24",
   danger: "#EF4444",
-  text: "#E2E8F0",
-  muted: "#94A3B8",
-  accent: "#0D7680",
+  dangerLight: "#F87171",
+
+  // Text
+  text: "#F1F5F9",
+  textSecondary: "#CBD5E1",
+  muted: "#64748B",
+
+  // Gradient pairs (for LinearGradient)
+  gradientPrimary: ["#3B82F6", "#6366F1"] as const,
+  gradientSuccess: ["#10B981", "#059669"] as const,
+  gradientDanger: ["#EF4444", "#DC2626"] as const,
+  gradientCard: ["rgba(17, 29, 50, 0.9)", "rgba(15, 23, 42, 0.95)"] as const,
+  gradientHeader: ["#0C1628", "#070E1A"] as const,
 };
 
+// ─── Spacing tokens ──────────────────────────────────────────────
+export const spacing = {
+  xs: 4,
+  sm: 8,
+  md: 16,
+  lg: 24,
+  xl: 32,
+  xxl: 48,
+};
+
+// ─── Border radius ───────────────────────────────────────────────
+export const radii = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  full: 999,
+};
+
+// ─── Shadows ─────────────────────────────────────────────────────
+export const shadows = {
+  card: Platform.select({
+    ios: {
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 12,
+    },
+    android: { elevation: 6 },
+  }),
+  button: Platform.select({
+    ios: {
+      shadowColor: colors.primary,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 8,
+    },
+    android: { elevation: 4 },
+  }),
+  glow: Platform.select({
+    ios: {
+      shadowColor: colors.primary,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.2,
+      shadowRadius: 20,
+    },
+    android: { elevation: 2 },
+  }),
+};
+
+// ─── Shared styles ───────────────────────────────────────────────
 export const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg, padding: 20 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, padding: 24 },
-  title: { fontSize: 24, fontWeight: "800", color: colors.text, marginBottom: 8 },
-  subtitle: { fontSize: 14, color: colors.muted, lineHeight: 21, marginBottom: 20 },
+  // Screens
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    padding: spacing.lg,
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.bg,
+    padding: spacing.lg,
+  },
+
+  // Typography
+  title: {
+    fontSize: 26,
+    fontWeight: "800",
+    color: colors.text,
+    marginBottom: spacing.sm,
+    letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: colors.muted,
+    lineHeight: 22,
+    marginBottom: spacing.lg,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+  },
+
+  // Cards
   card: {
     backgroundColor: colors.card,
-    borderRadius: 16,
+    borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 18,
-    marginBottom: 14,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadows.card,
   },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: colors.text, marginBottom: 6 },
-  cardText: { fontSize: 13, color: colors.muted, lineHeight: 20 },
+  cardElevated: {
+    backgroundColor: colors.card,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.primary + "30",
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadows.glow,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  cardText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+
+  // Buttons
   button: {
     backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 15,
+    borderRadius: radii.md,
+    paddingVertical: 16,
     alignItems: "center",
-    marginTop: 8,
+    marginTop: spacing.sm,
+    ...shadows.button,
   },
-  buttonText: { color: colors.primaryText, fontWeight: "700", fontSize: 16 },
-  buttonDisabled: { opacity: 0.5 },
+  buttonText: {
+    color: colors.primaryText,
+    fontWeight: "700",
+    fontSize: 16,
+    letterSpacing: 0.3,
+  },
+  buttonDisabled: {
+    opacity: 0.4,
+  },
   buttonOutline: {
     backgroundColor: "transparent",
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.cardBorder,
-    borderRadius: 12,
+    borderRadius: radii.md,
     paddingVertical: 14,
     alignItems: "center",
-    marginTop: 8,
+    marginTop: spacing.sm,
   },
-  buttonOutlineText: { color: colors.text, fontWeight: "600", fontSize: 15 },
+  buttonOutlineText: {
+    color: colors.textSecondary,
+    fontWeight: "600",
+    fontSize: 15,
+  },
+  buttonDanger: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: colors.danger + "40",
+    borderRadius: radii.md,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+
+  // Inputs
   input: {
-    backgroundColor: "#0C1626",
-    borderWidth: 1,
+    backgroundColor: colors.bgSecondary,
+    borderWidth: 1.5,
     borderColor: colors.cardBorder,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: radii.md,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     color: colors.text,
     fontSize: 16,
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
-  mono: { fontFamily: "monospace", color: colors.text, fontSize: 13 },
+
+  // Utility
+  mono: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
   badge: {
     alignSelf: "flex-start",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginTop: 6,
+    borderRadius: radii.full,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginTop: spacing.sm,
   },
-  badgeText: { fontSize: 12, fontWeight: "700" },
-  label: { fontSize: 12, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  label: {
+    fontSize: 11,
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: spacing.xs,
+    fontWeight: "600",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.cardBorder,
+    marginVertical: spacing.md,
+  },
+
+  // Row layout
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  rowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
 });

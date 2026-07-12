@@ -2,13 +2,33 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { router } from "expo-router";
 import { api, DivisionState } from "../src/services/api";
+import {
+  AnimatedResult,
+  FadeIn,
+  GlassCard,
+  GradientButton,
+  StepIndicator,
+} from "../src/components/ui";
 import { newBurnerAccount, submitVote } from "../src/services/chain";
 import { deriveFromSecrets } from "../src/services/crypto";
 import { authenticate, getSelectedDivision, getVoterSecrets, markVoted } from "../src/services/keystore";
 import { generateVoteCallData } from "../src/services/zkproof";
 import { colors, styles } from "../src/theme";
 
-type Stage = "otp-phone" | "otp-code" | "select" | "submitting" | "done";
+type Stage = "otp-phone" | "otp-code" | "select" | "confirm" | "submitting" | "done";
+
+const STEPS = ["Verify Phone", "Enter Code", "Select", "Cast Vote"];
+
+function stageToStep(stage: Stage): number {
+  switch (stage) {
+    case "otp-phone": return 0;
+    case "otp-code": return 1;
+    case "select":
+    case "confirm": return 2;
+    case "submitting":
+    case "done": return 3;
+  }
+}
 
 export default function Vote() {
   const [division, setDivision] = useState<DivisionState | null>(null);
@@ -40,7 +60,6 @@ export default function Vote() {
     setBusy(true);
     try {
       const res = await api.sendOtp(phone);
-      // Dev mode: auto-fill the code so no need to read the server console.
       if (res.devCode) {
         setCode(res.devCode);
         setDevHint(`Dev mode — code auto-filled: ${res.devCode}`);
@@ -80,10 +99,10 @@ export default function Vote() {
 
       const { commitment } = deriveFromSecrets(secrets.nullifier, secrets.secret);
 
-      setStep("Fetching your Merkle path…");
+      setStep("Checking your registration…");
       const path = await api.getMerklePath(division.votingContract, commitment);
 
-      setStep("Generating zero-knowledge proof…");
+      setStep("Generating secure anonymous proof…");
       const callData = await generateVoteCallData({
         nullifier: secrets.nullifier,
         secret: secrets.secret,
@@ -94,7 +113,6 @@ export default function Vote() {
         depth: path.depth,
       });
 
-      // Fresh burner wallet keeps the vote unlinkable. Fund it for gas (local demo).
       const burner = newBurnerAccount();
       setStep("Preparing anonymous wallet…");
       await api.fundBurner(burner.address).catch(() => {
@@ -115,103 +133,204 @@ export default function Vote() {
   if (stage === "done") {
     return (
       <View style={styles.center}>
-        <Text style={{ fontSize: 46 }}>🗳️</Text>
-        <Text style={styles.title}>Vote cast!</Text>
-        <Text style={styles.subtitle}>
-          Your ballot was submitted anonymously. No one — not even the election authority — can link it to you.
-        </Text>
-        <TouchableOpacity style={styles.button} onPress={() => router.replace("/")}>
-          <Text style={styles.buttonText}>Done</Text>
-        </TouchableOpacity>
+        <AnimatedResult
+          icon="🗳️"
+          title="Vote cast!"
+          subtitle="Your vote was submitted securely and anonymously. No one can see who you voted for."
+          color={colors.success}
+        />
+        <GradientButton
+          title="Done"
+          variant="success"
+          icon="✅"
+          onPress={() => router.replace("/")}
+          style={{ width: "100%", marginTop: 16 }}
+        />
       </View>
     );
   }
 
   return (
     <ScrollView style={styles.screen}>
-      <Text style={styles.title}>Cast your vote</Text>
+      <FadeIn>
+        <Text style={styles.title}>Cast your vote</Text>
+      </FadeIn>
+
+      {/* Step indicator */}
+      <FadeIn delay={50}>
+        <StepIndicator steps={STEPS} currentStep={stageToStep(stage)} />
+      </FadeIn>
 
       {/* OTP: phone */}
       {stage === "otp-phone" && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Step 1 — Verify your phone</Text>
-          <Text style={[styles.cardText, { marginBottom: 12 }]}>
-            We&apos;ll send a one-time code to confirm it&apos;s really you voting.
-          </Text>
-          <Text style={styles.label}>Phone number</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="07XXXXXXXX"
-            placeholderTextColor={colors.muted}
-            keyboardType="phone-pad"
-            value={phone}
-            onChangeText={setPhone}
-          />
-          <TouchableOpacity style={[styles.button, busy && styles.buttonDisabled]} disabled={busy} onPress={sendCode}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Send code</Text>}
-          </TouchableOpacity>
-        </View>
+        <FadeIn>
+          <GlassCard>
+            <Text style={styles.cardTitle}>📱 Step 1 — Verify your phone</Text>
+            <Text style={[styles.cardText, { marginBottom: 16 }]}>
+              We&apos;ll send a one-time code to confirm it&apos;s really you voting.
+            </Text>
+            <Text style={styles.label}>Phone number</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="07XXXXXXXX"
+              placeholderTextColor={colors.muted}
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+            />
+            <GradientButton
+              title="Send code"
+              icon="📨"
+              loading={busy}
+              disabled={busy || phone.length < 9}
+              onPress={sendCode}
+            />
+          </GlassCard>
+        </FadeIn>
       )}
 
       {/* OTP: code */}
       {stage === "otp-code" && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Step 2 — Enter the code</Text>
-          {devHint && <Text style={[styles.cardText, { color: colors.warning }]}>{devHint}</Text>}
-          <Text style={[styles.label, { marginTop: 8 }]}>6-digit code</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="000000"
-            placeholderTextColor={colors.muted}
-            keyboardType="number-pad"
-            maxLength={6}
-            value={code}
-            onChangeText={setCode}
-          />
-          <TouchableOpacity style={[styles.button, busy && styles.buttonDisabled]} disabled={busy} onPress={verifyCode}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Verify &amp; continue</Text>}
-          </TouchableOpacity>
-        </View>
+        <FadeIn>
+          <GlassCard>
+            <Text style={styles.cardTitle}>🔢 Step 2 — Enter the code</Text>
+            {devHint && (
+              <Text style={[styles.cardText, { color: colors.warning, marginBottom: 8 }]}>
+                {devHint}
+              </Text>
+            )}
+            <Text style={[styles.label, { marginTop: 8 }]}>6-digit code</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="000000"
+              placeholderTextColor={colors.muted}
+              keyboardType="number-pad"
+              maxLength={6}
+              value={code}
+              onChangeText={setCode}
+            />
+            <GradientButton
+              title="Verify & continue"
+              icon="✓"
+              loading={busy}
+              disabled={busy || code.length < 6}
+              onPress={verifyCode}
+            />
+          </GlassCard>
+        </FadeIn>
       )}
 
       {/* Select candidate */}
-      {stage === "select" && division && (
-        <>
-          <View style={styles.card}>
+      {(stage === "select" || stage === "confirm") && division && (
+        <FadeIn>
+          <GlassCard>
             <Text style={styles.cardTitle}>{division.name}</Text>
             <Text style={styles.cardText}>{division.question}</Text>
-          </View>
-          {division.candidates.map((name, idx) => (
-            <TouchableOpacity
-              key={name}
-              style={[
-                styles.card,
-                candidate === idx && { borderColor: colors.primary, backgroundColor: "#1E3A5F" },
-              ]}
-              onPress={() => setCandidate(idx)}
-            >
-              <Text style={[styles.cardTitle, { marginBottom: 0 }]}>
-                {candidate === idx ? "🔵 " : "⚪ "}
-                {name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity
-            style={[styles.button, candidate === null && styles.buttonDisabled]}
-            disabled={candidate === null}
-            onPress={castVote}
-          >
-            <Text style={styles.buttonText}>Cast anonymous vote</Text>
-          </TouchableOpacity>
-        </>
+          </GlassCard>
+
+          {division.candidates.map((name, idx) => {
+            const selected = candidate === idx;
+            return (
+              <TouchableOpacity
+                key={name}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setCandidate(idx);
+                  setStage("select");
+                }}
+                style={[
+                  styles.card,
+                  selected && {
+                    borderColor: colors.primary,
+                    backgroundColor: colors.primary + "15",
+                  },
+                ]}
+              >
+                <View style={styles.row}>
+                  <View
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 14,
+                      borderWidth: 2,
+                      borderColor: selected ? colors.primary : colors.cardBorder,
+                      backgroundColor: selected ? colors.primary : "transparent",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      marginRight: 14,
+                    }}
+                  >
+                    {selected && (
+                      <Text style={{ color: "#fff", fontSize: 14, fontWeight: "700" }}>✓</Text>
+                    )}
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: selected ? "700" : "500",
+                      color: selected ? colors.text : colors.textSecondary,
+                    }}
+                  >
+                    {name}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Confirm before casting */}
+          {candidate !== null && stage === "select" && (
+            <GradientButton
+              title={`Vote for ${division.candidates[candidate]}`}
+              variant="success"
+              icon="🗳️"
+              onPress={() => setStage("confirm")}
+            />
+          )}
+
+          {stage === "confirm" && candidate !== null && (
+            <FadeIn>
+              <GlassCard glow glowColor={colors.warning}>
+                <Text style={[styles.cardTitle, { textAlign: "center" }]}>⚠️ Confirm your vote</Text>
+                <Text style={[styles.cardText, { textAlign: "center", marginTop: 8 }]}>
+                  You&apos;re about to cast an anonymous vote for{" "}
+                  <Text style={{ fontWeight: "700", color: colors.text }}>
+                    {division.candidates[candidate]}
+                  </Text>
+                  . This action is irreversible.
+                </Text>
+                <GradientButton
+                  title="Cast anonymous vote"
+                  variant="success"
+                  icon="🗳️"
+                  onPress={castVote}
+                  style={{ marginTop: 16 }}
+                />
+                <TouchableOpacity
+                  style={[styles.buttonOutline, { marginTop: 8 }]}
+                  onPress={() => setStage("select")}
+                >
+                  <Text style={styles.buttonOutlineText}>← Change selection</Text>
+                </TouchableOpacity>
+              </GlassCard>
+            </FadeIn>
+          )}
+        </FadeIn>
       )}
 
       {/* Submitting */}
       {stage === "submitting" && (
-        <View style={[styles.card, { alignItems: "center", paddingVertical: 30 }]}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.cardText, { marginTop: 16, textAlign: "center" }]}>{step}</Text>
-        </View>
+        <FadeIn>
+          <GlassCard style={{ alignItems: "center", paddingVertical: 40 }}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.cardText, { marginTop: 20, textAlign: "center", fontSize: 14 }]}>
+              {step}
+            </Text>
+            <Text style={[styles.cardText, { marginTop: 8, fontSize: 11, opacity: 0.5 }]}>
+              Please don&apos;t close the app
+            </Text>
+          </GlassCard>
+        </FadeIn>
       )}
       <View style={{ height: 30 }} />
     </ScrollView>
