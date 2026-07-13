@@ -1,6 +1,7 @@
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 
 /**
  * Keystore service — the security heart of the voter app.
@@ -23,8 +24,10 @@ const KEY_REGISTERED = "slvote.registered"; // public flag, set ONLY after a con
 const KEY_DIVISION = "slvote.division"; // public: the voter's chosen division contract
 const KEY_VOTED = "slvote.voted"; // public: JSON array of division contracts this identity has voted in
 
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
 const AUTH_OPTIONS: SecureStore.SecureStoreOptions = {
-  requireAuthentication: true,
+  requireAuthentication: !isExpoGo,
   authenticationPrompt: "Unlock your voting identity",
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };

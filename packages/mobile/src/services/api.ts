@@ -57,6 +57,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export interface VerifyVoteResponse {
+  found: boolean;
+  candidate?: string | null;
+  candidateIndex?: number | null;
+  blockNumber?: number;
+  timestamp?: number;
+}
+
 export const api = {
   getElection: () => req<ElectionResponse>("/api/election"),
 
@@ -83,4 +91,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ address }),
     }),
+
+  /** Verify whether a vote (identified by nullifier hash) was counted on-chain. */
+  verifyVote: (division: string, nullifierHash: string) =>
+    req<VerifyVoteResponse>(`/api/verify-vote?division=${division}&nullifierHash=${nullifierHash}`),
 };
+

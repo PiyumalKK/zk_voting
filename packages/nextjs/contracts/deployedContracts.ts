@@ -16,6 +16,11 @@ const deployedContracts = {
               name: "_owner",
               type: "address",
             },
+            {
+              internalType: "address",
+              name: "_verifier",
+              type: "address",
+            },
           ],
           stateMutability: "nonpayable",
           type: "constructor",
@@ -71,6 +76,31 @@ const deployedContracts = {
             },
           ],
           name: "DivisionAdded",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "uint256",
+              name: "divisionId",
+              type: "uint256",
+            },
+            {
+              indexed: false,
+              internalType: "string",
+              name: "name",
+              type: "string",
+            },
+            {
+              indexed: false,
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+          ],
+          name: "DivisionCreated",
           type: "event",
         },
         {
@@ -141,6 +171,30 @@ const deployedContracts = {
               internalType: "uint256",
               name: "divisionId",
               type: "uint256",
+            },
+          ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "string",
+              name: "_name",
+              type: "string",
+            },
+          ],
+          name: "createDivision",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "divisionId",
+              type: "uint256",
+            },
+            {
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
             },
           ],
           stateMutability: "nonpayable",
@@ -274,6 +328,19 @@ const deployedContracts = {
               internalType: "uint256",
               name: "total",
               type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "i_verifier",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
             },
           ],
           stateMutability: "view",
@@ -1157,6 +1224,25 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "_nullifierHash",
+              type: "bytes32",
+            },
+          ],
+          name: "isNullifierUsed",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [],
           name: "owner",
           outputs: [
@@ -1846,6 +1932,25 @@ const deployedContracts = {
               internalType: "contract IVerifier",
               name: "",
               type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "_nullifierHash",
+              type: "bytes32",
+            },
+          ],
+          name: "isNullifierUsed",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
             },
           ],
           stateMutability: "view",
@@ -2543,6 +2648,25 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "_nullifierHash",
+              type: "bytes32",
+            },
+          ],
+          name: "isNullifierUsed",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [],
           name: "owner",
           outputs: [
@@ -3228,6 +3352,25 @@ const deployedContracts = {
               internalType: "contract IVerifier",
               name: "",
               type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "_nullifierHash",
+              type: "bytes32",
+            },
+          ],
+          name: "isNullifierUsed",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
             },
           ],
           stateMutability: "view",

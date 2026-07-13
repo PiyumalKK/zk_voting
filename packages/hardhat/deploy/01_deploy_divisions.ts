@@ -31,10 +31,14 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
   const question = "2027 Presidential Election — Who should be the next President of Sri Lanka?";
   const candidates = ["Anura Kumara Dissanayake (NPP)", "Sajith Premadasa (SJB)", "Ranil Wickremesinghe (UNP)"];
 
-  // Deploy ElectionRegistry
+  // Deploy ElectionRegistry — now linked against LeanIMT because it acts as a
+  // factory that deploys Voting contracts (which use the LeanIMT library).
   const registry = await deploy("ElectionRegistry", {
     from: deployer,
-    args: [deployer],
+    args: [deployer, verifier.address],
+    libraries: {
+      LeanIMT: leanIMT.address,
+    },
     log: true,
     autoMine: true,
   });

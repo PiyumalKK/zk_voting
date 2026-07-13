@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import type { NextPage } from "next";
 import { usePublicClient } from "wagmi";
 import {
-  ArrowDownTrayIcon,
   ArrowRightIcon,
   CheckBadgeIcon,
   DevicePhoneMobileIcon,
@@ -149,32 +149,67 @@ const Home: NextPage = () => {
   const hasActiveElection = !previewLoading && Boolean(national.question) && national.candidates.length > 0;
 
   return (
-    <main>
-      {/* ── Hero: platform identity, not tied to any single election ── */}
-      <section className="border-b border-base-300 bg-base-100 px-6 py-20 md:py-24">
-        <div className="mx-auto max-w-5xl">
-          <div className="flex flex-col items-start gap-10 md:flex-row md:items-center md:justify-between">
-            <div className="max-w-2xl">
-              <div className="mb-6 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary/80">
-                <span className="h-px w-8 bg-primary/50" />
-                Digital election infrastructure
-              </div>
-              <h1 className="font-serif text-4xl font-bold leading-[1.15] text-base-content md:text-5xl">
-                A voting record every citizen can verify — without ever revealing a single vote.
-              </h1>
-              <p className="mt-6 max-w-xl text-base leading-relaxed text-base-content/65 md:text-lg">
-                SL Vote is election infrastructure built on zero-knowledge proofs: eligibility is checked, ballots are
-                counted, and results are publicly auditable — while no one, including the system itself, can ever see
-                how an individual voted.
-              </p>
-              <div className="mt-9 flex flex-wrap items-center gap-3">
-                <a className="btn btn-primary gap-2" href="#download">
-                  <ArrowDownTrayIcon className="h-5 w-5" /> Download the app
-                </a>
-                <Link className="btn btn-outline gap-2" href="/results">
-                  View live results <ArrowRightIcon className="h-4 w-4" />
-                </Link>
-              </div>
+    <>
+      {/* Hero Section */}
+      <div className="relative min-h-[90vh] flex items-center justify-center overflow-hidden">
+        {/* Animated background */}
+        <div className="absolute inset-0 animated-gradient opacity-10"></div>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(99,102,241,0.1),transparent_50%)]"></div>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_80%,rgba(6,182,212,0.08),transparent_50%)]"></div>
+
+        <div className="relative z-10 flex flex-col items-center text-center px-6 max-w-5xl mx-auto">
+          {/* University & Faculty Logos */}
+          <div className="mb-8 mt-5 relative flex items-center gap-6">
+            <div className="absolute inset-0 bg-primary/20 rounded-full blur-3xl scale-150"></div>
+            <Image
+              src="/uni_logo.png"
+              width={100}
+              height={100}
+              alt="University of Ruhuna"
+              className="relative shadow-2xl"
+            />
+            <Image
+              src="/engineering_logo.png"
+              width={100}
+              height={100}
+              alt="Faculty of Engineering"
+              className="relative shadow-2xl"
+            />
+          </div>
+
+          {/* Project Title */}
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight mb-4">
+            <span className="gradient-text">Privacy-Preserving</span>
+            <br />
+            <span className="text-base-content">E-Voting System</span>
+          </h1>
+
+          <p className="text-lg md:text-xl text-base-content/70 max-w-2xl mb-3">
+            End-to-End Verifiable Blockchain-Based Electronic Voting with
+            <span className="font-semibold text-primary"> Anonymous Credential Management</span>
+          </p>
+
+          <p className="text-sm text-base-content/50 mb-8">
+            Department of Electrical and Information Engineering &bull; Faculty of Engineering &bull; University of
+            Ruhuna
+          </p>
+
+          {/* CTA Buttons */}
+          <div className="flex flex-wrap gap-4 justify-center mb-12">
+            <Link href="/voting" className="btn btn-primary btn-lg gap-2 shadow-lg shadow-primary/25">
+              📱 Download SL Vote App
+            </Link>
+            <Link href="/debug" className="btn btn-outline btn-lg gap-2">
+              Explore Contracts
+            </Link>
+          </div>
+
+          {/* Feature Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 w-full max-w-4xl">
+            <div className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
+              <LockClosedIcon className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-bold text-sm">Zero-Knowledge Proofs</h3>
+              <p className="text-xs opacity-60 mt-1">Prove eligibility without revealing identity</p>
             </div>
 
             <div className="flex shrink-0 flex-col items-center gap-3 self-stretch justify-center border-t border-base-300 pt-8 md:border-l md:border-t-0 md:pl-10 md:pt-0">
@@ -200,7 +235,7 @@ const Home: NextPage = () => {
             </div>
           </dl>
         </div>
-      </section>
+      </div>
 
       {/* ── Current election: dynamic, clearly separate from platform identity ── */}
       <section className="bg-base-200 px-6 py-16 md:py-20">
@@ -403,7 +438,7 @@ const Home: NextPage = () => {
           </nav>
         </div>
       </footer>
-    </main>
+    </>
   );
 };
 
