@@ -26,6 +26,26 @@ const VOTING_ABI = [
   },
 ] as const;
 
+const NIC_REGISTRY_ABI = [
+  {
+    name: "NicRegistry__AlreadyUsed",
+    type: "error",
+    inputs: [{ name: "nicHash", type: "bytes32" }],
+  },
+  {
+    name: "reserveNicHash",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "nicHash", type: "bytes32" },
+      { name: "votingContract", type: "address" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+const NIC_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS as `0x${string}` | undefined;
+
 type Step = 1 | 2 | 3 | 4;
 
 const GNRegisterVoter: NextPage = () => {
@@ -145,7 +165,7 @@ const GNRegisterVoter: NextPage = () => {
 
   // Submit: call addVoters on the CORRECT division contract via connected wallet
   const handleSubmit = async () => {
-    if (!voterAddress || !voterPhone || !myDivision) return;
+    if (!voterAddress || !voterPhone || !myDivision || !NIC_REGISTRY_ADDRESS || !address) return;
 
     setIsSubmitting(true);
     try {
@@ -154,6 +174,35 @@ const GNRegisterVoter: NextPage = () => {
         notification.error("Wallet not connected.");
         return;
       }
+
+      const canonicalNic = voterNIC.trim().toUpperCase();
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const signature = await walletClient.signMessage({
+        account: address,
+        message: `SL Vote NIC hash\n${timestamp}\n${canonicalNic}`,
+      });
+      const hashResponse = await fetch("/api/nic/hash", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-gn-address": address,
+          "x-gn-signature": signature,
+          "x-gn-timestamp": timestamp,
+        },
+        body: JSON.stringify({ nic: voterNIC }),
+      });
+      const hashResult = await hashResponse.json();
+      if (!hashResponse.ok) {
+        throw new Error(hashResult.error || "Unable to hash NIC");
+      }
+
+      const reservationHash = await walletClient.writeContract({
+        address: NIC_REGISTRY_ADDRESS,
+        abi: NIC_REGISTRY_ABI,
+        functionName: "reserveNicHash",
+        args: [hashResult.nicHash as `0x${string}`, myDivision.votingContract],
+      });
+      await publicClient.waitForTransactionReceipt({ hash: reservationHash });
 
       const hash = await walletClient.writeContract({
         address: myDivision.votingContract,
@@ -167,7 +216,9 @@ const GNRegisterVoter: NextPage = () => {
       setStep(4);
     } catch (error: any) {
       const msg = error?.shortMessage || error?.message || "Transaction failed";
-      if (msg.includes("Not owner or GN")) {
+      if (msg.includes("NicRegistry__AlreadyUsed")) {
+        notification.error("This NIC is already registered to another voter");
+      } else if (msg.includes("Not owner or GN")) {
         notification.error("You are not authorized as GN for this division.");
       } else if (msg.includes("WrongPhase") || msg.includes("Cannot add voters")) {
         notification.error("Voters can only be added during the Setup phase.");
@@ -203,6 +254,15 @@ const GNRegisterVoter: NextPage = () => {
         icon="🚫"
         title="Not Authorized"
         subtitle={`Your address (${address?.slice(0, 10)}...) is not assigned as GN for any division.`}
+      />
+    );
+  }
+  if (!NIC_REGISTRY_ADDRESS) {
+    return (
+      <CenterMessage
+        icon="⚠️"
+        title="NIC Registry Not Configured"
+        subtitle="Set NEXT_PUBLIC_NIC_REGISTRY_ADDRESS to enable GN registration."
       />
     );
   }
