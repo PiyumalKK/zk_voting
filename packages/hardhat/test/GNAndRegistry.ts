@@ -33,9 +33,11 @@ describe("GN Officer & ElectionRegistry", function () {
       "Candidate C",
     ])) as Voting;
 
-    // Deploy ElectionRegistry
-    const RegistryFactory = await ethers.getContractFactory("ElectionRegistry");
-    registry = (await RegistryFactory.deploy(owner.address)) as ElectionRegistry;
+    // Deploy ElectionRegistry (needs LeanIMT linked because it deploys Voting internally via createDivision)
+    const RegistryFactory = await ethers.getContractFactory("ElectionRegistry", {
+      libraries: { LeanIMT: await leanIMT.getAddress() },
+    });
+    registry = (await RegistryFactory.deploy(owner.address, await verifier.getAddress())) as ElectionRegistry;
   });
 
   describe("GN Officer Management", function () {
@@ -58,14 +60,15 @@ describe("GN Officer & ElectionRegistry", function () {
         .withArgs(voter1.address);
     });
 
-    it("GN can add voters during Registration phase", async function () {
+    it("GN cannot add voters during Registration phase (Setup only)", async function () {
       await voting.setGNOfficer(gn.address);
       // Move to Registration
       await voting.startRegistration(3600);
-      // GN adds voter during registration (late enrollment)
-      await expect(voting.connect(gn).addVoters([voter2.address], [true]))
-        .to.emit(voting, "VoterAdded")
-        .withArgs(voter2.address);
+      // addVoters is now restricted to Setup phase only — expect WrongPhase revert
+      await expect(voting.connect(gn).addVoters([voter2.address], [true])).to.be.revertedWithCustomError(
+        voting,
+        "Voting__WrongPhase",
+      );
     });
 
     it("non-GN cannot add voters", async function () {
@@ -78,7 +81,10 @@ describe("GN Officer & ElectionRegistry", function () {
       await voting.addVoters([voter1.address], [true]);
       await voting.startRegistration(3600);
       await voting.startVoting(3600);
-      await expect(voting.connect(gn).addVoters([voter2.address], [true])).to.be.revertedWith("Cannot add voters now");
+      await expect(voting.connect(gn).addVoters([voter2.address], [true])).to.be.revertedWithCustomError(
+        voting,
+        "Voting__WrongPhase",
+      );
     });
 
     it("owner can still add voters (backwards compatible)", async function () {
