@@ -7,8 +7,8 @@
  */
 
 // Set this to your dev machine's LAN IP when running on a real device.
-const DEV_HOST = "http://localhost:3000";
-const DEV_RPC = "http://localhost:8545";
+const DEV_HOST = "http://172.20.10.2:3000";
+const DEV_RPC = "http://172.20.10.2:8545";
 
 export const CONFIG = {
   /** Base URL of the Next.js web app (serves /api/election, /api/merkle-path, /api/otp/*). */

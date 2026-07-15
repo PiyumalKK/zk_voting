@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"errors"
 	"os"
 	"strconv"
 	"time"
@@ -50,7 +52,7 @@ func main() {
 	defer store.Close()
 
 	bc, err := store.LoadBlockchain()
-	if err != nil {
+	if errors.Is(err, persistence.ErrNoBlockchain) {
 		log.Info().Msg("No existing blockchain found — creating new genesis block")
 		// Default candidates mirror packages/hardhat/deploy/00_deploy_your_contract.ts,
 		// which seeds ["Yes", "No"] at deploy time to preserve the original demo's feel.
@@ -59,6 +61,14 @@ func main() {
 		if err := store.SaveBlockchain(bc); err != nil {
 			log.Fatal().Err(err).Msg("Failed to save genesis block")
 		}
+	} else if err != nil {
+		// A load error that is NOT "empty database" means the persisted chain is
+		// corrupt or failed validation. Refuse to start rather than silently
+		// discarding it and reinitializing a fresh election (data loss).
+		log.Fatal().Err(err).Msg(
+			"Failed to load existing blockchain — the on-disk data is corrupt or invalid. " +
+				"Refusing to start so it is not silently overwritten. " +
+				"Inspect or remove " + dataDir + "/blockchain.db to start from a fresh genesis.")
 	}
 	log.Info().Int("blocks", bc.Len()).Msg("Blockchain loaded")
 
@@ -71,22 +81,34 @@ func main() {
 	contractCaller := evm.NewContractCaller(evmInstance)
 	log.Info().Msg("EVM initialized (Istanbul fork, BN254 precompiles enabled)")
 
-	// ── TLS ──────────────────────────────────────────────────────────────────
-	// Load TLS config here so it can be passed to both the network client
-	// and the HTTP server. This ordering matters: InitNetworkClient must
-	// be called before SyncWithPeers so the mTLS client exists for sync.
+	// ── TLS (P2P only) ───────────────────────────────────────────────────────
+	// The mTLS config guards ONLY node-to-node traffic (its ClientAuth:
+	// RequireAndVerifyClientCert would lock browsers out — they cannot present
+	// client certificates, which is why the public API listens separately).
+	//
+	// Certificates are therefore optional for a standalone dev node: with no
+	// PEERS configured, the node simply runs without a P2P listener. With PEERS
+	// configured, missing certificates are still a fatal misconfiguration.
 	certFile := dataDir + "/certs/server.crt"
 	keyFile := dataDir + "/certs/server.key"
 	caFile := dataDir + "/certs/server.crt" // self-signed dev: cert acts as its own CA
 
-	tlsConfig, err := security.LoadTLSConfig(certFile, keyFile, caFile)
-	if err != nil {
-		log.Fatal().Err(err).Msgf(
-			"Failed to load TLS certificates from %s/certs/. "+
-				"Generate them with: openssl req -x509 -newkey rsa:4096 -nodes "+
-				"-keyout %s/certs/server.key -out %s/certs/server.crt -days 365",
-			dataDir, dataDir, dataDir,
+	tlsConfig, tlsErr := security.LoadTLSConfig(certFile, keyFile, caFile)
+	if tlsErr != nil {
+		if os.Getenv("PEERS") != "" {
+			log.Fatal().Err(tlsErr).Msgf(
+				"PEERS is configured but TLS certificates could not be loaded from %s/certs/. "+
+					"P2P requires mTLS. Generate them with: openssl req -x509 -newkey rsa:4096 -nodes "+
+					"-keyout %s/certs/server.key -out %s/certs/server.crt -days 365",
+				dataDir, dataDir, dataDir,
+			)
+		}
+		log.Warn().Msgf(
+			"No TLS certificates at %s/certs/ — P2P networking disabled (fine for a standalone node). "+
+				"Generate certificates and set PEERS to join a cluster.",
+			dataDir,
 		)
+		tlsConfig = nil
 	}
 
 	// ── Admin Auth ───────────────────────────────────────────────────────────
@@ -106,48 +128,45 @@ func main() {
 	// ── Network ──────────────────────────────────────────────────────────────
 	// InitNetworkClient must come before SyncWithPeers so the mTLS HTTP client
 	// is ready when we attempt to fetch chains from peers.
-	network.InitNetworkClient(tlsConfig)
-	network.SyncWithPeers(bc, store)
+	if tlsConfig != nil {
+		network.InitNetworkClient(tlsConfig)
+		network.SyncWithPeers(bc, store)
+	}
 
 	// ── Contract Bridge (Stage 3) ─────────────────────────────────────────────
 	// Deploy Voting.sol and HonkVerifier.sol into the embedded EVM, then replay
 	// all blockchain blocks to reconstruct the EVM state deterministically.
 	//
-	// Non-fatal by default: if contract artifacts are missing the node continues
-	// without EVM verification (Stage 1/2 mode) — /vote and /register then accept
-	// requests with NO cryptographic checks at all. That is convenient for local
-	// development but dangerous to leave on by accident in a real deployment, so
-	// set REQUIRE_EVM=true to turn a missing/broken bridge into a startup failure
-	// instead of a silent fallback.
+	// A missing/broken bridge is a FATAL startup error by default: without the
+	// EVM, /vote and /register accept requests with NO cryptographic checks at
+	// all. Set ALLOW_STORAGE_ONLY=true to explicitly opt into that unverified
+	// mode (early-stage development only).
 	//
-	// Compile artifacts with:
-	//   cd packages/hardhat && npx hardhat compile
-	//   cp artifacts/contracts/Voting.sol/Voting.json        packages/blockchain/assets/
-	//   cp artifacts/contracts/Verifier.sol/HonkVerifier.json packages/blockchain/assets/
-	requireEVM := os.Getenv("REQUIRE_EVM") == "true"
+	// Compile artifacts with `make sync-artifacts` (runs hardhat compile and
+	// copies Voting.json, HonkVerifier.json, PoseidonT3.json, LeanIMT.json here).
+	allowStorageOnly := os.Getenv("ALLOW_STORAGE_ONLY") == "true"
 
 	var bridge *evm.ContractBridge
 	question := genesisQuestion(bc)
 	candidates := genesisCandidates(bc)
 	contractBridge, err := evm.NewContractBridge(contractCaller, assetsDir, question, candidates)
 	if err != nil {
-		if requireEVM {
+		if !allowStorageOnly {
 			log.Fatal().Err(err).Msg(
-				"Contract bridge unavailable and REQUIRE_EVM=true — refusing to start in " +
-					"unverified storage-only mode. Compile Solidity artifacts and copy them to " +
-					assetsDir + "/, or unset REQUIRE_EVM to allow storage-only mode explicitly.",
+				"Contract bridge unavailable — refusing to start in unverified storage-only mode. " +
+					"Run `make sync-artifacts` to compile and copy Solidity artifacts to " + assetsDir + "/, " +
+					"or set ALLOW_STORAGE_ONLY=true to explicitly allow running without ZK verification.",
 			)
 		}
 		log.Warn().Err(err).Msg(
-			"Contract bridge unavailable — running in storage-only mode (Stage 1/2), " +
-				"/vote and /register will accept requests with NO ZK verification. " +
-				"Compile Solidity artifacts and copy them to " + assetsDir + "/ to enable ZK verification, " +
-				"or set REQUIRE_EVM=true to make this a startup failure instead.",
+			"ALLOW_STORAGE_ONLY=true — running in storage-only mode (Stage 1/2), " +
+				"/vote and /register will accept requests with NO ZK verification.",
 		)
 	} else {
 		bridge = contractBridge
 		log.Info().
 			Str("voting_contract", bridge.VotingAddress().Hex()).
+			Str("voting_code_hash", bridge.VotingCodeHash().Hex()).
 			Msg("Contracts deployed — replaying blockchain to reconstruct EVM state")
 		evm.ReplayBlockchain(bc, bridge)
 	}
@@ -167,22 +186,49 @@ func main() {
 		}
 	}
 	network.StartPeriodicSync(bc, store, syncInterval, func() {
-		// A peer's chain was just adopted — replay it into the EVM bridge so the
-		// EVM state (votes, registrations, phase) reflects what ReplaceBlocks just
-		// wrote into bc. ReplayBlockchain re-runs every block from the start, but
-		// that's safe here: transactions already reflected in EVM state simply
-		// fail again (already-registered, wrong-phase, etc.) and are skipped with
-		// a warning, same as any other replay-time rejection — only the blocks
-		// this node was missing actually apply.
+		// A peer's chain was just adopted — rebuild the EVM from scratch to match it.
+		// Replaying onto the existing EVM is only sound for a strict extension; if the
+		// adopted chain diverged from ours, stale registrations/nullifiers from the
+		// abandoned local blocks would linger and wrongly reject later operations.
+		// ResyncFromChain deploys a fresh EVM and replays the whole adopted chain into
+		// it, then swaps it in atomically.
 		if bridge != nil {
-			log.Info().Msg("Periodic sync adopted a longer peer chain — replaying into EVM state")
-			evm.ReplayBlockchain(bc, bridge)
+			log.Info().Msg("Periodic sync adopted a longer peer chain — rebuilding EVM state")
+			if err := bridge.ResyncFromChain(bc); err != nil {
+				log.Error().Err(err).Msg("Failed to rebuild EVM state after peer sync")
+			}
 		}
-	})
+	}, api.WriteLock, api.WriteUnlock)
 
-	// ── API Server ───────────────────────────────────────────────────────────
+	// ── API Servers ──────────────────────────────────────────────────────────
+	// Two listeners with different trust models:
+	//   - P2P (mTLS, client certs REQUIRED): /internal/* only. Started first,
+	//     in a goroutine, and only when certificates exist.
+	//   - Public API: browser-facing. Plain HTTP by default; set API_TLS=true
+	//     to serve HTTPS using the same cert WITHOUT requiring client certs.
 	api.InitServer(bc, store, bridge)
-	api.StartServer(port, tlsConfig)
+
+	if tlsConfig != nil {
+		p2pPort := os.Getenv("P2P_PORT")
+		if p2pPort == "" {
+			if n, err := strconv.Atoi(nodeID); err == nil {
+				p2pPort = strconv.Itoa(n + 1000)
+			} else {
+				p2pPort = "4001"
+			}
+		}
+		api.StartP2PServer(":"+p2pPort, tlsConfig)
+	}
+
+	var publicTLS *tls.Config
+	if os.Getenv("API_TLS") == "true" {
+		if tlsConfig == nil {
+			log.Fatal().Msg("API_TLS=true requires TLS certificates in " + dataDir + "/certs/")
+		}
+		// Same certificate, but NO ClientAuth — browsers can connect.
+		publicTLS = &tls.Config{Certificates: tlsConfig.Certificates}
+	}
+	api.StartPublicServer(port, publicTLS)
 }
 
 // genesisQuestion reads the voting question from the genesis block's transaction payload.

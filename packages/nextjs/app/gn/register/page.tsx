@@ -26,6 +26,26 @@ const VOTING_ABI = [
   },
 ] as const;
 
+const NIC_REGISTRY_ABI = [
+  {
+    name: "NicRegistry__AlreadyUsed",
+    type: "error",
+    inputs: [{ name: "nicHash", type: "bytes32" }],
+  },
+  {
+    name: "reserveNicHash",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "nicHash", type: "bytes32" },
+      { name: "votingContract", type: "address" },
+    ],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+const NIC_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS as `0x${string}` | undefined;
+
 type Step = 1 | 2 | 3 | 4;
 
 const GNRegisterVoter: NextPage = () => {
@@ -61,7 +81,18 @@ const GNRegisterVoter: NextPage = () => {
   const startQRScan = async () => {
     try {
       setScanning(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        notification.error("Camera requires HTTPS or localhost.");
+        setScanning(false);
+        return;
+      }
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
@@ -80,9 +111,19 @@ const GNRegisterVoter: NextPage = () => {
             } catch {}
           }
         }, 300);
+      } else {
+        notification.error("Barcode scanning not supported by this browser.");
       }
-    } catch {
-      notification.error("Camera access denied.");
+    } catch (err: any) {
+      if (err.name === "NotAllowedError") {
+        notification.error("Camera access denied by user or browser.");
+      } else if (err.name === "NotFoundError") {
+        notification.error("No camera found on this device.");
+      } else if (err.name === "NotReadableError" || err.message === "Could not start video source") {
+        notification.error("Camera is already in use by another app or tab.");
+      } else {
+        notification.error(err.message || "Camera access failed.");
+      }
       setScanning(false);
     }
   };
@@ -124,7 +165,7 @@ const GNRegisterVoter: NextPage = () => {
 
   // Submit: call addVoters on the CORRECT division contract via connected wallet
   const handleSubmit = async () => {
-    if (!voterAddress || !voterPhone || !myDivision) return;
+    if (!voterAddress || !voterPhone || !myDivision || !NIC_REGISTRY_ADDRESS || !address) return;
 
     setIsSubmitting(true);
     try {
@@ -133,6 +174,35 @@ const GNRegisterVoter: NextPage = () => {
         notification.error("Wallet not connected.");
         return;
       }
+
+      const canonicalNic = voterNIC.trim().toUpperCase();
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const signature = await walletClient.signMessage({
+        account: address,
+        message: `SL Vote NIC hash\n${timestamp}\n${canonicalNic}`,
+      });
+      const hashResponse = await fetch("/api/nic/hash", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-gn-address": address,
+          "x-gn-signature": signature,
+          "x-gn-timestamp": timestamp,
+        },
+        body: JSON.stringify({ nic: voterNIC }),
+      });
+      const hashResult = await hashResponse.json();
+      if (!hashResponse.ok) {
+        throw new Error(hashResult.error || "Unable to hash NIC");
+      }
+
+      const reservationHash = await walletClient.writeContract({
+        address: NIC_REGISTRY_ADDRESS,
+        abi: NIC_REGISTRY_ABI,
+        functionName: "reserveNicHash",
+        args: [hashResult.nicHash as `0x${string}`, myDivision.votingContract],
+      });
+      await publicClient.waitForTransactionReceipt({ hash: reservationHash });
 
       const hash = await walletClient.writeContract({
         address: myDivision.votingContract,
@@ -146,10 +216,12 @@ const GNRegisterVoter: NextPage = () => {
       setStep(4);
     } catch (error: any) {
       const msg = error?.shortMessage || error?.message || "Transaction failed";
-      if (msg.includes("Not owner or GN")) {
+      if (msg.includes("NicRegistry__AlreadyUsed")) {
+        notification.error("This NIC is already registered to another voter");
+      } else if (msg.includes("Not owner or GN")) {
         notification.error("You are not authorized as GN for this division.");
-      } else if (msg.includes("Cannot add voters now")) {
-        notification.error("Cannot add voters in current phase (Voting or Ended).");
+      } else if (msg.includes("WrongPhase") || msg.includes("Cannot add voters")) {
+        notification.error("Voters can only be added during the Setup phase.");
       } else {
         notification.error(msg);
       }
@@ -182,6 +254,15 @@ const GNRegisterVoter: NextPage = () => {
         icon="🚫"
         title="Not Authorized"
         subtitle={`Your address (${address?.slice(0, 10)}...) is not assigned as GN for any division.`}
+      />
+    );
+  }
+  if (!NIC_REGISTRY_ADDRESS) {
+    return (
+      <CenterMessage
+        icon="⚠️"
+        title="NIC Registry Not Configured"
+        subtitle="Set NEXT_PUBLIC_NIC_REGISTRY_ADDRESS to enable GN registration."
       />
     );
   }
@@ -228,7 +309,7 @@ const GNRegisterVoter: NextPage = () => {
         {/* Step 2: Scan QR */}
         {step === 2 && (
           <Card>
-            <h3 className="font-bold mb-4">📷 Scan Voter's Address QR</h3>
+            <h3 className="font-bold mb-4">📷 Scan Voter&apos;s Address QR</h3>
             <p className="text-sm opacity-60 mb-4">Ask voter to show the QR code from their app.</p>
 
             {scanning ? (

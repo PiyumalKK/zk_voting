@@ -1,18 +1,13 @@
 "use client";
 
-import { useScaffoldReadContract } from "~~/hooks/scaffold-eth";
+import { useCandidates } from "~~/services/chain/hooks";
 import { useChallengeState } from "~~/services/store/challengeStore";
 
 export const VoteSelector = () => {
   const voteChoice = useChallengeState(state => state.voteChoice);
   const setVoteChoice = useChallengeState(state => state.setVoteChoice);
 
-  const { data: candidates } = useScaffoldReadContract({
-    contractName: "Voting",
-    functionName: "getCandidates",
-  });
-
-  const list = (candidates as readonly string[] | undefined) ?? [];
+  const { data: list } = useCandidates();
 
   // Color palette cycled across candidates for visual differentiation.
   const palettes = [

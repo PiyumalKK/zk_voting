@@ -595,6 +595,8 @@ const AdminPage = () => {
         </div>
       </Section>
 
+      <AddDivisionSection />
+
       <GNManagementSection />
     </Wrapper>
   );
@@ -885,6 +887,101 @@ const GNManagementSection = () => {
             <div>GN Gampaha (#3): 0x90F79bf6EB2c4f870365E785982E1f101E93b906</div>
           </div>
         </details>
+      </div>
+    </Section>
+  );
+};
+
+const AddDivisionSection = () => {
+  const [divisionName, setDivisionName] = useState("");
+  const [isDeploying, setIsDeploying] = useState(false);
+  const { refetch } = useDivisions();
+  const { targetNetwork } = useTargetNetwork();
+
+  const REGISTRY_ABI = useMemo(
+    () => (deployedContracts as Record<number, any>)[targetNetwork.id]?.ElectionRegistry?.abi ?? [],
+    [targetNetwork.id],
+  );
+  const REGISTRY_ADDRESS = useMemo(
+    () =>
+      (deployedContracts as Record<number, any>)[targetNetwork.id]?.ElectionRegistry?.address as
+        | `0x${string}`
+        | undefined,
+    [targetNetwork.id],
+  );
+
+  const publicClient = useMemo(
+    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
+    [targetNetwork],
+  );
+
+  const handleCreateDivision = async () => {
+    const name = divisionName.trim();
+    if (!name) {
+      notification.error("Enter a division name.");
+      return;
+    }
+    if (!REGISTRY_ADDRESS) {
+      notification.error("ElectionRegistry contract not found.");
+      return;
+    }
+    setIsDeploying(true);
+    try {
+      const walletClient = await getWalletClient(wagmiConfig);
+      if (!walletClient) {
+        notification.error("No wallet connected.");
+        return;
+      }
+      const hash = await walletClient.writeContract({
+        address: REGISTRY_ADDRESS,
+        abi: REGISTRY_ABI,
+        functionName: "createDivision",
+        args: [name],
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      notification.success(`✅ Division "${name}" deployed & registered!`);
+      setDivisionName("");
+      refetch();
+    } catch (e: any) {
+      const msg = e?.shortMessage || e?.message || "Failed to create division";
+      notification.error(msg);
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
+  return (
+    <Section
+      title="7. Add New Division"
+      hint="Deploy a new Voting contract and register it as a polling division. You can assign a GN officer afterwards using section 6."
+    >
+      <div className="space-y-4">
+        <div className="form-control">
+          <label className="label">
+            <span className="label-text text-sm font-bold">Division Name</span>
+          </label>
+          <input
+            type="text"
+            className="input input-bordered w-full"
+            placeholder="e.g. Kandy, Matara, Jaffna..."
+            value={divisionName}
+            onChange={e => setDivisionName(e.target.value)}
+            disabled={isDeploying}
+          />
+        </div>
+        <p className="text-xs opacity-50">
+          This deploys a fresh Voting contract on-chain via the ElectionRegistry factory. The new division starts in the
+          Setup phase with no question, candidates, or voters. Configure it using the division picker above.
+        </p>
+        <div className="flex justify-end">
+          <button
+            className={`btn btn-primary btn-sm ${isDeploying ? "loading" : ""}`}
+            disabled={isDeploying || !divisionName.trim()}
+            onClick={handleCreateDivision}
+          >
+            {isDeploying ? "Deploying..." : "➕ Deploy & Register Division"}
+          </button>
+        </div>
       </div>
     </Section>
   );

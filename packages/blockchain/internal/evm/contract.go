@@ -3,6 +3,7 @@ package evm
 import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
 )
 
@@ -32,6 +33,41 @@ func (cc *ContractCaller) Call(from, to common.Address, data []byte) ([]byte, ui
 func (cc *ContractCaller) Deploy(from common.Address, initCode []byte) (common.Address, []byte, error) {
 	ret, contractAddr, _, err := cc.evm.Create(vm.AccountRef(from), initCode, gasLimit, uint256.NewInt(0))
 	return contractAddr, ret, err
+}
+
+// SetTime sets the EVM's block timestamp (unix SECONDS) for subsequent calls.
+// Voting.sol reads block.timestamp to enforce registration/voting deadlines, so
+// callers must stamp the correct time before every call:
+//   - interactive writes: the wall-clock instant that also becomes the block's
+//     persisted timestamp (making replay deterministic)
+//   - replay: the stored block's timestamp
+//   - reads: the current wall clock (so expired phases report as Ended)
+//
+// Not safe for concurrent use — ContractBridge serializes all EVM access under
+// its mutex, which is the only place this is called from.
+func (cc *ContractCaller) SetTime(unixSec uint64) {
+	cc.evm.Context.Time = unixSec
+}
+
+// Snapshot records the current EVM state and returns a revision id that can be
+// passed to RevertToSnapshot to roll every subsequent mutation back. Used to make
+// a write atomic: if a step after a successful state-changing Call fails, the call's
+// effects can be undone so the EVM never ends up ahead of the committed chain.
+// Not concurrency-safe — only called under the ContractBridge mutex.
+func (cc *ContractCaller) Snapshot() int {
+	return cc.evm.StateDB.Snapshot()
+}
+
+// RevertToSnapshot rolls EVM state back to the given revision (see Snapshot).
+func (cc *ContractCaller) RevertToSnapshot(id int) {
+	cc.evm.StateDB.RevertToSnapshot(id)
+}
+
+// CodeHash returns the keccak256 hash of the runtime bytecode deployed at addr.
+// Logged at startup so a stale compiled artifact (assets/ out of sync with
+// packages/hardhat) is visible immediately.
+func (cc *ContractCaller) CodeHash(addr common.Address) common.Hash {
+	return crypto.Keccak256Hash(cc.evm.StateDB.GetCode(addr))
 }
 
 // InstallRuntimeCode keeps the low-level escape hatch for cases where init-code is not available.

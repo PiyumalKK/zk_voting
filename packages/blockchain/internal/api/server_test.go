@@ -48,7 +48,7 @@ func newTestServer(t *testing.T) http.Handler {
 	InitServer(bc, &persistence.FileStore{}, bridge)
 	t.Cleanup(func() { InitServer(nil, nil, nil) })
 
-	return newMux()
+	return newPublicMux()
 }
 
 func TestHandleGetVotingData(t *testing.T) {
@@ -62,15 +62,24 @@ func TestHandleGetVotingData(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var got evm.VotingData
+	// Decode as a generic map: the wire format is what browser clients see,
+	// so assert on the JSON keys/types directly (root and election_id are
+	// strings by design — see VotingData.MarshalJSON).
+	var got map[string]interface{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v (body: %s)", err, rec.Body.String())
 	}
-	if got.Question != "Stage 4 API test question" {
-		t.Errorf("unexpected question: %q", got.Question)
+	if got["question"] != "Stage 4 API test question" {
+		t.Errorf("unexpected question: %v", got["question"])
 	}
-	if got.TreeSize == nil || got.TreeSize.Sign() != 0 {
-		t.Errorf("expected empty tree, got %v", got.TreeSize)
+	if size, ok := got["tree_size"].(float64); !ok || size != 0 {
+		t.Errorf("expected numeric tree_size 0, got %v", got["tree_size"])
+	}
+	if root, ok := got["root"].(string); !ok || len(root) < 2 || root[:2] != "0x" {
+		t.Errorf("expected root as 0x-hex string, got %v", got["root"])
+	}
+	if _, ok := got["election_id"].(string); !ok {
+		t.Errorf("expected election_id as string, got %v", got["election_id"])
 	}
 }
 
@@ -122,7 +131,7 @@ func TestHandleGetCommitments_OrderAndResetScoping(t *testing.T) {
 	bc := core.NewBlockchain("Commitments test", []string{"Yes", "No"})
 	InitServer(bc, &persistence.FileStore{}, nil)
 	t.Cleanup(func() { InitServer(nil, nil, nil) })
-	mux := newMux()
+	mux := newPublicMux()
 
 	addRegisterTx := func(voterID, commitment string) {
 		tx, err := core.NewTransaction(core.TxRegister, core.RegisterPayload{
@@ -190,9 +199,34 @@ func TestHandleGetVotingData_NoBridge(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/voting-data", nil)
 	rec := httptest.NewRecorder()
-	newMux().ServeHTTP(rec, req)
+	newPublicMux().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503 when bridge is nil, got %d", rec.Code)
+	}
+}
+
+// TestHandleGetBlocks_PaginationOverflowDoesNotPanic guards the /blocks pagination
+// against int overflow: (page-1)*limit with near-int64-max inputs wraps negative,
+// and without the start<0 / end<start clamp the slice expression would panic on a
+// negative index (a crafted-input crash).
+func TestHandleGetBlocks_PaginationOverflowDoesNotPanic(t *testing.T) {
+	mux := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/blocks?page=9223372036854775807&limit=2", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req) // would panic here before the overflow guard
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Blocks []json.RawMessage `json:"blocks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
+	}
+	if len(got.Blocks) != 0 {
+		t.Errorf("expected an empty page beyond the end of the chain, got %d blocks", len(got.Blocks))
 	}
 }

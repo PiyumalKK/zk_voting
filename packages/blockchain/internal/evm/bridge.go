@@ -4,16 +4,20 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	gethvm "github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"zk-blockchain/internal/core"
 )
 
 // AdminAddress is the fixed authority address used as the Voting contract deployer/owner.
@@ -42,6 +46,14 @@ type ContractBridge struct {
 	votingAddr common.Address
 	votingABI  abi.ABI
 
+	// Deployment inputs, retained so the EVM can be rebuilt from scratch after a
+	// peer chain is adopted (see ResyncFromChain). These are the genesis question
+	// and candidates — replay then re-applies every SetQuestion/SetCandidates on
+	// top, exactly as at startup.
+	assetsDir  string
+	question   string
+	candidates []string
+
 	// mu serializes every call into the EVM. go-ethereum's state.StateDB (the
 	// trie/journal backing cc.evm) is built for single-threaded, one-call-at-a-time
 	// execution — it is not safe for concurrent Call/Create. Without this lock,
@@ -51,15 +63,17 @@ type ContractBridge struct {
 	// suffixed "Locked" assume the caller already holds it.
 	mu sync.Mutex
 
-	// votingDataCache and voterDataCache memoize the last-read result of
-	// getVotingData()/getVoterData() so that repeated reads (e.g. polling
-	// GET /voting-data) don't re-run an EVM call every time. Both are guarded
-	// by mu, so no separate cache lock is needed. Entries are invalidated
-	// (never eagerly recomputed for voterDataCache, eagerly recomputed for
-	// votingDataCache) by the write method that changed the underlying state —
-	// see AddVoter/Register/Vote below for the exact invalidation rules.
-	votingDataCache *VotingData
-	voterDataCache  map[string]*VoterData // keyed by voterID (not address)
+	// voterDataCache memoizes the last-read result of getVoterData() so that
+	// repeated reads don't re-run an EVM call every time. Guarded by mu.
+	// Entries are invalidated by the write method that changed the underlying
+	// state — see AddVoter/Register/ResetElection for the exact rules.
+	//
+	// VotingData is deliberately NOT cached: since the EVM clock now advances
+	// (see ContractCaller.SetTime), the contract's phase can flip to Ended
+	// purely by time passing — a cached phase would go stale with no write to
+	// invalidate it. The call is a local in-memory EVM read; caching it bought
+	// microseconds and cost correctness.
+	voterDataCache map[string]*VoterData // keyed by voterID (not address)
 }
 
 // Phase mirrors Voting.sol's Phase enum (uint8 on the wire).
@@ -95,18 +109,43 @@ func (p Phase) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("%d", uint8(p))), nil
 }
 
-// VotingData mirrors the return value of Voting.getVotingData().
+// VotingData mirrors the return value of Voting.getVotingData(), plus the
+// contract's current election ID (a separate getCurrentElectionId() call made
+// in the same locked read).
 type VotingData struct {
-	Question            string         `json:"question"`
-	Owner               common.Address `json:"owner"`
-	Phase               Phase          `json:"phase"`
-	PhaseLabel          string         `json:"phase_label"`
-	RegistrationEndTime *big.Int       `json:"registration_end_time"`
-	VotingEndTime       *big.Int       `json:"voting_end_time"`
-	TreeSize            *big.Int       `json:"tree_size"`
-	Depth               *big.Int       `json:"depth"`
-	Root                *big.Int       `json:"root"`
-	CandidateCount      *big.Int       `json:"candidate_count"`
+	Question            string
+	Owner               common.Address
+	Phase               Phase
+	PhaseLabel          string
+	RegistrationEndTime *big.Int
+	VotingEndTime       *big.Int
+	TreeSize            *big.Int
+	Depth               *big.Int
+	Root                *big.Int
+	CandidateCount      *big.Int
+	ElectionID          *big.Int
+}
+
+// MarshalJSON controls the wire representation for browser clients.
+// Root is a BN254 field element (~254 bits): emitting it as a bare JSON number
+// silently loses precision in JavaScript's JSON.parse (53-bit mantissa), so it
+// is emitted as a 0x-hex string. ElectionID is emitted as a decimal string for
+// the same reason (it is unbounded on-chain). Timestamps, sizes, and counts are
+// safely below 2^53 and stay plain numbers.
+func (v *VotingData) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"question":              v.Question,
+		"owner":                 v.Owner,
+		"phase":                 v.Phase,
+		"phase_label":           v.PhaseLabel,
+		"registration_end_time": v.RegistrationEndTime.Uint64(),
+		"voting_end_time":       v.VotingEndTime.Uint64(),
+		"tree_size":             v.TreeSize.Uint64(),
+		"depth":                 v.Depth.Uint64(),
+		"root":                  "0x" + v.Root.Text(16),
+		"candidate_count":       v.CandidateCount.Uint64(),
+		"election_id":           v.ElectionID.String(),
+	})
 }
 
 // VoterData mirrors the return value of Voting.getVoterData().
@@ -204,8 +243,43 @@ func NewContractBridge(caller *ContractCaller, assetsDir, question string, candi
 		caller:         caller,
 		votingAddr:     votingAddr,
 		votingABI:      votingABI,
+		assetsDir:      assetsDir,
+		question:       question,
+		candidates:     candidates,
 		voterDataCache: make(map[string]*VoterData),
 	}, nil
+}
+
+// ResyncFromChain rebuilds the EVM state from scratch to match the given chain.
+// It is called after the periodic peer sync adopts a longer chain: replaying onto
+// the existing EVM is only sound for a strict extension, so if the adopted chain
+// diverged, stale registrations/nullifiers from abandoned local blocks would linger
+// and wrongly reject later operations. Building a fresh EVM (fresh StateDB → redeploy
+// the four contracts → replay every block) and atomically swapping it in guarantees
+// the EVM reflects exactly the adopted chain and nothing else.
+//
+// The fresh bridge is fully built before the swap, so concurrent readers never see a
+// half-populated EVM — they see either the old state or the new one. The caller must
+// hold the api write lock so no write handler mutates the chain mid-rebuild.
+func (b *ContractBridge) ResyncFromChain(bc *core.Blockchain) error {
+	sm, err := NewStateManager()
+	if err != nil {
+		return fmt.Errorf("resync: new state manager: %w", err)
+	}
+	freshCaller := NewContractCaller(CreateStatelessEVM(sm.GetStateDB()))
+	fresh, err := NewContractBridge(freshCaller, b.assetsDir, b.question, b.candidates)
+	if err != nil {
+		return fmt.Errorf("resync: redeploy contracts: %w", err)
+	}
+	ReplayBlockchain(bc, fresh) // fully reconstruct on the fresh EVM
+
+	b.mu.Lock()
+	b.caller = fresh.caller
+	b.votingAddr = fresh.votingAddr
+	b.votingABI = fresh.votingABI
+	b.voterDataCache = make(map[string]*VoterData)
+	b.mu.Unlock()
+	return nil
 }
 
 // VotingAddress returns the address of the deployed Voting contract.
@@ -228,9 +302,13 @@ func VoterIDToAddress(voterID string) common.Address {
 
 // AddVoter calls addVoters([voterAddr], [allowed]) on the Voting contract as the
 // admin. This adds or revokes a voter's eligibility to register.
-func (b *ContractBridge) AddVoter(voterID string, allowed bool) error {
+// blockTime is the unix-seconds timestamp the EVM executes at — the caller must
+// pass the same instant it stamps into the committed block (or, on replay, the
+// stored block's timestamp). Same contract for every write method below.
+func (b *ContractBridge) AddVoter(voterID string, allowed bool, blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	voterAddr := VoterIDToAddress(voterID)
 	data, err := b.votingABI.Pack("addVoters",
@@ -260,9 +338,10 @@ func (b *ContractBridge) AddVoter(voterID string, allowed bool) error {
 // the value is exact even under concurrent registrations — it is never derived
 // from a count of blockchain transactions, which could include entries that were
 // later rejected by EVM replay.
-func (b *ContractBridge) Register(voterID, commitmentHex string) (uint64, error) {
+func (b *ContractBridge) Register(voterID, commitmentHex string, blockTime uint64) (uint64, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	commitment, err := hexToBigInt(commitmentHex)
 	if err != nil {
@@ -273,23 +352,31 @@ func (b *ContractBridge) Register(voterID, commitmentHex string) (uint64, error)
 		return 0, fmt.Errorf("encode register: %w", err)
 	}
 	voterAddr := VoterIDToAddress(voterID)
+
+	// Snapshot before the state-changing call so that if any step AFTER a
+	// successful insert fails (e.g. reading back the tree size), we can undo the
+	// insert. Otherwise the EVM tree would hold a leaf the chain never commits
+	// (the handler returns an error and skips the block), and the live root would
+	// diverge from the one a client rebuilds from GET /commitments.
+	snap := b.caller.Snapshot()
+
 	ret, _, evmErr := b.caller.Call(voterAddr, b.votingAddr, data)
 	if err := b.wrapErr(evmErr, ret, "register"); err != nil {
+		b.caller.RevertToSnapshot(snap)
 		return 0, err
 	}
 
-	// register() changes s_hasRegistered[voterAddr] (this voter's cache entry)
-	// and s_tree (TreeSize/Depth/Root, part of VotingData) — invalidate both.
-	// votingDataCache is invalidated (not just deleted) by getVotingDataLocked
-	// unconditionally re-fetching below, which also re-populates it.
+	// register() changes s_hasRegistered[voterAddr] — this voter's cache entry
+	// is stale. (VotingData is never cached, so the tree change needs nothing.)
 	delete(b.voterDataCache, voterID)
-	b.votingDataCache = nil
 
-	votingData, err := b.getVotingDataLocked()
+	votingData, err := b.fetchVotingDataLocked()
 	if err != nil {
+		b.caller.RevertToSnapshot(snap)
 		return 0, fmt.Errorf("register succeeded but failed to read tree size: %w", err)
 	}
 	if votingData.TreeSize.Sign() <= 0 {
+		b.caller.RevertToSnapshot(snap)
 		return 0, fmt.Errorf("register succeeded but tree size is %s (expected >= 1)", votingData.TreeSize)
 	}
 	return votingData.TreeSize.Uint64() - 1, nil
@@ -303,9 +390,10 @@ func (b *ContractBridge) Register(voterID, commitmentHex string) (uint64, error)
 // Returns a descriptive error if the proof is invalid, the nullifier is already
 // used, the Merkle root is stale, or the candidate index is out of range.
 // Returns nil if the vote is accepted.
-func (b *ContractBridge) Vote(proofHex, nullifierHashHex, rootHex string, candidateIndex uint64, depth uint32) error {
+func (b *ContractBridge) Vote(proofHex, nullifierHashHex, rootHex string, candidateIndex uint64, depth uint32, blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	proofBytes, err := hexToBytes(proofHex)
 	if err != nil {
@@ -348,96 +436,81 @@ func (b *ContractBridge) Vote(proofHex, nullifierHashHex, rootHex string, candid
 
 // SetQuestion calls setQuestion(question) on the Voting contract as the admin.
 // Only effective during Phase.Setup; reverts with Voting__WrongPhase otherwise.
-func (b *ContractBridge) SetQuestion(question string) error {
+func (b *ContractBridge) SetQuestion(question string, blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	data, err := b.votingABI.Pack("setQuestion", question)
 	if err != nil {
 		return fmt.Errorf("encode setQuestion: %w", err)
 	}
 	ret, _, evmErr := b.caller.Call(AdminAddress, b.votingAddr, data)
-	if err := b.wrapErr(evmErr, ret, "setQuestion"); err != nil {
-		return err
-	}
-	b.votingDataCache = nil
-	return nil
+	return b.wrapErr(evmErr, ret, "setQuestion")
 }
 
 // SetCandidates calls setCandidates(candidates) on the Voting contract as the
 // admin, replacing the entire candidate list. Only effective during Phase.Setup.
-func (b *ContractBridge) SetCandidates(candidates []string) error {
+func (b *ContractBridge) SetCandidates(candidates []string, blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	data, err := b.votingABI.Pack("setCandidates", candidates)
 	if err != nil {
 		return fmt.Errorf("encode setCandidates: %w", err)
 	}
 	ret, _, evmErr := b.caller.Call(AdminAddress, b.votingAddr, data)
-	if err := b.wrapErr(evmErr, ret, "setCandidates"); err != nil {
-		return err
-	}
-	b.votingDataCache = nil
-	return nil
+	return b.wrapErr(evmErr, ret, "setCandidates")
 }
 
 // StartRegistration calls startRegistration(durationSec) on the Voting contract
 // as the admin, moving Setup → Registration and opening a registration window of
 // the given length. Reverts if not in Setup, if durationSec is 0, or if no
 // candidates are configured yet.
-func (b *ContractBridge) StartRegistration(durationSec uint64) error {
+func (b *ContractBridge) StartRegistration(durationSec uint64, blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	data, err := b.votingABI.Pack("startRegistration", new(big.Int).SetUint64(durationSec))
 	if err != nil {
 		return fmt.Errorf("encode startRegistration: %w", err)
 	}
 	ret, _, evmErr := b.caller.Call(AdminAddress, b.votingAddr, data)
-	if err := b.wrapErr(evmErr, ret, "startRegistration"); err != nil {
-		return err
-	}
-	b.votingDataCache = nil
-	return nil
+	return b.wrapErr(evmErr, ret, "startRegistration")
 }
 
 // StartVoting calls startVoting(durationSec) on the Voting contract as the
 // admin, moving Registration → Voting and opening a voting window of the given
 // length. Reverts if not in Registration or if durationSec is 0.
-func (b *ContractBridge) StartVoting(durationSec uint64) error {
+func (b *ContractBridge) StartVoting(durationSec uint64, blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	data, err := b.votingABI.Pack("startVoting", new(big.Int).SetUint64(durationSec))
 	if err != nil {
 		return fmt.Errorf("encode startVoting: %w", err)
 	}
 	ret, _, evmErr := b.caller.Call(AdminAddress, b.votingAddr, data)
-	if err := b.wrapErr(evmErr, ret, "startVoting"); err != nil {
-		return err
-	}
-	b.votingDataCache = nil
-	return nil
+	return b.wrapErr(evmErr, ret, "startVoting")
 }
 
 // EndElection calls endElection() on the Voting contract as the admin, ending
 // the election early (Registration or Voting → Ended). Reverts if already in
 // Setup or Ended.
-func (b *ContractBridge) EndElection() error {
+func (b *ContractBridge) EndElection(blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	data, err := b.votingABI.Pack("endElection")
 	if err != nil {
 		return fmt.Errorf("encode endElection: %w", err)
 	}
 	ret, _, evmErr := b.caller.Call(AdminAddress, b.votingAddr, data)
-	if err := b.wrapErr(evmErr, ret, "endElection"); err != nil {
-		return err
-	}
-	b.votingDataCache = nil
-	return nil
+	return b.wrapErr(evmErr, ret, "endElection")
 }
 
 // ResetElection calls resetElection() on the Voting contract as the admin.
@@ -450,9 +523,10 @@ func (b *ContractBridge) EndElection() error {
 // allowed/registered flags belong to the now-dead election — the contract's
 // electionId bump means a fresh getVoterData call for the same address would
 // read back false/false until re-added in the new election.
-func (b *ContractBridge) ResetElection() error {
+func (b *ContractBridge) ResetElection(blockTime uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(blockTime)
 
 	data, err := b.votingABI.Pack("resetElection")
 	if err != nil {
@@ -462,7 +536,6 @@ func (b *ContractBridge) ResetElection() error {
 	if err := b.wrapErr(evmErr, ret, "resetElection"); err != nil {
 		return err
 	}
-	b.votingDataCache = nil
 	b.voterDataCache = make(map[string]*VoterData)
 	return nil
 }
@@ -475,6 +548,7 @@ func (b *ContractBridge) ResetElection() error {
 func (b *ContractBridge) GetCandidates() ([]string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(uint64(time.Now().Unix()))
 
 	data, err := b.votingABI.Pack("getCandidates")
 	if err != nil {
@@ -501,6 +575,7 @@ func (b *ContractBridge) GetCandidates() ([]string, error) {
 func (b *ContractBridge) GetVoteCounts() ([]*big.Int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.caller.SetTime(uint64(time.Now().Unix()))
 
 	data, err := b.votingABI.Pack("getVoteCounts")
 	if err != nil {
@@ -520,32 +595,21 @@ func (b *ContractBridge) GetVoteCounts() ([]*big.Int, error) {
 	return result[0].([]*big.Int), nil
 }
 
-// GetVotingData calls getVotingData() and returns the current state of the election.
+// GetVotingData calls getVotingData() (plus getCurrentElectionId()) and returns
+// the current state of the election. Always a live EVM call — see the
+// voterDataCache comment for why VotingData is deliberately uncached. The EVM
+// clock is set to the current wall time so time-expired phases report as Ended.
 func (b *ContractBridge) GetVotingData() (*VotingData, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.getVotingDataLocked()
+	b.caller.SetTime(uint64(time.Now().Unix()))
+	return b.fetchVotingDataLocked()
 }
 
-// getVotingDataLocked is the caching, lock-free implementation of GetVotingData.
-// Callers must already hold b.mu (used internally by Register to read back
-// the tree size within the same critical section as the insert). Returns the
-// cached value if present; write methods (AddVoter/Register/Vote) are
-// responsible for setting b.votingDataCache = nil whenever they change any of
-// VotingData's underlying fields.
-func (b *ContractBridge) getVotingDataLocked() (*VotingData, error) {
-	if b.votingDataCache != nil {
-		return b.votingDataCache, nil
-	}
-	votingData, err := b.fetchVotingDataLocked()
-	if err != nil {
-		return nil, err
-	}
-	b.votingDataCache = votingData
-	return votingData, nil
-}
-
-// fetchVotingDataLocked always performs a live EVM call, bypassing the cache.
+// fetchVotingDataLocked performs the live getVotingData + getCurrentElectionId
+// EVM calls. Callers must hold b.mu and have already stamped the EVM clock
+// (interactive reads use wall time; Register calls this with the block time it
+// set for the write, keeping the whole critical section at one instant).
 func (b *ContractBridge) fetchVotingDataLocked() (*VotingData, error) {
 	data, err := b.votingABI.Pack("getVotingData")
 	if err != nil {
@@ -562,6 +626,12 @@ func (b *ContractBridge) fetchVotingDataLocked() (*VotingData, error) {
 	if len(result) != 9 {
 		return nil, fmt.Errorf("getVotingData: expected 9 return values, got %d", len(result))
 	}
+
+	electionID, err := b.currentElectionIDLocked()
+	if err != nil {
+		return nil, err
+	}
+
 	return &VotingData{
 		Question:            result[0].(string),
 		Owner:               result[1].(common.Address),
@@ -573,7 +643,38 @@ func (b *ContractBridge) fetchVotingDataLocked() (*VotingData, error) {
 		Depth:               result[6].(*big.Int),
 		Root:                result[7].(*big.Int),
 		CandidateCount:      result[8].(*big.Int),
+		ElectionID:          electionID,
 	}, nil
+}
+
+// currentElectionIDLocked calls getCurrentElectionId(). Callers must hold b.mu.
+// The frontend scopes Voter Pass files and localStorage by this value, so every
+// VotingData read carries it.
+func (b *ContractBridge) currentElectionIDLocked() (*big.Int, error) {
+	data, err := b.votingABI.Pack("getCurrentElectionId")
+	if err != nil {
+		return nil, fmt.Errorf("encode getCurrentElectionId: %w", err)
+	}
+	ret, _, evmErr := b.caller.Call(AdminAddress, b.votingAddr, data)
+	if evmErr != nil {
+		return nil, b.wrapErr(evmErr, ret, "getCurrentElectionId")
+	}
+	result, err := b.votingABI.Unpack("getCurrentElectionId", ret)
+	if err != nil {
+		return nil, fmt.Errorf("decode getCurrentElectionId result: %w", err)
+	}
+	if len(result) != 1 {
+		return nil, fmt.Errorf("getCurrentElectionId: expected 1 return value, got %d", len(result))
+	}
+	return result[0].(*big.Int), nil
+}
+
+// VotingCodeHash returns the keccak256 hash of the Voting contract's deployed
+// runtime bytecode — logged at startup so stale assets/ artifacts are visible.
+func (b *ContractBridge) VotingCodeHash() common.Hash {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.caller.CodeHash(b.votingAddr)
 }
 
 // GetVoterData calls getVoterData(voterAddr) and returns the voter's on-chain status.
@@ -586,6 +687,7 @@ func (b *ContractBridge) GetVoterData(voterID string) (*VoterData, error) {
 	if cached, ok := b.voterDataCache[voterID]; ok {
 		return cached, nil
 	}
+	b.caller.SetTime(uint64(time.Now().Unix()))
 
 	voterAddr := VoterIDToAddress(voterID)
 	data, err := b.votingABI.Pack("getVoterData", voterAddr)

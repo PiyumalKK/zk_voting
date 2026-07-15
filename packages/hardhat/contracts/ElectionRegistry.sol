@@ -2,6 +2,7 @@
 pragma solidity >=0.8.0 <0.9.0;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Voting} from "./Voting.sol";
 
 interface IVotingView {
     function getVoteCount(uint256 candidateIdx) external view returns (uint256);
@@ -22,6 +23,7 @@ interface IVotingView {
  * @title ElectionRegistry
  * @notice Maps polling divisions to their Voting contracts.
  *         Provides national result aggregation across all divisions.
+ *         Acts as a factory to deploy new division Voting contracts on-chain.
  */
 contract ElectionRegistry is Ownable {
     struct Division {
@@ -33,12 +35,42 @@ contract ElectionRegistry is Ownable {
 
     Division[] public divisions;
 
+    /// @notice The shared verifier contract used by all division Voting contracts.
+    address public immutable i_verifier;
+
     event DivisionAdded(uint256 indexed divisionId, string name, address votingContract, address gnOfficer);
     event DivisionUpdated(uint256 indexed divisionId, address votingContract, address gnOfficer);
+    event DivisionCreated(uint256 indexed divisionId, string name, address votingContract);
 
-    constructor(address _owner) Ownable(_owner) {}
+    constructor(address _owner, address _verifier) Ownable(_owner) {
+        i_verifier = _verifier;
+    }
 
-    /// @notice Register a new polling division.
+    /// @notice Deploy a new Voting contract and register it as a division.
+    ///         The new contract is owned by this registry's owner (admin).
+    ///         GN officer can be assigned later via the Voting contract's setGNOfficer().
+    function createDivision(
+        string calldata _name
+    ) external onlyOwner returns (uint256 divisionId, address votingContract) {
+        // Deploy a fresh Voting contract with empty question and no candidates.
+        // The admin can configure question + candidates via the admin UI later.
+        string[] memory emptyCandidates = new string[](0);
+        Voting newVoting = new Voting(owner(), i_verifier, "", emptyCandidates);
+        votingContract = address(newVoting);
+
+        divisionId = divisions.length;
+        divisions.push(Division({
+            name: _name,
+            votingContract: votingContract,
+            gnOfficer: address(0),
+            active: true
+        }));
+
+        emit DivisionCreated(divisionId, _name, votingContract);
+        emit DivisionAdded(divisionId, _name, votingContract, address(0));
+    }
+
+    /// @notice Register a new polling division (with an externally deployed contract).
     function addDivision(
         string calldata _name,
         address _votingContract,

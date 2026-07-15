@@ -3,7 +3,7 @@ package core
 import (
 	"fmt"
 	"sync"
-	
+	"time"
 )
 
 // Blockchain manages an append-only chain of blocks.
@@ -91,6 +91,15 @@ func (bc *Blockchain) ReplaceBlocks(newBlocks []*Block) error {
 // The new block is automatically linked to the previous block via
 // hash chaining (PrevHash = latest block's Hash).
 func (bc *Blockchain) AddBlock(transactions []Transaction) (*Block, error) {
+	return bc.AddBlockAt(transactions, time.Now().UnixMilli())
+}
+
+// AddBlockAt is AddBlock with an explicit block timestamp (unix milliseconds).
+// If the given timestamp is older than the current chain tip's (possible when
+// two handlers race between reading the clock and acquiring this lock), it is
+// clamped to the tip's timestamp so chain validation's non-decreasing-timestamp
+// rule always holds.
+func (bc *Blockchain) AddBlockAt(transactions []Transaction, timestampMs int64) (*Block, error) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
@@ -106,10 +115,12 @@ func (bc *Blockchain) AddBlock(transactions []Transaction) (*Block, error) {
 	}
 
 	latestBlock := bc.blocks[len(bc.blocks)-1]
-	newBlock := NewBlock(latestBlock.Index+1, transactions, latestBlock.Hash)
+	if timestampMs < latestBlock.Timestamp {
+		timestampMs = latestBlock.Timestamp
+	}
+	newBlock := NewBlockAt(latestBlock.Index+1, transactions, latestBlock.Hash, timestampMs)
 	bc.blocks = append(bc.blocks, newBlock)
-	
-	
+
 	return newBlock, nil
 }
 
@@ -118,6 +129,12 @@ func (bc *Blockchain) AddBlock(transactions []Transaction) (*Block, error) {
 // individual operations (register, vote, etc.).
 func (bc *Blockchain) AddTransaction(tx *Transaction) (*Block, error) {
 	return bc.AddBlock([]Transaction{*tx})
+}
+
+// AddTransactionAt is AddTransaction with an explicit block timestamp
+// (unix milliseconds) — see AddBlockAt for the clamping rule.
+func (bc *Blockchain) AddTransactionAt(tx *Transaction, timestampMs int64) (*Block, error) {
+	return bc.AddBlockAt([]Transaction{*tx}, timestampMs)
 }
 
 // GetLatestBlock returns the most recent block in the chain.
@@ -164,6 +181,18 @@ func (bc *Blockchain) Height() uint64 {
 	bc.mu.RLock()
 	defer bc.mu.RUnlock()
 	return uint64(len(bc.blocks) - 1)
+}
+
+// TipTimestamp returns the timestamp (unix milliseconds) of the latest block.
+// Write handlers use this to compute a block timestamp that is already >= the
+// tip before executing the EVM, so the instant the EVM runs at equals the instant
+// that gets persisted (AddBlockAt then has nothing to clamp) — keeping replay
+// deterministic. Only meaningful while the write path holds the write lock, so the
+// tip cannot advance between this read and the subsequent append.
+func (bc *Blockchain) TipTimestamp() int64 {
+	bc.mu.RLock()
+	defer bc.mu.RUnlock()
+	return bc.blocks[len(bc.blocks)-1].Timestamp
 }
 
 // GetAllTransactions returns all transactions across all blocks,

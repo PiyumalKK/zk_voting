@@ -1,5 +1,7 @@
-# Runtime data
+# Runtime data — per-node chain state, keys and TLS certs (node uses data_<NODE_ID>/).
+# NEVER commit these: data_*/keys/admin_private.pem is a secret.
 data/
+data_*/
 
 # Go binaries
 *.exe
