@@ -24,6 +24,11 @@ const VOTING_ABI = [
     ],
     outputs: [],
   },
+  {
+    name: "Voting__SetupOrRegistrationRequired",
+    type: "error",
+    inputs: [{ name: "actual", type: "uint8" }],
+  },
 ] as const;
 
 const NIC_REGISTRY_ABI = [
@@ -220,8 +225,12 @@ const GNRegisterVoter: NextPage = () => {
         notification.error("This NIC is already registered to another voter");
       } else if (msg.includes("Not owner or GN")) {
         notification.error("You are not authorized as GN for this division.");
-      } else if (msg.includes("WrongPhase") || msg.includes("Cannot add voters")) {
-        notification.error("Voters can only be added during the Setup phase.");
+      } else if (
+        msg.includes("WrongPhase") ||
+        msg.includes("Cannot add voters") ||
+        msg.includes("SetupOrRegistrationRequired")
+      ) {
+        notification.error("Voters can only be added during the Setup or Registration phases.");
       } else {
         notification.error(msg);
       }

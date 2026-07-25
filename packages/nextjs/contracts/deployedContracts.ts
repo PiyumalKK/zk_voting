@@ -817,6 +817,17 @@ const deployedContracts = {
         {
           inputs: [
             {
+              internalType: "enum Voting.Phase",
+              name: "actual",
+              type: "uint8",
+            },
+          ],
+          name: "Voting__SetupOrRegistrationRequired",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
               internalType: "uint256",
               name: "provided",
               type: "uint256",
@@ -1526,6 +1537,17 @@ const deployedContracts = {
             },
           ],
           name: "Voting__NullifierHashAlreadyUsed",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "enum Voting.Phase",
+              name: "actual",
+              type: "uint8",
+            },
+          ],
+          name: "Voting__SetupOrRegistrationRequired",
           type: "error",
         },
         {
@@ -2241,6 +2263,17 @@ const deployedContracts = {
         {
           inputs: [
             {
+              internalType: "enum Voting.Phase",
+              name: "actual",
+              type: "uint8",
+            },
+          ],
+          name: "Voting__SetupOrRegistrationRequired",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
               internalType: "uint256",
               name: "provided",
               type: "uint256",
@@ -2946,6 +2979,17 @@ const deployedContracts = {
             },
           ],
           name: "Voting__NullifierHashAlreadyUsed",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "enum Voting.Phase",
+              name: "actual",
+              type: "uint8",
+            },
+          ],
+          name: "Voting__SetupOrRegistrationRequired",
           type: "error",
         },
         {
