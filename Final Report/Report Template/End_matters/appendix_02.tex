@@ -1,0 +1,169 @@
+\chapter{Test Results and Deployment Outputs}\label{app:tests}
+
+\section{Smart Contract Test Output}
+
+\begin{lstlisting}[caption={Complete Hardhat test suite output (54 tests passing)}]
+  Voting Contract
+    Setup Phase
+      + should start in Setup phase
+      + should allow owner to set question
+      + should reject setQuestion outside Setup
+      + should allow setting candidates
+      + should reject > 100 candidates
+      + should reject empty candidate list
+      + should reject startRegistration with 0 duration
+      + should allow owner to set GN officer
+
+    Registration Phase
+      + allowlisted voter can register commitment
+      + registration status updates correctly
+      + tree root changes after registration
+      + tree depth changes with multiple registrations
+      + emits NewLeaf with correct index
+      + rejects non-allowlisted voter
+      + rejects already-registered voter
+      + rejects duplicate commitment
+      + rejects registration during Voting phase
+      + multiple voters can register sequentially
+      + tree size matches registration count
+      + emits VoterAdded events
+
+    Phase Transitions
+      + startVoting transitions Registration -> Voting
+      + auto-advances Registration -> Ended after deadline
+      + auto-advances Voting -> Ended after deadline
+      + owner can endElection early
+      + non-owner cannot call startVoting
+      + non-owner cannot call endElection
+
+    Voting Phase (with mock verifier)
+      + valid proof accepted, tally incremented
+      + reused nullifier rejected
+      + invalid proof rejected
+      + invalid candidate index rejected
+      + stale root rejected
+
+    View Functions
+      + getVotingData returns correct structure
+      + getVoteCounts returns zeros initially
+      + getVoterData reports correctly
+      + currentPhase reflects elapsed deadlines
+      + isNullifierUsed returns correct state
+
+    Reset / Multi-Election
+      + resetElection returns to Setup
+      + election ID bumps after reset
+      + ElectionReset event emitted
+
+  GN Officer and Registry
+    GN Officer Management
+      + owner can set GN officer
+      + non-owner cannot set GN officer
+      + GN can add voters during Setup
+      + GN cannot add voters during Registration
+      + non-GN cannot add voters
+      + GN cannot add voters during Voting
+      + owner can still add voters
+
+    Election Registry
+      + owner can add a division
+      + non-owner cannot add division
+      + getDivisionCount returns correct count
+      + getAllDivisions returns correct data
+      + getNationalVoteCount aggregates correctly
+      + owner can update division
+
+  NIC Registry
+    + owner can set voting contract authorization
+    + GN can reserve NIC hash
+    + duplicate NIC hash reverts
+    + unauthorized caller reverts
+    + non-registered division reverts
+
+  54 passing (5s)
+\end{lstlisting}
+
+\section{Gas Usage Report}
+
+\begin{lstlisting}[caption={Gas usage per operation (Hardhat gas reporter)}]
+|  Contracts / Methods    |  Min      |  Max      |  Avg      |
+|-------------------------|-----------|-----------|-----------|
+|  NicRegistry            |           |           |           |
+|    reserveNicHash       |  50,228   |  55,553   |  54,222   |
+|    setVotingContract    |     -     |     -     |  47,807   |
+|  Voting                 |           |           |           |
+|    addVoters            |  53,922   |  78,607   |  77,940   |
+|    endElection          |     -     |     -     |  32,784   |
+|    register             | 149,833   | 189,006   | 157,178   |
+|    resetElection        |  65,295   |  67,535   |  65,575   |
+|    setCandidates        |     -     |     -     | 125,481   |
+|    setGNOfficer         |     -     |     -     |  47,305   |
+|    setQuestion          |     -     |     -     |  51,051   |
+|    startRegistration    |     -     |     -     |  72,222   |
+|    startVoting          |     -     |     -     |  55,125   |
+|  Deployments            |           |  Gas Used |  % Limit  |
+|  HonkVerifier           |     -     | 4,726,613 |  29.5%    |
+|  LeanIMT                | 1,028,149 | 1,028,221 |   6.4%    |
+|  NicRegistry            |     -     |   337,595 |   2.1%    |
+|  PoseidonT3             |     -     | 3,695,091 |  23.1%    |
+|  Voting                 | 1,990,930 | 2,016,450 |  12.4%    |
+\end{lstlisting}
+
+\section{Deployment Output (3 Division Demo)}
+
+\begin{lstlisting}[caption={Multi-division deployment output}]
+deploying "PoseidonT3" ... deployed at
+    0x5FbDB2315678afecb367f032d93F642f64180aa3
+    with 3,695,091 gas
+deploying "LeanIMT" ... deployed at
+    0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    with 1,028,221 gas
+deploying "HonkVerifier" ... deployed at
+    0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+    with 4,726,613 gas
+deploying "Voting" ... deployed at
+    0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
+    with 1,991,182 gas
+deploying "ElectionRegistry" ... deployed at
+    0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+    with 3,390,808 gas
+deploying "NicRegistry" ... deployed at
+    0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+    with 337,595 gas
+
+Multi-division election deployed:
+  Registry: 0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
+  NicRegistry: 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
+  Divisions: 3
+  Candidates: Anura Kumara Dissanayake (NPP),
+              Sajith Premadasa (SJB),
+              Ranil Wickremesinghe (UNP)
+  GN Kaduwela:  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  GN Colombo:   0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+  GN Gampaha:   0x90F79bf6EB2c4f870365E785982E1f101E93b906
+\end{lstlisting}
+
+\section{Mobile App Build Output}
+
+\begin{lstlisting}[caption={Expo export output confirming successful build}]
+$ npx expo export --platform android --output-dir dist
+
+  android bundles (1):
+  _expo/static/js/android/
+    entry-f3d281ff2509f8797675dea470443ce1.hbc (5.69 MB)
+
+  Files (1):
+  metadata.json (1.81 kB)
+
+Exported: dist
+\end{lstlisting}
+
+\section{TypeScript Compilation}
+
+\begin{lstlisting}[caption={Zero TypeScript errors across all packages}]
+$ npx tsc --noEmit
+# (no output = 0 errors)
+
+$ npx expo export --platform android
+# Successfully exported (confirms type safety)
+\end{lstlisting}

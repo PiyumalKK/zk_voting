@@ -1,0 +1,322 @@
+\chapter{Source Code Listings}\label{app:source}
+
+This appendix contains the complete source code of the critical system components.
+
+\section{ZK Circuit --- main.nr}
+
+\begin{lstlisting}[caption={Complete Noir ZK circuit (packages/circuits/src/main.nr)}]
+use std::hash::poseidon::bn254::hash_1;
+use std::hash::poseidon::bn254::hash_2;
+use binary_merkle_root::binary_merkle_root;
+
+fn main(
+    // public inputs
+    nullifier_hash: pub Field,
+    // private inputs
+    nullifier: Field,
+    secret: Field,
+    // public inputs
+    root: pub Field,
+    vote: pub Field,
+    depth: pub u32,
+    // private inputs
+    index: Field,
+    // max of 2^16 leaves --> 65536 leaves
+    siblings: [Field; 16],
+) {
+    // Recompute nullifier_hash and verify it matches the public input
+    let computed_nullifier_hash: Field = hash_1([nullifier]);
+    assert(computed_nullifier_hash == nullifier_hash);
+
+    // Compute the commitment (leaf of the Merkle tree)
+    let commitment: Field = hash_2([nullifier, secret]);
+
+    // Count the non-zero siblings to determine the actual path length
+    let mut siblings_num = 0;
+    for i in 0..siblings.len() {
+        if siblings[i] != 0 {
+            siblings_num += 1;
+        }
+    }
+    // Ensure depth doesn't exceed the fixed array length
+    assert(depth <= siblings.len());
+
+    // Convert leaf index to little-endian bits for path traversal
+    let index_bits: [u1; 16] = index.to_le_bits();
+
+    // Recompute the Merkle root from the commitment and siblings
+    let computed_root = binary_merkle_root(
+        hash_2, commitment, siblings_num, index_bits, siblings
+    );
+
+    // Assert the computed root matches the on-chain root
+    assert(computed_root == root);
+
+    // Bind the vote to the proof and range-check to 8 bits (0..=255)
+    let _vote_bits: [u1; 8] = vote.to_le_bits();
+}
+\end{lstlisting}
+
+\section{Smart Contract --- Voting.sol (Key Functions)}
+
+\begin{lstlisting}[caption={Voting.sol --- Registration function}]
+function register(uint256 _commitment)
+    external inPhase(Phase.Registration)
+{
+    uint256 electionId = s_electionId;
+    if (!s_voters[electionId][msg.sender] ||
+         s_hasRegistered[electionId][msg.sender])
+        revert Voting__NotAllowedToVote();
+    if (s_commitments[electionId][_commitment])
+        revert Voting__CommitmentAlreadyAdded(_commitment);
+    s_commitments[electionId][_commitment] = true;
+    s_hasRegistered[electionId][msg.sender] = true;
+    s_trees[electionId].insert(_commitment);
+    emit NewLeaf(s_trees[electionId].size - 1, _commitment);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Voting.sol --- Vote function with ZK verification}]
+function vote(
+    bytes memory _proof,
+    bytes32 _nullifierHash,
+    bytes32 _root,
+    bytes32 _vote,
+    bytes32 _depth
+) external inPhase(Phase.Voting) {
+    uint256 electionId = s_electionId;
+    if (_root == bytes32(0)) revert Voting__EmptyTree();
+    if (_root != bytes32(s_trees[electionId].root()))
+        revert Voting__InvalidRoot();
+
+    uint256 candidateIdx = uint256(_vote);
+    if (candidateIdx >= s_candidates.length)
+        revert Voting__InvalidCandidate(candidateIdx);
+
+    bytes32[] memory publicInputs = new bytes32[](4);
+    publicInputs[0] = _nullifierHash;
+    publicInputs[1] = _root;
+    publicInputs[2] = _vote;
+    publicInputs[3] = _depth;
+
+    if (!i_verifier.verify(_proof, publicInputs))
+        revert Voting__InvalidProof();
+
+    if (s_nullifierHashes[electionId][_nullifierHash])
+        revert Voting__NullifierHashAlreadyUsed(_nullifierHash);
+    s_nullifierHashes[electionId][_nullifierHash] = true;
+
+    uint256 newCount = ++s_voteCounts[electionId][candidateIdx];
+    emit VoteCast(_nullifierHash, msg.sender,
+                  candidateIdx, block.timestamp, newCount);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Voting.sol --- Phase management}]
+enum Phase { Setup, Registration, Voting, Ended }
+
+modifier inPhase(Phase expected) {
+    _maybeAdvancePhase();
+    if (s_phase != expected)
+        revert Voting__WrongPhase(expected, s_phase);
+    _;
+}
+
+function _maybeAdvancePhase() internal {
+    if (s_phase == Phase.Registration &&
+        block.timestamp >= s_registrationEndTime) {
+        s_phase = Phase.Ended;
+        emit PhaseChanged(Phase.Ended, block.timestamp);
+    } else if (s_phase == Phase.Voting &&
+               block.timestamp >= s_votingEndTime) {
+        s_phase = Phase.Ended;
+        emit PhaseChanged(Phase.Ended, block.timestamp);
+    }
+}
+
+function startRegistration(uint256 _durationSec)
+    external onlyOwner inPhase(Phase.Setup)
+{
+    if (_durationSec == 0) revert Voting__InvalidDuration();
+    if (s_candidates.length == 0) revert Voting__NoCandidates();
+    s_phase = Phase.Registration;
+    s_registrationEndTime = block.timestamp + _durationSec;
+    emit PhaseChanged(Phase.Registration, s_registrationEndTime);
+}
+\end{lstlisting}
+
+\section{Smart Contract --- ElectionRegistry.sol}
+
+\begin{lstlisting}[caption={ElectionRegistry.sol --- Division factory and aggregation}]
+contract ElectionRegistry is Ownable {
+    struct Division {
+        string name;
+        address votingContract;
+        address gnOfficer;
+        bool active;
+    }
+
+    Division[] public divisions;
+    address public immutable i_verifier;
+
+    constructor(address _owner, address _verifier)
+        Ownable(_owner) {
+        i_verifier = _verifier;
+    }
+
+    function createDivision(string calldata _name)
+        external onlyOwner
+        returns (uint256 divisionId, address votingContract)
+    {
+        string[] memory emptyCandidates = new string[](0);
+        Voting newVoting = new Voting(
+            owner(), i_verifier, "", emptyCandidates);
+        votingContract = address(newVoting);
+        divisionId = divisions.length;
+        divisions.push(Division({
+            name: _name,
+            votingContract: votingContract,
+            gnOfficer: address(0),
+            active: true
+        }));
+        emit DivisionCreated(divisionId, _name, votingContract);
+    }
+
+    function getNationalResults()
+        external view returns (uint256[] memory totals)
+    {
+        if (divisions.length == 0) return totals;
+        string[] memory candidates =
+            IVotingView(divisions[0].votingContract)
+            .getCandidates();
+        totals = new uint256[](candidates.length);
+        for (uint256 i = 0; i < divisions.length; i++) {
+            if (divisions[i].active) {
+                for (uint256 c = 0; c < candidates.length; c++) {
+                    totals[c] += IVotingView(
+                        divisions[i].votingContract
+                    ).getVoteCount(c);
+                }
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+\section{Smart Contract --- NicRegistry.sol}
+
+\begin{lstlisting}[caption={NicRegistry.sol --- Cross-division Sybil prevention}]
+contract NicRegistry is Ownable {
+    error NicRegistry__AlreadyUsed(bytes32 nicHash);
+
+    mapping(bytes32 => bool) private usedNicHashes;
+    mapping(address => bool) private s_votingContracts;
+
+    modifier onlyOwnerOrGN(address votingContract) {
+        require(s_votingContracts[votingContract],
+                "Unregistered division");
+        require(
+            msg.sender == owner() ||
+            msg.sender == IVotingGN(votingContract)
+                         .s_gnOfficer(),
+            "Not owner or GN");
+        _;
+    }
+
+    function reserveNicHash(
+        bytes32 nicHash, address votingContract
+    ) external onlyOwnerOrGN(votingContract)
+      returns (bool) {
+        if (usedNicHashes[nicHash])
+            revert NicRegistry__AlreadyUsed(nicHash);
+        usedNicHashes[nicHash] = true;
+        emit NicHashReserved(nicHash);
+        return true;
+    }
+}
+\end{lstlisting}
+
+\section{Mobile Services --- Keystore (keystore.ts)}
+
+\begin{lstlisting}[caption={Hardware-backed key storage service}]
+import * as SecureStore from 'expo-secure-store';
+import { generatePrivateKey, privateKeyToAddress }
+    from 'viem/accounts';
+
+const AUTH_OPTIONS: SecureStore.SecureStoreOptions = {
+  requireAuthentication: !__DEV__,
+  authenticationPrompt: "Unlock your voting identity",
+  keychainAccessible:
+    SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+
+export async function createIdentity(): Promise<string> {
+  const pk = generatePrivateKey();
+  const addr = privateKeyToAddress(pk);
+  await SecureStore.setItemAsync(
+    'slvote.privateKey', pk, AUTH_OPTIONS);
+  await SecureStore.setItemAsync('slvote.address', addr);
+  return addr;
+}
+
+export async function getPrivateKey(): Promise<string> {
+  // Triggers biometric prompt
+  return await SecureStore.getItemAsync(
+    'slvote.privateKey', AUTH_OPTIONS);
+}
+
+export async function getVoterSecrets() {
+  const n = await SecureStore.getItemAsync(
+    'slvote.nullifier', AUTH_OPTIONS);
+  const s = await SecureStore.getItemAsync(
+    'slvote.secret', AUTH_OPTIONS);
+  return n && s ? { nullifier: n, secret: s } : null;
+}
+\end{lstlisting}
+
+\section{Mobile Services --- Chain Interaction (chain.ts)}
+
+\begin{lstlisting}[caption={Legacy transaction signing for Hermes compatibility}]
+import { createWalletClient, http, encodeFunctionData }
+    from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+
+export async function submitVote(
+  contractAddr: string,
+  callData: VoteCallData,
+  burnerKey: string
+) {
+  const account = privateKeyToAccount(burnerKey);
+  const nonce = await publicClient.getTransactionCount({
+    address: account.address
+  });
+  const gasPrice = await publicClient.getGasPrice();
+
+  // Manual legacy tx (Hermes EIP-1559 incompatible)
+  const signedTx = await account.signTransaction({
+    to: contractAddr,
+    data: encodeFunctionData({
+      abi: VotingABI,
+      functionName: 'vote',
+      args: [callData.proof, callData.nullifierHash,
+             callData.root, callData.vote, callData.depth]
+    }),
+    nonce,
+    gasPrice,
+    gas: 500000n,
+    type: 'legacy',
+  });
+
+  return await publicClient.sendRawTransaction({
+    serializedTransaction: signedTx
+  });
+}
+
+export function newBurnerAccount() {
+  const pk = generatePrivateKey();
+  return {
+    privateKey: pk,
+    address: privateKeyToAddress(pk)
+  };
+}
+\end{lstlisting}
