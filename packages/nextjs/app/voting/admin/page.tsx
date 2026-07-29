@@ -439,7 +439,11 @@ const AdminPage = () => {
         </div>
       </Section>
 
-      <Section title="3. Allowlist voters" disabled={!inSetup} hint="Editable only during Setup phase.">
+      <Section
+        title="3. Allowlist voters"
+        disabled={!inSetup && !inRegistration}
+        hint="Editable during Setup and Registration phases."
+      >
         <div className="space-y-2">
           {voterDrafts.map((v, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
@@ -466,7 +470,7 @@ const AdminPage = () => {
                     next[i] = { ...next[i], status: true };
                     setVoterDrafts(next);
                   }}
-                  disabled={!inSetup}
+                  disabled={!inSetup && !inRegistration}
                 />
               </label>
               <label className="label cursor-pointer gap-2">
@@ -481,12 +485,12 @@ const AdminPage = () => {
                     next[i] = { ...next[i], status: false };
                     setVoterDrafts(next);
                   }}
-                  disabled={!inSetup}
+                  disabled={!inSetup && !inRegistration}
                 />
               </label>
               <button
                 className="btn btn-ghost btn-square"
-                disabled={!inSetup || voterDrafts.length <= 1}
+                disabled={(!inSetup && !inRegistration) || voterDrafts.length <= 1}
                 onClick={() => setVoterDrafts(voterDrafts.filter((_, j) => j !== i))}
               >
                 <TrashIcon className="h-4 w-4" />
@@ -495,14 +499,18 @@ const AdminPage = () => {
           ))}
           <button
             className="btn btn-outline btn-sm gap-2"
-            disabled={!inSetup}
+            disabled={!inSetup && !inRegistration}
             onClick={() => setVoterDrafts([...voterDrafts, { address: "", status: true }])}
           >
             <PlusIcon className="h-4 w-4" /> Add row
           </button>
         </div>
         <div className="flex justify-end">
-          <button className="btn btn-primary btn-sm" disabled={!inSetup || busy === "voters"} onClick={handleAddVoters}>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={(!inSetup && !inRegistration) || busy === "voters"}
+            onClick={handleAddVoters}
+          >
             {busy === "voters" ? "Saving..." : "Submit allowlist"}
           </button>
         </div>

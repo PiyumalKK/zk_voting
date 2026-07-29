@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { router } from "expo-router";
 import { api, DivisionState } from "../src/services/api";
 import {
@@ -15,30 +15,26 @@ import { authenticate, getSelectedDivision, getVoterSecrets, markVoted } from ".
 import { generateVoteCallData } from "../src/services/zkproof";
 import { colors, styles } from "../src/theme";
 
-type Stage = "otp-phone" | "otp-code" | "select" | "confirm" | "submitting" | "done";
+type Stage = "auth" | "select" | "confirm" | "submitting" | "done";
 
-const STEPS = ["Verify Phone", "Enter Code", "Select", "Cast Vote"];
+const STEPS = ["Authenticate", "Select", "Cast Vote"];
 
 function stageToStep(stage: Stage): number {
   switch (stage) {
-    case "otp-phone": return 0;
-    case "otp-code": return 1;
+    case "auth": return 0;
     case "select":
-    case "confirm": return 2;
+    case "confirm": return 1;
     case "submitting":
-    case "done": return 3;
+    case "done": return 2;
   }
 }
 
 export default function Vote() {
   const [division, setDivision] = useState<DivisionState | null>(null);
-  const [stage, setStage] = useState<Stage>("otp-phone");
-  const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("");
+  const [stage, setStage] = useState<Stage>("auth");
   const [busy, setBusy] = useState(false);
   const [candidate, setCandidate] = useState<number | null>(null);
   const [step, setStep] = useState("");
-  const [devHint, setDevHint] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -56,38 +52,27 @@ export default function Vote() {
     })();
   }, []);
 
-  const sendCode = async () => {
+  const authenticateUser = async () => {
     setBusy(true);
     try {
-      const res = await api.sendOtp(phone);
-      if (res.devCode) {
-        setCode(res.devCode);
-        setDevHint(`Dev mode — code auto-filled: ${res.devCode}`);
-      } else {
-        setDevHint(res.devHint ?? null);
-      }
-      setStage("otp-code");
+      const ok = await authenticate("Authenticate to vote");
+      if (!ok) throw new Error("Authentication cancelled");
+      setStage("select");
     } catch (e: any) {
-      Alert.alert("Could not send code", e?.message ?? "Try again");
+      Alert.alert("Authentication failed", e?.message ?? "Try again");
     } finally {
       setBusy(false);
     }
   };
 
-  const verifyCode = async () => {
-    setBusy(true);
-    try {
-      const res = await api.verifyOtp(phone, code);
-      if (!res.verified) throw new Error(res.error ?? "Incorrect code");
-      const ok = await authenticate("Authenticate to vote");
-      if (!ok) throw new Error("Authentication cancelled");
-      setStage("select");
-    } catch (e: any) {
-      Alert.alert("Verification failed", e?.message ?? "Try again");
-    } finally {
-      setBusy(false);
+  // Trigger auth automatically when the division loads
+  useEffect(() => {
+    if (stage === "auth" && division) {
+      // Small delay so the user sees the "Waiting for device authentication" state
+      const t = setTimeout(() => authenticateUser(), 300);
+      return () => clearTimeout(t);
     }
-  };
+  }, [stage, division]);
 
   const castVote = async () => {
     if (!division || candidate === null) return;
@@ -161,61 +146,31 @@ export default function Vote() {
         <StepIndicator steps={STEPS} currentStep={stageToStep(stage)} />
       </FadeIn>
 
-      {/* OTP: phone */}
-      {stage === "otp-phone" && (
+      {/* Auth */}
+      {stage === "auth" && (
         <FadeIn>
-          <GlassCard>
-            <Text style={styles.cardTitle}>📱 Step 1 — Verify your phone</Text>
-            <Text style={[styles.cardText, { marginBottom: 16 }]}>
-              We&apos;ll send a one-time code to confirm it&apos;s really you voting.
-            </Text>
-            <Text style={styles.label}>Phone number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="07XXXXXXXX"
-              placeholderTextColor={colors.muted}
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={setPhone}
-            />
-            <GradientButton
-              title="Send code"
-              icon="📨"
-              loading={busy}
-              disabled={busy || phone.length < 9}
-              onPress={sendCode}
-            />
-          </GlassCard>
-        </FadeIn>
-      )}
-
-      {/* OTP: code */}
-      {stage === "otp-code" && (
-        <FadeIn>
-          <GlassCard>
-            <Text style={styles.cardTitle}>🔢 Step 2 — Enter the code</Text>
-            {devHint && (
-              <Text style={[styles.cardText, { color: colors.warning, marginBottom: 8 }]}>
-                {devHint}
-              </Text>
+          <GlassCard style={{ alignItems: "center", paddingVertical: 40 }}>
+            {busy ? (
+              <>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={[styles.cardText, { marginTop: 20, textAlign: "center", fontSize: 14 }]}>
+                  Waiting for device authentication…
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.cardTitle, { textAlign: "center" }]}>🔒 Authentication Required</Text>
+                <Text style={[styles.cardText, { marginTop: 8, textAlign: "center", marginBottom: 20 }]}>
+                  Please authenticate to access your voting key.
+                </Text>
+                <GradientButton
+                  title="Try Again"
+                  icon="🔐"
+                  onPress={authenticateUser}
+                  style={{ width: "100%" }}
+                />
+              </>
             )}
-            <Text style={[styles.label, { marginTop: 8 }]}>6-digit code</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="000000"
-              placeholderTextColor={colors.muted}
-              keyboardType="number-pad"
-              maxLength={6}
-              value={code}
-              onChangeText={setCode}
-            />
-            <GradientButton
-              title="Verify & continue"
-              icon="✓"
-              loading={busy}
-              disabled={busy || code.length < 6}
-              onPress={verifyCode}
-            />
           </GlassCard>
         </FadeIn>
       )}

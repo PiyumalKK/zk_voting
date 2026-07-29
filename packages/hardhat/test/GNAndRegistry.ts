@@ -60,15 +60,13 @@ describe("GN Officer & ElectionRegistry", function () {
         .withArgs(voter1.address);
     });
 
-    it("GN cannot add voters during Registration phase (Setup only)", async function () {
+    it("GN can add voters during Registration phase", async function () {
       await voting.setGNOfficer(gn.address);
       // Move to Registration
       await voting.startRegistration(3600);
-      // addVoters is now restricted to Setup phase only — expect WrongPhase revert
-      await expect(voting.connect(gn).addVoters([voter2.address], [true])).to.be.revertedWithCustomError(
-        voting,
-        "Voting__WrongPhase",
-      );
+      await expect(voting.connect(gn).addVoters([voter2.address], [true]))
+        .to.emit(voting, "VoterAdded")
+        .withArgs(voter2.address);
     });
 
     it("non-GN cannot add voters", async function () {
@@ -83,7 +81,7 @@ describe("GN Officer & ElectionRegistry", function () {
       await voting.startVoting(3600);
       await expect(voting.connect(gn).addVoters([voter2.address], [true])).to.be.revertedWithCustomError(
         voting,
-        "Voting__WrongPhase",
+        "Voting__SetupOrRegistrationRequired",
       );
     });
 

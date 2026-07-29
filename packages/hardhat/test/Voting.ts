@@ -71,13 +71,26 @@ describe("Voting", function () {
       await expect(voting.setQuestion("new?")).to.be.revertedWithCustomError(voting, "Voting__WrongPhase");
     });
 
-    it("rejects addVoters outside Setup and Registration phases", async function () {
-      // addVoters is now restricted to Setup phase only (not Voting/Ended)
-      // Current phase is Registration (from beforeEach), so advance to Voting first
+    it("allows addVoters during Registration phase", async function () {
+      // Current phase is Registration (from beforeEach)
+      await expect(voting.addVoters([nonVoter.address], [true]))
+        .to.emit(voting, "VoterAdded")
+        .withArgs(nonVoter.address);
+    });
+
+    it("rejects addVoters during Voting and Ended phases", async function () {
+      // Advance to Voting
       await voting.startVoting(3600);
       await expect(voting.addVoters([nonVoter.address], [true])).to.be.revertedWithCustomError(
         voting,
-        "Voting__WrongPhase",
+        "Voting__SetupOrRegistrationRequired",
+      );
+
+      // Advance to Ended
+      await voting.endElection();
+      await expect(voting.addVoters([nonVoter.address], [true])).to.be.revertedWithCustomError(
+        voting,
+        "Voting__SetupOrRegistrationRequired",
       );
     });
 

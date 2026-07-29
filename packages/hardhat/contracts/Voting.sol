@@ -37,6 +37,7 @@ contract Voting is Ownable {
     error Voting__InvalidDuration();
     error Voting__TooManyCandidates(uint256 provided, uint256 max);
     error Voting__NoCandidates();
+    error Voting__SetupOrRegistrationRequired(Phase actual);
 
     //////////////////
     /// Types ////////
@@ -177,12 +178,15 @@ contract Voting is Ownable {
         emit GNOfficerUpdated(_gnOfficer);
     }
 
-    /// @notice Batch updates the allowlist of voter EOAs. Only allowed during Setup.
+    /// @notice Batch updates the allowlist of voter EOAs. Allowed during Setup and Registration.
     function addVoters(address[] calldata voters, bool[] calldata statuses)
         external
         onlyOwnerOrGN
-        inPhase(Phase.Setup)
     {
+        _maybeAdvancePhase();
+        if (s_phase != Phase.Setup && s_phase != Phase.Registration) {
+            revert Voting__SetupOrRegistrationRequired(s_phase);
+        }
         require(voters.length == statuses.length, "Voters and statuses length mismatch");
         for (uint256 i = 0; i < voters.length; i++) {
             s_voters[s_electionId][voters[i]] = statuses[i];
