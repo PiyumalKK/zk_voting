@@ -9,13 +9,14 @@ interface IVotingView {
     function getCandidates() external view returns (string[] memory);
     function getVotingData() external view returns (
         string memory question,
-        string[] memory candidates,
+        address contractOwner,
         uint8 phase,
         uint256 registrationEndTime,
         uint256 votingEndTime,
-        uint256 treeSize,
-        uint256 treeDepth,
-        uint256 root
+        uint256 size,
+        uint256 depth,
+        uint256 root,
+        uint256 candidateCount
     );
 }
 

@@ -47,3 +47,23 @@ packages/hardhat/typechain-types/
 
 # Build outputs
 *.tsbuildinfo
+
+# LaTeX build artifacts (Conference paper & Final Report)
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+Conference paper/main.pdf
+Final Report/Report Template/Report.pdf
+Final Report/Report Template/Images/gen_*
+Final Report/guidelines*.txt

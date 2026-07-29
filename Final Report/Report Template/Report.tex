@@ -1,0 +1,144 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%% Document class and package options
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass[a4paper,12pt]{report}
+
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{listings}
+\usepackage{multicol}
+\usepackage{enumerate}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit, backgrounds, calc}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Include page set-up options
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\input{pagesetup.cfg}
+
+%% ____Bibliography____%%
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{chapterbib}
+\usepackage[breaklinks]{hyperref}
+\hypersetup{colorlinks=true,citecolor=blue,linkcolor=blue,urlcolor=blue}
+
+%% ____URL formatting____%%
+\usepackage{url} 
+\def\UrlBreaks{\do/}
+
+%% ____Code listing style____%%
+\definecolor{codebg}{RGB}{247,249,251}
+\definecolor{codekw}{RGB}{41,65,122}
+\definecolor{codecm}{RGB}{110,120,130}
+\definecolor{codestr}{RGB}{50,120,50}
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecm}\itshape,
+  stringstyle=\color{codestr},
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{codekw!30},
+  framesep=5pt,
+  aboveskip=8pt,
+  belowskip=8pt,
+  captionpos=b,
+  showstringspaces=false,
+  columns=fullflexible,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt
+}
+
+%% ____Theorem-like environments____%%
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{property}{Property}[chapter]
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[chapter]
+
+%% ____Custom math commands____%%
+\newcommand{\Poseidon}{\mathsf{Poseidon}}
+\newcommand{\field}{\mathbb{F}_p}
+
+\begin{document}
+	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% The Front Matter %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Page
+\include{Front_matters/cover}
+
+\renewcommand{\thepage}{\roman{page}}
+
+\input{Front_matters/abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+\input{Front_matters/acknowledgements}
+\addcontentsline{toc}{chapter}{Acknowledgements}
+
+\tableofcontents
+\addcontentsline{toc}{chapter}{Contents}
+
+\listoffigures	
+\addcontentsline{toc}{chapter}{List of Figures}
+
+\listoftables
+\addcontentsline{toc}{chapter}{List of Tables}
+
+\input{Front_matters/acronyms}
+\addcontentsline{toc}{chapter}{Acronyms}
+
+
+%%%%%%%%%%%%%%%%%%%%%%% The main matters %%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{Chapters/ch_1}
+
+\renewcommand{\thepage}{\arabic{page}}
+\setcounter{page}{1}
+
+\input{Chapters/ch_2}
+\input{Chapters/ch_3}
+\input{Chapters/ch_4}
+\input{Chapters/ch_5}
+\input{Chapters/ch_6}
+\input{Chapters/ch_7}
+\input{Chapters/ch_8}
+\input{Chapters/ch_9}
+
+
+%%%%%%%%%%%%%%%%%%%%% The End matters %%%%%%%%%%%%%%%%%%%%%
+
+\begin{appendix}
+\include{End_matters/appendix_01}
+\include{End_matters/appendix_02}
+\end{appendix}
+
+%% ____BIBLIOGRAPHY____%%
+\bibliographystyle{ieeetr}
+\bibliography{bibliography}
+\addcontentsline{toc}{chapter}{Bibliography}
+
+\end{document}
+
+\addcontentsline{toc}{chapter}{APPENDIX}
+
+%%%%%%%%%%%%%%%%%%%%% Bibiliography %%%%%%%%%%%%%%%%%%%%%
+\cleardoublepage
+\bibliographystyle{ieeetr}
+\refstepcounter{chapter}
+\addcontentsline {toc}{chapter}{\bibname}
+% _____Add Bibiliography using BibTex file_____
+\bibliography{bibliography} 
+
+\end{document}
