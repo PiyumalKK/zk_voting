@@ -1,0 +1,1106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZK Voting — Architecture Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#141821; --ink-soft:#3a4353; --muted:#606b7d; --line:#dbe1ea;
+    --bg:#ffffff; --bg-soft:#f4f6fb; --bg-code:#f3f5fa; --code-ink:#232b3a; --code-line:#d7dde8;
+    --primary:#4a38c0; --primary-d:#3a2bb0; --primary-l:#eeeaff;
+    --cyan:#0a7d8c; --cyan-l:#e0f7fa; --amber:#9a6a06; --amber-l:#fbf1d8;
+    --rose:#c02a5e; --rose-l:#fbe2ec; --green:#0f7a53; --green-l:#dcf3ea;
+    --chain-go:#0a7d8c; --sol:#5b4bd6; --mobile:#c25327; --web:#2456c4;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{
+    margin:0;background:var(--bg-soft);color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:14.5px;line-height:1.62;
+  }
+  main{max-width:940px;margin:0 auto;background:var(--bg);
+    box-shadow:0 0 0 1px var(--line);}
+  section.page{padding:46px 60px 60px;border-bottom:1px solid var(--line);}
+  h1,h2,h3,h4{font-family:'Space Grotesk','Inter',sans-serif;line-height:1.2;color:var(--ink);}
+  h2{font-size:25px;margin:0 0 4px;letter-spacing:-.01em}
+  h3{font-size:18px;margin:30px 0 8px;padding-top:6px}
+  h4{font-size:14.5px;margin:20px 0 6px;color:var(--primary-d);text-transform:uppercase;letter-spacing:.06em;font-size:12px}
+  p{margin:9px 0}
+  a{color:var(--primary-d);text-decoration:none}
+  code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.86em;
+    background:var(--primary-l);color:var(--primary-d);padding:1px 5px;border-radius:4px;}
+  .kicker{font-family:'Space Grotesk';text-transform:uppercase;letter-spacing:.16em;
+    font-size:11px;font-weight:600;color:var(--primary);margin-bottom:6px}
+  .lead{font-size:15.5px;color:var(--ink-soft)}
+  .sec-no{font-family:'Space Grotesk';font-weight:700;color:var(--primary);
+    font-size:13px;letter-spacing:.05em}
+
+  /* cover — light, prints cleanly in B&W */
+  .cover{min-height:96vh;display:flex;flex-direction:column;justify-content:center;
+    padding:70px 60px;background:
+      radial-gradient(1000px 460px at 90% -10%, #eeeaff, transparent 60%),
+      radial-gradient(820px 460px at -6% 110%, #e2f5f8, transparent 55%),
+      #ffffff;
+    color:var(--ink);border-bottom:1px solid var(--line)}
+  .cover .tag{font-family:'Space Grotesk';letter-spacing:.28em;text-transform:uppercase;
+    font-size:12px;color:var(--primary);font-weight:600}
+  .cover h1{font-size:58px;margin:16px 0 6px;color:var(--ink);letter-spacing:-.02em;line-height:1.02}
+  .cover h1 span{color:var(--primary-d)}
+  .cover .sub{font-size:19px;color:var(--ink-soft);max-width:620px;margin-top:8px}
+  .cover .meta{margin-top:44px;display:flex;gap:38px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+  .cover .meta b{display:block;color:var(--ink);font-size:15px;font-family:'Space Grotesk';font-weight:600;margin-top:2px}
+  .cover .chips{margin-top:30px;display:flex;gap:10px;flex-wrap:wrap}
+  .cover .chips span{border:1px solid var(--line);border-radius:999px;
+    padding:5px 13px;font-size:12px;color:var(--ink-soft);font-weight:500;background:var(--bg-soft)}
+
+  /* toc */
+  .toc{columns:2;column-gap:44px}
+  .toc a{display:flex;justify-content:space-between;gap:10px;padding:7px 0;
+    border-bottom:1px dashed var(--line);color:var(--ink);break-inside:avoid}
+  .toc a b{font-family:'Space Grotesk';color:var(--primary);margin-right:10px}
+  .toc a span.pg{color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* figure / diagram */
+  figure{margin:20px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;break-inside:avoid}
+  figure .cap{background:var(--bg-soft);border-top:1px solid var(--line);
+    padding:8px 14px;font-size:12px;color:var(--muted);display:flex;gap:8px}
+  figure .cap b{color:var(--ink-soft);font-weight:600}
+  figure svg{display:block;width:100%;height:auto}
+  .fig-pad{padding:18px 20px}
+
+  /* code — light, print-legible in B&W */
+  .code{margin:16px 0;border-radius:10px;overflow:hidden;border:1px solid var(--code-line);break-inside:avoid}
+  .code .fname{background:#e7ebf3;color:#46506a;font-family:'JetBrains Mono',monospace;
+    font-size:11.5px;padding:7px 13px;display:flex;justify-content:space-between;border-bottom:1px solid var(--code-line)}
+  .code .fname .path{color:#2a3346;font-weight:500}
+  .code .fname .ln{color:#5a6478}
+  .code pre{margin:0;background:var(--bg-code);color:var(--code-ink);
+    padding:13px 15px;overflow-x:auto;font-family:'JetBrains Mono',monospace;
+    font-size:12px;line-height:1.62}
+  .code pre .c{color:#6b7688;font-style:italic}  /* comment */
+  .code pre .k{color:#6d28aa;font-weight:600}     /* keyword */
+  .code pre .s{color:#0d7040}     /* string */
+  .code pre .t{color:#0a6473}     /* type */
+  .code pre .f{color:#8a5a00}     /* func */
+  .code pre .n{color:#b0480c}     /* number/const */
+
+  /* callouts */
+  .call{border-left:4px solid var(--primary);background:var(--primary-l);
+    padding:11px 16px;border-radius:0 8px 8px 0;margin:16px 0;font-size:13.5px;break-inside:avoid}
+  .call.key{border-color:var(--cyan);background:var(--cyan-l)}
+  .call.gap{border-color:var(--amber);background:var(--amber-l)}
+  .call.warn{border-color:var(--rose);background:var(--rose-l)}
+  .call b.lbl{font-family:'Space Grotesk';text-transform:uppercase;letter-spacing:.07em;
+    font-size:11px;display:block;margin-bottom:2px;color:var(--primary-d)}
+  .call.key b.lbl{color:#0a6f7d} .call.gap b.lbl{color:#8a5a06} .call.warn b.lbl{color:#a3184c}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:12.8px;break-inside:avoid}
+  th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--bg-soft);font-family:'Space Grotesk';font-weight:600;font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)}
+  td code{font-size:.92em}
+  tr:last-child td{border-bottom:none}
+
+  ul.tight{margin:8px 0;padding-left:20px} ul.tight li{margin:3px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;
+    font-family:'Space Grotesk'}
+  .p-go{background:#dbf6fc;color:#046b83} .p-sol{background:#ece8ff;color:#4e3ec0}
+  .p-web{background:#e2ecff;color:#1d4fb8} .p-mob{background:#ffe6dc;color:#b64a24}
+  .p-zk{background:#e0f5ee;color:#0c7052}
+  .foot{color:var(--muted);font-size:11px;text-align:center;padding:22px 0}
+
+  @page{size:A4;margin:14mm}
+  @media print{
+    body{background:#fff;font-size:10.6px}
+    main{max-width:none;box-shadow:none}
+    section.page{padding:0 0 8mm;border:none;page-break-before:always}
+    section.cover{page-break-before:avoid;min-height:auto}
+    .cover h1{font-size:44px}
+    h2{font-size:20px} h3{font-size:15px}
+    figure,.code,table,.call,.grid2{break-inside:avoid}
+    a{color:var(--ink)}
+    .toc a span.pg{display:none}
+  }
+</style>
+</head>
+<body>
+<main>
+
+<!-- ============================== COVER ============================== -->
+<section class="page cover">
+  <div class="tag">Final Year Project · Technical Reference</div>
+  <h1>ZK Voting<br><span>Architecture Reference</span></h1>
+  <div class="sub">A private, Sybil-resistant voting system built on zero-knowledge proofs — spanning a Noir circuit, Solidity contracts, a dual-backend web app, a custom Go blockchain, and a native mobile voter app.</div>
+  <div class="chips">
+    <span>Noir · UltraHonk ZK</span><span>Solidity · LeanIMT · Poseidon</span>
+    <span>Go embedded-EVM chain</span><span>Next.js + wagmi/viem</span><span>React Native (Expo)</span>
+  </div>
+  <div class="meta">
+    <div>Scope<b>5 packages · end-to-end</b></div>
+    <div>Focus<b>How it works &amp; how it's wired</b></div>
+    <div>Audience<b>Developer continuing the build</b></div>
+    <div>Generated<b>29 July 2026</b></div>
+  </div>
+</section>
+
+<!-- ============================== TOC ============================== -->
+<section class="page">
+  <div class="kicker">Contents</div>
+  <h2>What's inside</h2>
+  <p class="lead">Each section leads with a diagram, then the exact code that implements it — with <code>folder/file:line</code> references you can jump to.</p>
+  <div class="toc" style="margin-top:22px">
+    <a href="#s1"><span><b>1</b>System overview &amp; actors</span><span class="pg">03</span></a>
+    <a href="#s2"><span><b>2</b>Monorepo layout</span><span class="pg">04</span></a>
+    <a href="#s3"><span><b>3</b>The ZK voting model</span><span class="pg">05</span></a>
+    <a href="#s4"><span><b>4</b>Smart contracts</span><span class="pg">07</span></a>
+    <a href="#s5"><span><b>5</b>The dual-backend seam</span><span class="pg">10</span></a>
+    <a href="#s6"><span><b>6</b>Custom Go blockchain</span><span class="pg">12</span></a>
+    <a href="#s7"><span><b>7</b>Next.js web app (officials)</span><span class="pg">16</span></a>
+    <a href="#s8"><span><b>8</b>Mobile voter app</span><span class="pg">18</span></a>
+    <a href="#s9"><span><b>9</b>How it's all wired</span><span class="pg">20</span></a>
+    <a href="#s10"><span><b>10</b>Gaps &amp; where to extend</span><span class="pg">21</span></a>
+  </div>
+
+  <h3 style="margin-top:34px">Reading key</h3>
+  <div class="grid2">
+    <div class="call"><b class="lbl">Note</b>Context and design rationale.</div>
+    <div class="call key"><b class="lbl">Key idea</b>A load-bearing concept — internalise these.</div>
+    <div class="call gap"><b class="lbl">Gap / TODO</b>Known incomplete or divergent area.</div>
+    <div class="call warn"><b class="lbl">Watch out</b>A subtle trap or invariant.</div>
+  </div>
+  <p style="margin-top:14px">Package color code:
+    <span class="pill p-zk">circuits</span>
+    <span class="pill p-sol">hardhat / contracts</span>
+    <span class="pill p-web">nextjs</span>
+    <span class="pill p-go">blockchain (Go)</span>
+    <span class="pill p-mob">mobile</span>
+  </p>
+</section>
+
+<!-- ============================== §1 OVERVIEW ============================== -->
+<section class="page" id="s1">
+  <div class="kicker"><span class="sec-no">01</span> &nbsp;System</div>
+  <h2>System overview &amp; actors</h2>
+  <p class="lead">The system lets a citizen prove they are an eligible, registered voter and cast exactly one vote — <b>without revealing who they are</b>. Officials run a web app; voters use a phone.</p>
+
+  <figure>
+  <svg viewBox="0 0 900 470" font-family="Inter, sans-serif" font-size="13">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5b46e5"/></marker>
+      <marker id="arg" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#00add8"/></marker>
+    </defs>
+    <!-- actors -->
+    <g>
+      <rect x="30" y="40" width="150" height="70" rx="10" fill="#e2ecff" stroke="#2f6fed"/>
+      <text x="105" y="66" text-anchor="middle" font-weight="700" fill="#1d4fb8">Admin</text>
+      <text x="105" y="86" text-anchor="middle" font-size="11" fill="#3a4353">Election Commission</text>
+      <text x="105" y="100" text-anchor="middle" font-size="11" fill="#3a4353">creates divisions</text>
+    </g>
+    <g>
+      <rect x="30" y="200" width="150" height="70" rx="10" fill="#e2ecff" stroke="#2f6fed"/>
+      <text x="105" y="226" text-anchor="middle" font-weight="700" fill="#1d4fb8">GN Officer</text>
+      <text x="105" y="246" text-anchor="middle" font-size="11" fill="#3a4353">Grama Niladhari</text>
+      <text x="105" y="260" text-anchor="middle" font-size="11" fill="#3a4353">enrolls voters</text>
+    </g>
+    <g>
+      <rect x="30" y="360" width="150" height="70" rx="10" fill="#ffe6dc" stroke="#e8663a"/>
+      <text x="105" y="386" text-anchor="middle" font-weight="700" fill="#b64a24">Voter</text>
+      <text x="105" y="406" text-anchor="middle" font-size="11" fill="#3a4353">citizen w/ phone</text>
+      <text x="105" y="420" text-anchor="middle" font-size="11" fill="#3a4353">registers + votes</text>
+    </g>
+    <!-- apps -->
+    <rect x="300" y="60" width="200" height="150" rx="12" fill="#f4f7ff" stroke="#2f6fed" stroke-width="1.5"/>
+    <text x="400" y="86" text-anchor="middle" font-weight="700" fill="#1d4fb8">Next.js Web App</text>
+    <text x="400" y="108" text-anchor="middle" font-size="11" fill="#3a4353">Admin · GN · Results ·</text>
+    <text x="400" y="124" text-anchor="middle" font-size="11" fill="#3a4353">Audit · Prover · API routes</text>
+    <text x="400" y="150" text-anchor="middle" font-size="10.5" fill="#6b7688">serves OTP, merkle-path,</text>
+    <text x="400" y="164" text-anchor="middle" font-size="10.5" fill="#6b7688">election + verify-vote</text>
+    <text x="400" y="188" text-anchor="middle" font-size="10.5" fill="#6b7688">to the mobile app</text>
+
+    <rect x="300" y="330" width="200" height="110" rx="12" fill="#fff2ec" stroke="#e8663a" stroke-width="1.5"/>
+    <text x="400" y="356" text-anchor="middle" font-weight="700" fill="#b64a24">Mobile Voter App</text>
+    <text x="400" y="378" text-anchor="middle" font-size="11" fill="#3a4353">Onboard · Register</text>
+    <text x="400" y="394" text-anchor="middle" font-size="11" fill="#3a4353">Verify · Vote</text>
+    <text x="400" y="418" text-anchor="middle" font-size="10.5" fill="#6b7688">hardware keystore + ZK proof</text>
+
+    <!-- chain -->
+    <rect x="620" y="150" width="240" height="180" rx="12" fill="#eafafd" stroke="#00add8" stroke-width="1.5"/>
+    <text x="740" y="176" text-anchor="middle" font-weight="700" fill="#046b83">Blockchain (either backend)</text>
+    <line x1="640" y1="188" x2="840" y2="188" stroke="#bfe9f2"/>
+    <text x="740" y="210" text-anchor="middle" font-size="11.5" fill="#3a4353">Voting.sol · Verifier</text>
+    <text x="740" y="228" text-anchor="middle" font-size="11.5" fill="#3a4353">ElectionRegistry · NicRegistry</text>
+    <text x="740" y="246" text-anchor="middle" font-size="11.5" fill="#3a4353">LeanIMT Merkle tree</text>
+    <rect x="640" y="262" width="95" height="52" rx="8" fill="#ece8ff" stroke="#7b6cf6"/>
+    <text x="687" y="283" text-anchor="middle" font-size="10.5" fill="#4e3ec0">Hardhat</text>
+    <text x="687" y="298" text-anchor="middle" font-size="10" fill="#4e3ec0">EVM · :8545</text>
+    <rect x="745" y="262" width="95" height="52" rx="8" fill="#dbf6fc" stroke="#00add8"/>
+    <text x="792" y="283" text-anchor="middle" font-size="10.5" fill="#046b83">Go node</text>
+    <text x="792" y="298" text-anchor="middle" font-size="10" fill="#046b83">REST · :3001</text>
+
+    <!-- arrows -->
+    <line x1="180" y1="75" x2="298" y2="110" stroke="#5b46e5" stroke-width="1.6" marker-end="url(#ar)"/>
+    <line x1="180" y1="235" x2="298" y2="150" stroke="#5b46e5" stroke-width="1.6" marker-end="url(#ar)"/>
+    <line x1="180" y1="395" x2="298" y2="390" stroke="#5b46e5" stroke-width="1.6" marker-end="url(#ar)"/>
+    <line x1="500" y1="135" x2="618" y2="210" stroke="#00add8" stroke-width="1.6" marker-end="url(#arg)"/>
+    <line x1="500" y1="360" x2="618" y2="280" stroke="#00add8" stroke-width="1.6" marker-end="url(#arg)"/>
+    <line x1="400" y1="330" x2="400" y2="212" stroke="#8a94a6" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+    <text x="360" y="272" font-size="10" fill="#6b7688" transform="rotate(-90 360 272)">HTTPS API</text>
+  </svg>
+  <figcaption class="cap"><b>Fig 1.1</b> System context — four actors, two clients, one chain served by either backend.</figcaption>
+  </figure>
+
+  <h3>The four actors</h3>
+  <table>
+    <tr><th>Actor</th><th>Client</th><th>Does</th><th>Key code</th></tr>
+    <tr><td><b>Admin</b> (Election Commission)</td><td>Web</td><td>Creates a <code>Voting</code> contract per polling division, sets question/candidates, drives phase transitions, assigns GN officers.</td><td><code>nextjs/app/voting/admin/page.tsx</code></td></tr>
+    <tr><td><b>GN Officer</b> (Grama Niladhari)</td><td>Web</td><td>Enrolls voters for their own division only (allowlist + NIC dedup). Cannot change the election.</td><td><code>nextjs/app/gn/register/page.tsx</code></td></tr>
+    <tr><td><b>Voter</b></td><td>Mobile</td><td>Generates a hardware key, registers a ZK commitment, then casts one anonymous vote.</td><td><code>mobile/app/*.tsx</code></td></tr>
+    <tr><td><b>Observer</b> / public</td><td>Web</td><td>Reads live results, national aggregate, and audits any nullifier without de-anonymising it.</td><td><code>nextjs/app/results</code>, <code>app/audit</code></td></tr>
+  </table>
+
+  <div class="call key"><b class="lbl">Key idea — separation of duties</b>
+  No single role can both <i>enroll</i> a voter and <i>be</i> that voter. The Admin owns the election, the GN owns enrollment, and the voter owns their secret. Anonymity does not depend on trusting any of them — it is enforced by the ZK proof.</div>
+
+  <h3>End-to-end lifecycle at a glance</h3>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 120" font-family="Inter" font-size="12.5">
+    <defs><marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#6b7688"/></marker></defs>
+    <g>
+      <rect x="6"  y="40" width="128" height="46" rx="9" fill="#e2ecff" stroke="#2f6fed"/><text x="70" y="60" text-anchor="middle" font-weight="600" fill="#1d4fb8">1 · Setup</text><text x="70" y="76" text-anchor="middle" font-size="10.5" fill="#3a4353">admin: division</text>
+      <rect x="164" y="40" width="128" height="46" rx="9" fill="#e2ecff" stroke="#2f6fed"/><text x="228" y="60" text-anchor="middle" font-weight="600" fill="#1d4fb8">2 · Enroll</text><text x="228" y="76" text-anchor="middle" font-size="10.5" fill="#3a4353">GN: add voters</text>
+      <rect x="322" y="40" width="128" height="46" rx="9" fill="#fff2ec" stroke="#e8663a"/><text x="386" y="60" text-anchor="middle" font-weight="600" fill="#b64a24">3 · Register</text><text x="386" y="76" text-anchor="middle" font-size="10.5" fill="#3a4353">phone: commitment</text>
+      <rect x="480" y="40" width="128" height="46" rx="9" fill="#fff2ec" stroke="#e8663a"/><text x="544" y="60" text-anchor="middle" font-weight="600" fill="#b64a24">4 · Vote</text><text x="544" y="76" text-anchor="middle" font-size="10.5" fill="#3a4353">phone: ZK proof</text>
+      <rect x="638" y="40" width="128" height="46" rx="9" fill="#e0f5ee" stroke="#12896a"/><text x="702" y="60" text-anchor="middle" font-weight="600" fill="#0c7052">5 · Tally</text><text x="702" y="76" text-anchor="middle" font-size="10.5" fill="#3a4353">public results</text>
+    </g>
+    <line x1="134" y1="63" x2="162" y2="63" stroke="#6b7688" marker-end="url(#ar2)"/>
+    <line x1="292" y1="63" x2="320" y2="63" stroke="#6b7688" marker-end="url(#ar2)"/>
+    <line x1="450" y1="63" x2="478" y2="63" stroke="#6b7688" marker-end="url(#ar2)"/>
+    <line x1="608" y1="63" x2="636" y2="63" stroke="#6b7688" marker-end="url(#ar2)"/>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 1.2</b> The five stages map directly onto the <code>Voting.sol</code> phase machine (§4).</figcaption></figure>
+</section>
+
+<!-- ============================== §2 MONOREPO ============================== -->
+<section class="page" id="s2">
+  <div class="kicker"><span class="sec-no">02</span> &nbsp;Structure</div>
+  <h2>Monorepo layout</h2>
+  <p class="lead">A Yarn workspaces monorepo. Five packages, each a distinct runtime, sharing one contract ABI as the source of truth.</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 340" font-family="JetBrains Mono, monospace" font-size="12.5">
+    <text x="10" y="24" font-weight="700" fill="#141821">zk_voting/</text>
+    <text x="30" y="52" fill="#3a4353">├─ packages/</text>
+
+    <g>
+      <rect x="55" y="66" width="250" height="30" rx="6" fill="#e0f5ee" stroke="#12896a"/>
+      <text x="68" y="86" fill="#0c7052">├─ circuits/ <tspan fill="#6b7688">— Noir ZK circuit</tspan></text>
+    </g>
+    <g>
+      <rect x="55" y="104" width="250" height="30" rx="6" fill="#ece8ff" stroke="#7b6cf6"/>
+      <text x="68" y="124" fill="#4e3ec0">├─ hardhat/ <tspan fill="#6b7688">— Solidity + deploy</tspan></text>
+    </g>
+    <g>
+      <rect x="55" y="142" width="250" height="30" rx="6" fill="#e2ecff" stroke="#2f6fed"/>
+      <text x="68" y="162" fill="#1d4fb8">├─ nextjs/ <tspan fill="#6b7688">— web app + API</tspan></text>
+    </g>
+    <g>
+      <rect x="55" y="180" width="250" height="30" rx="6" fill="#dbf6fc" stroke="#00add8"/>
+      <text x="68" y="200" fill="#046b83">├─ blockchain/ <tspan fill="#6b7688">— Go EVM node</tspan></text>
+    </g>
+    <g>
+      <rect x="55" y="218" width="250" height="30" rx="6" fill="#fff2ec" stroke="#e8663a"/>
+      <text x="68" y="238" fill="#b64a24">└─ mobile/ <tspan fill="#6b7688">— Expo voter app</tspan></text>
+    </g>
+
+    <!-- ABI flow -->
+    <text x="360" y="52" fill="#6b7688" font-family="Inter">Shared source of truth →</text>
+    <rect x="360" y="70" width="470" height="66" rx="9" fill="#fdf3dc" stroke="#c9820b"/>
+    <text x="376" y="92" font-family="Inter" font-weight="700" fill="#8a5a06">Compiled contract artifacts (Hardhat)</text>
+    <text x="376" y="112" font-family="Inter" font-size="11.5" fill="#3a4353">nextjs consumes <tspan font-family="JetBrains Mono">contracts/deployedContracts.ts</tspan></text>
+    <text x="376" y="128" font-family="Inter" font-size="11.5" fill="#3a4353">Go node embeds <tspan font-family="JetBrains Mono">blockchain/assets/*.json</tspan> (make sync-artifacts)</text>
+
+    <rect x="360" y="160" width="470" height="150" rx="9" fill="#f6f8fb" stroke="#e4e8ef"/>
+    <text x="376" y="182" font-family="Inter" font-weight="700" fill="#141821">Who depends on what</text>
+    <text x="376" y="204" font-family="Inter" font-size="11.5" fill="#3a4353">circuits → generates Verifier.sol (HonkVerifier)</text>
+    <text x="376" y="222" font-family="Inter" font-size="11.5" fill="#3a4353">hardhat → compiles all .sol → artifacts</text>
+    <text x="376" y="240" font-family="Inter" font-size="11.5" fill="#3a4353">nextjs → wagmi/viem (EVM) OR REST (Go) via one facade</text>
+    <text x="376" y="258" font-family="Inter" font-size="11.5" fill="#3a4353">blockchain → runs the same .sol inside an embedded Geth EVM</text>
+    <text x="376" y="276" font-family="Inter" font-size="11.5" fill="#3a4353">mobile → talks to nextjs API + chain RPC</text>
+    <text x="376" y="298" font-family="Inter" font-size="10.5" fill="#6b7688">(evm-sandbox/ is an earlier EVM experiment, not in the live path)</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 2.1</b> Package map. One Solidity codebase; two chains can run it.</figcaption></figure>
+
+  <table>
+    <tr><th>Package</th><th>Runtime</th><th>Responsibility</th><th>Entry point</th></tr>
+    <tr><td><span class="pill p-zk">circuits</span></td><td>Noir</td><td>Proves in ZK that the voter knows a secret behind a leaf in the Merkle tree.</td><td><code>circuits/src/main.nr</code></td></tr>
+    <tr><td><span class="pill p-sol">hardhat</span></td><td>Solidity / EVM</td><td>The on-chain rules: phased election, allowlist, Merkle tree, proof verification, division registry, NIC dedup.</td><td><code>hardhat/contracts/*.sol</code></td></tr>
+    <tr><td><span class="pill p-web">nextjs</span></td><td>Next.js 15</td><td>Officials' UI (admin/GN/results/audit) + server API routes the mobile app calls.</td><td><code>nextjs/app/</code></td></tr>
+    <tr><td><span class="pill p-go">blockchain</span></td><td>Go + Geth EVM</td><td>A wallet-free, gas-free, REST-driven drop-in chain that runs the same contracts.</td><td><code>blockchain/cmd/node/main.go</code></td></tr>
+    <tr><td><span class="pill p-mob">mobile</span></td><td>React Native / Expo</td><td>The voter's device: hardware keystore, commitment, on-device proof, anonymous submit.</td><td><code>mobile/app/</code></td></tr>
+  </table>
+
+  <div class="call"><b class="lbl">Note — one ABI, two chains</b>
+  The Go node is not a re-implementation of the contract logic. It embeds the <i>exact</i> Hardhat-compiled bytecode and runs it inside a real Geth EVM. That is why a single <code>Voting.sol</code> change can ripple into hand-written Go bindings — see §6 and the divergence in §10.</div>
+</section>
+
+<!-- ============================== §3 ZK MODEL ============================== -->
+<section class="page" id="s3">
+  <div class="kicker"><span class="sec-no">03</span> &nbsp;Mechanism</div>
+  <h2>The exact voting mechanism</h2>
+  <p class="lead">This is the behind-the-scenes walkthrough of how the current implementation actually works — verified against the code. It rests on three primitives (a <b>Poseidon commitment</b>, a <b>nullifier</b>, a <b>Merkle inclusion proof</b>) wired across five stages: <b>Setup → Enroll → Register → Vote → Verify</b>.</p>
+
+  <div class="call warn"><b class="lbl">Correcting a common mental model</b>
+  An earlier/simpler description of this system differs from what the code does today. The table below states what actually happens, with the file that proves it.</div>
+
+  <table>
+    <tr><th>Intuition (older model)</th><th>What the current code actually does</th><th>Proof</th></tr>
+    <tr><td>Admin deploys one contract holding a <b>genesis question</b> in the genesis block.</td><td>There is <b>no genesis question</b> in the EVM app. Each polling division is its <b>own</b> <code>Voting</code> contract; the question &amp; candidates are <b>constructor arguments</b> set at deploy and editable by the admin during the <i>Setup</i> phase. (Genesis-question only exists in the standalone Go chain.)</td><td><code>deploy/01_deploy_divisions.ts</code>, <code>Voting.sol:150</code></td></tr>
+    <tr><td>By <b>registering</b>, the voter is added to the allowed list.</td><td>The <b>GN officer adds you to the allowlist first</b>, during Setup — before you ever register. <code>register()</code> then <i>requires</i> you are already allowlisted, and instead just inserts your commitment leaf.</td><td><code>gn/register</code> → <code>addVoters</code>; <code>Voting.sol:253</code></td></tr>
+    <tr><td>The commitment key is created client-side from a secret + nullifier and added to the Merkle tree.</td><td>✔ Correct on the key: <code>commitment = poseidon2(nullifier, secret)</code>, computed on-device. But the leaf is inserted into the tree <b>on-chain</b>, in contract storage — not on the client.</td><td><code>crypto.ts:33</code>; <code>Voting.sol:261</code></td></tr>
+    <tr><td>At vote time the <b>client rebuilds the Merkle tree to check whether the user has already voted</b>.</td><td>The <b>server</b> (<code>/api/merkle-path</code>) rebuilds the tree — only to produce the <b>inclusion proof</b> the phone needs to make a ZK proof. Whether you already voted is decided <b>on-chain by the nullifier hash</b>: a repeat reverts <code>Voting__NullifierHashAlreadyUsed</code>.</td><td><code>merkle-path/route.ts</code>; <code>Voting.sol:297</code></td></tr>
+    <tr><td>The voting transaction is submitted.</td><td>✔ but from a <b>fresh burner wallet</b> so the on-chain sender can't be linked to the voter; the ZK proof is the only authentication.</td><td><code>chain.ts:109</code>; <code>Voting.sol:293</code></td></tr>
+  </table>
+
+  <h3>The two secrets and what's derived from them</h3>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 250" font-family="Inter" font-size="12.5">
+    <defs><marker id="ar3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#12896a"/></marker></defs>
+    <rect x="20" y="30" width="150" height="44" rx="8" fill="#e0f5ee" stroke="#12896a"/><text x="95" y="50" text-anchor="middle" font-weight="700" fill="#0c7052">nullifier</text><text x="95" y="66" text-anchor="middle" font-size="10.5" fill="#3a4353">random field elt</text>
+    <rect x="20" y="120" width="150" height="44" rx="8" fill="#e0f5ee" stroke="#12896a"/><text x="95" y="140" text-anchor="middle" font-weight="700" fill="#0c7052">secret</text><text x="95" y="156" text-anchor="middle" font-size="10.5" fill="#3a4353">random field elt</text>
+
+    <rect x="300" y="30" width="230" height="44" rx="8" fill="#ece8ff" stroke="#7b6cf6"/><text x="415" y="50" text-anchor="middle" font-weight="700" fill="#4e3ec0">nullifierHash = poseidon1(nullifier)</text><text x="415" y="66" text-anchor="middle" font-size="10.5" fill="#3a4353">public at vote time · prevents double-vote</text>
+    <rect x="300" y="120" width="230" height="44" rx="8" fill="#fdf3dc" stroke="#c9820b"/><text x="415" y="140" text-anchor="middle" font-weight="700" fill="#8a5a06">commitment = poseidon2(nullifier, secret)</text><text x="415" y="156" text-anchor="middle" font-size="10.5" fill="#3a4353">the tree leaf · registered on-chain</text>
+
+    <rect x="650" y="72" width="190" height="60" rx="8" fill="#dbf6fc" stroke="#00add8"/><text x="745" y="96" text-anchor="middle" font-weight="700" fill="#046b83">LeanIMT Merkle tree</text><text x="745" y="114" text-anchor="middle" font-size="10.5" fill="#3a4353">leaf per registered voter</text>
+
+    <line x1="170" y1="52" x2="298" y2="52" stroke="#12896a" marker-end="url(#ar3)"/>
+    <line x1="170" y1="142" x2="298" y2="142" stroke="#12896a" marker-end="url(#ar3)"/>
+    <line x1="170" y1="60" x2="298" y2="135" stroke="#12896a" stroke-dasharray="3 3" marker-end="url(#ar3)"/>
+    <line x1="530" y1="142" x2="648" y2="108" stroke="#c9820b" marker-end="url(#ar3)"/>
+    <text x="590" y="118" font-size="10" fill="#8a5a06" text-anchor="middle">insert()</text>
+
+    <text x="20" y="210" font-size="12" fill="#6b7688">At <b>vote</b> time the voter proves — in zero knowledge — "I know a (nullifier, secret) whose commitment is a leaf under this root", revealing only <b>nullifierHash</b>.</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 3.1</b> Derivation graph. Two random secrets → one public double-vote guard + one on-chain leaf.</figcaption></figure>
+
+  <div class="code">
+    <div class="fname"><span class="path">packages/mobile/src/services/crypto.ts</span><span class="ln">lines 33–43</span></div>
+<pre><span class="c">/** Generate a fresh voter commitment (called once, during registration). */</span>
+<span class="k">export function</span> <span class="f">generateCommitment</span>(): <span class="t">VoterCommitment</span> {
+  <span class="k">const</span> nullifier = <span class="f">randomFieldElement</span>();
+  <span class="k">const</span> secret = <span class="f">randomFieldElement</span>();
+  <span class="k">const</span> commitment = <span class="f">poseidon2</span>([nullifier, secret]);   <span class="c">// tree leaf</span>
+  <span class="k">const</span> nullifierHash = <span class="f">poseidon1</span>([nullifier]);       <span class="c">// double-vote guard</span>
+  <span class="k">return</span> { nullifier, secret, commitment, nullifierHash };
+}</pre>
+  </div>
+
+  <h3>What the circuit actually proves</h3>
+  <p>The Noir circuit takes the two secrets as <b>private</b> inputs and the nullifierHash, root, vote and depth as <b>public</b> inputs. It enforces four constraints:</p>
+
+  <div class="code">
+    <div class="fname"><span class="path">packages/circuits/src/main.nr</span><span class="ln">main(...)</span></div>
+<pre><span class="k">fn</span> <span class="f">main</span>(
+  nullifier_hash: <span class="k">pub</span> <span class="t">Field</span>,        <span class="c">// public</span>
+  nullifier: <span class="t">Field</span>, secret: <span class="t">Field</span>,  <span class="c">// private — never leave the phone</span>
+  root: <span class="k">pub</span> <span class="t">Field</span>, vote: <span class="k">pub</span> <span class="t">Field</span>, depth: <span class="k">pub</span> <span class="t">u32</span>,
+  index: <span class="t">Field</span>, siblings: [<span class="t">Field</span>; <span class="n">16</span>],  <span class="c">// private Merkle path (max 2^16 leaves)</span>
+) {
+  <span class="c">// 1 · the revealed hash really comes from the hidden nullifier</span>
+  <span class="k">assert</span>(<span class="f">hash_1</span>([nullifier]) == nullifier_hash);
+  <span class="c">// 2 · reconstruct this voter's leaf</span>
+  <span class="k">let</span> commitment = <span class="f">hash_2</span>([nullifier, secret]);
+  <span class="c">// 3 · that leaf is in the tree with the given root</span>
+  <span class="k">let</span> computed_root = <span class="f">binary_merkle_root</span>(hash_2, commitment, siblings_num, index_bits, siblings);
+  <span class="k">assert</span>(computed_root == root);
+  <span class="c">// 4 · bind the vote to the proof (anti front-running) + range-check 0..255</span>
+  <span class="k">let</span> _vote_bits: [<span class="t">u1</span>; <span class="n">8</span>] = vote.<span class="f">to_le_bits</span>();
+}</pre>
+  </div>
+
+  <div class="call key"><b class="lbl">Key idea — the nullifier does double duty</b>
+  It is hidden inside the commitment (so the leaf can't be linked to a person) <i>and</i> its hash is revealed at vote time (so the same voter can't vote twice). The contract stores used <code>nullifierHash</code>es; a repeat reverts with <code>Voting__NullifierHashAlreadyUsed</code>.</div>
+
+  <h3>Stage A · Setup — the admin builds the election (no genesis question)</h3>
+  <p>The Election Commission deploys the shared libraries once (<code>PoseidonT3</code>, <code>LeanIMT</code>, <code>HonkVerifier</code>), then a <code>NicRegistry</code> and an <code>ElectionRegistry</code>. For each polling division it deploys a <b>separate</b> <code>Voting</code> contract — the question and candidate list are passed straight into the constructor.</p>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 150" font-family="Inter" font-size="11.5">
+    <defs><marker id="ara" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2456c4"/></marker></defs>
+    <rect x="14" y="52" width="150" height="46" rx="9" fill="#e8eefc" stroke="#2456c4"/><text x="89" y="72" text-anchor="middle" font-weight="700" fill="#1d4fb8">createDivision(name)</text><text x="89" y="88" text-anchor="middle" font-size="10" fill="#3a4353">deploys a Voting contract</text>
+    <rect x="200" y="52" width="170" height="46" rx="9" fill="#eeeaff" stroke="#5b4bd6"/><text x="285" y="68" text-anchor="middle" font-weight="700" fill="#4e3ec0">new Voting(owner, verifier,</text><text x="285" y="82" text-anchor="middle" font-size="10.5" fill="#4e3ec0">question, candidates)</text><text x="285" y="94" text-anchor="middle" font-size="9.5" fill="#6b7688">question = constructor arg</text>
+    <rect x="410" y="52" width="150" height="46" rx="9" fill="#e8eefc" stroke="#2456c4"/><text x="485" y="72" text-anchor="middle" font-weight="700" fill="#1d4fb8">setGNOfficer(gn)</text><text x="485" y="88" text-anchor="middle" font-size="10" fill="#3a4353">assign the division's GN</text>
+    <rect x="600" y="52" width="150" height="46" rx="9" fill="#e8eefc" stroke="#2456c4"/><text x="675" y="72" text-anchor="middle" font-weight="700" fill="#1d4fb8">startRegistration</text><text x="675" y="88" text-anchor="middle" font-size="10" fill="#3a4353">Setup → Registration</text>
+    <rect x="778" y="52" width="70" height="46" rx="9" fill="#dcf3ea" stroke="#0f7a53"/><text x="813" y="79" text-anchor="middle" font-weight="700" font-size="11" fill="#0c7052">open</text>
+    <line x1="164" y1="75" x2="198" y2="75" stroke="#2456c4" marker-end="url(#ara)"/>
+    <line x1="370" y1="75" x2="408" y2="75" stroke="#2456c4" marker-end="url(#ara)"/>
+    <line x1="560" y1="75" x2="598" y2="75" stroke="#2456c4" marker-end="url(#ara)"/>
+    <line x1="750" y1="75" x2="776" y2="75" stroke="#2456c4" marker-end="url(#ara)"/>
+    <text x="20" y="30" font-weight="700" fill="#141821">One division = one Voting contract</text>
+    <text x="20" y="128" font-size="10.5" fill="#6b7688">ElectionRegistry records every division and can sum results nationally; the admin may also setQuestion / setCandidates while still in Setup.</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 3.2</b> Setup. The question lives in each division contract, set at deploy — there is no single genesis question in the EVM app.</figcaption></figure>
+
+  <h3>Stage B · Enrollment — the GN officer allowlists a voter (before they register)</h3>
+  <p>The voter first opens the mobile app, which mints a keypair inside the phone's <b>secure hardware</b> and shows the device <b>address as a QR code</b>. The GN officer scans it and enrolls that address — gated by a NIC uniqueness check that spans <i>all</i> divisions.</p>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 170" font-family="Inter" font-size="11.5">
+    <defs><marker id="arb" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#c25327"/></marker><marker id="arb2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#9a6a06"/></marker></defs>
+    <rect x="14" y="60" width="140" height="52" rx="9" fill="#fdeee7" stroke="#c25327"/><text x="84" y="80" text-anchor="middle" font-weight="700" fill="#b64a24">Voter phone</text><text x="84" y="96" text-anchor="middle" font-size="10" fill="#3a4353">hardware key → QR</text>
+    <rect x="200" y="60" width="150" height="52" rx="9" fill="#e8eefc" stroke="#2456c4"/><text x="275" y="80" text-anchor="middle" font-weight="700" fill="#1d4fb8">GN scans QR</text><text x="275" y="96" text-anchor="middle" font-size="10" fill="#3a4353">gets device address</text>
+    <rect x="396" y="30" width="180" height="46" rx="9" fill="#fbf1d8" stroke="#9a6a06"/><text x="486" y="50" text-anchor="middle" font-weight="700" fill="#8a5a06">POST /api/nic/hash</text><text x="486" y="66" text-anchor="middle" font-size="10" fill="#3a4353">HMAC-SHA256(NIC, pepper)</text>
+    <rect x="396" y="96" width="180" height="46" rx="9" fill="#fbf1d8" stroke="#9a6a06"/><text x="486" y="116" text-anchor="middle" font-weight="700" fill="#8a5a06">reserveNicHash(hash, div)</text><text x="486" y="132" text-anchor="middle" font-size="10" fill="#3a4353">reverts if NIC used anywhere</text>
+    <rect x="626" y="60" width="220" height="52" rx="9" fill="#eeeaff" stroke="#5b4bd6"/><text x="736" y="80" text-anchor="middle" font-weight="700" fill="#4e3ec0">addVoters([address],[true])</text><text x="736" y="96" text-anchor="middle" font-size="10" fill="#3a4353">on-chain allowlist · Setup phase · GN-only</text>
+    <line x1="154" y1="86" x2="198" y2="86" stroke="#c25327" marker-end="url(#arb)"/>
+    <line x1="350" y1="80" x2="394" y2="55" stroke="#9a6a06" marker-end="url(#arb2)"/>
+    <line x1="486" y1="76" x2="486" y2="94" stroke="#9a6a06" marker-end="url(#arb2)"/>
+    <line x1="576" y1="90" x2="624" y2="86" stroke="#5b4bd6" marker-end="url(#arb)"/>
+    <text x="20" y="26" font-weight="700" fill="#141821">Enrollment happens during Setup, before Registration opens</text>
+    <text x="20" y="160" font-size="10.5" fill="#6b7688">The NIC is never stored — only its keyed hash. One NIC ⇒ one allowlisted address, enforced across every division by NicRegistry.</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 3.3</b> Enrollment. The allowlist (<code>s_voters</code>) is written by the GN; the voter's own registration later depends on it.</figcaption></figure>
+
+  <h3>Stage C &amp; D · Register and Vote — the two on-chain moments</h3>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 260" font-family="Inter" font-size="12">
+    <defs><marker id="ar4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5b46e5"/></marker></defs>
+    <text x="20" y="24" font-weight="700" fill="#b64a24">① REGISTER (identity known, phase = Registration)</text>
+    <rect x="20" y="36" width="140" height="40" rx="7" fill="#fff2ec" stroke="#e8663a"/><text x="90" y="61" text-anchor="middle">generateCommitment()</text>
+    <rect x="220" y="36" width="150" height="40" rx="7" fill="#fff2ec" stroke="#e8663a"/><text x="295" y="56" text-anchor="middle">store secrets</text><text x="295" y="70" text-anchor="middle" font-size="10" fill="#6b7688">biometric-gated</text>
+    <rect x="430" y="36" width="160" height="40" rx="7" fill="#ece8ff" stroke="#7b6cf6"/><text x="510" y="56" text-anchor="middle">register(commitment)</text><text x="510" y="70" text-anchor="middle" font-size="10" fill="#6b7688">voter's own key</text>
+    <rect x="650" y="36" width="180" height="40" rx="7" fill="#dbf6fc" stroke="#00add8"/><text x="740" y="56" text-anchor="middle">LeanIMT.insert → new root</text><text x="740" y="70" text-anchor="middle" font-size="10" fill="#6b7688">emits NewLeaf(index,value)</text>
+    <line x1="160" y1="56" x2="218" y2="56" stroke="#5b46e5" marker-end="url(#ar4)"/>
+    <line x1="370" y1="56" x2="428" y2="56" stroke="#5b46e5" marker-end="url(#ar4)"/>
+    <line x1="590" y1="56" x2="648" y2="56" stroke="#5b46e5" marker-end="url(#ar4)"/>
+
+    <text x="20" y="140" font-weight="700" fill="#b64a24">② VOTE (anonymous, phase = Voting)</text>
+    <rect x="20" y="152" width="150" height="42" rx="7" fill="#fff2ec" stroke="#e8663a"/><text x="95" y="172" text-anchor="middle">fetch merkle path</text><text x="95" y="186" text-anchor="middle" font-size="10" fill="#6b7688">GET /api/merkle-path</text>
+    <rect x="210" y="152" width="150" height="42" rx="7" fill="#fff2ec" stroke="#e8663a"/><text x="285" y="172" text-anchor="middle">generate ZK proof</text><text x="285" y="186" text-anchor="middle" font-size="10" fill="#6b7688">on-device (Honk)</text>
+    <rect x="400" y="152" width="150" height="42" rx="7" fill="#e0f5ee" stroke="#12896a"/><text x="475" y="172" text-anchor="middle">fresh burner wallet</text><text x="475" y="186" text-anchor="middle" font-size="10" fill="#6b7688">unlinkable sender</text>
+    <rect x="590" y="152" width="150" height="42" rx="7" fill="#ece8ff" stroke="#7b6cf6"/><text x="665" y="172" text-anchor="middle">vote(proof,…)</text><text x="665" y="186" text-anchor="middle" font-size="10" fill="#6b7688">Verifier + nullifier</text>
+    <rect x="770" y="152" width="70" height="42" rx="7" fill="#dbf6fc" stroke="#00add8"/><text x="805" y="177" text-anchor="middle" font-size="11">count++</text>
+    <line x1="170" y1="173" x2="208" y2="173" stroke="#5b46e5" marker-end="url(#ar4)"/>
+    <line x1="360" y1="173" x2="398" y2="173" stroke="#5b46e5" marker-end="url(#ar4)"/>
+    <line x1="550" y1="173" x2="588" y2="173" stroke="#5b46e5" marker-end="url(#ar4)"/>
+    <line x1="740" y1="173" x2="768" y2="173" stroke="#5b46e5" marker-end="url(#ar4)"/>
+    <text x="20" y="232" font-size="11.5" fill="#6b7688">The link between the register tx (known identity) and the vote tx (burner sender) exists <b>only</b> inside the proof, which reveals nothing but the nullifierHash.</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 3.4</b> Two transactions, deliberately unlinkable. Registration is signed by the voter's own key; voting is signed by a throwaway burner.</figcaption></figure>
+
+  <h3>Stage D in detail · who does what when a vote is cast</h3>
+  <p>The vote is the subtle part. Three parties cooperate, but <b>no secret ever leaves the phone</b>: the server only ever touches public data, and the chain only ever sees a proof.</p>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 330" font-family="Inter" font-size="11">
+    <defs><marker id="arv" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#4a38c0"/></marker></defs>
+    <line x1="120" y1="40" x2="120" y2="300" stroke="#cdd4e0"/><text x="120" y="28" text-anchor="middle" font-weight="700" fill="#b64a24">Phone</text><text x="120" y="316" text-anchor="middle" font-size="9.5" fill="#6b7688">holds nullifier+secret</text>
+    <line x1="400" y1="40" x2="400" y2="300" stroke="#cdd4e0"/><text x="400" y="28" text-anchor="middle" font-weight="700" fill="#2456c4">Next.js API</text><text x="400" y="316" text-anchor="middle" font-size="9.5" fill="#6b7688">public data only</text>
+    <line x1="700" y1="40" x2="700" y2="300" stroke="#cdd4e0"/><text x="700" y="28" text-anchor="middle" font-weight="700" fill="#4e3ec0">Division Voting.sol</text><text x="700" y="316" text-anchor="middle" font-size="9.5" fill="#6b7688">on-chain state</text>
+
+    <rect x="30" y="46" width="180" height="26" rx="5" fill="#fdeee7" stroke="#c25327"/><text x="120" y="63" text-anchor="middle" font-size="10">OTP + biometric unlock</text>
+    <rect x="30" y="80" width="180" height="26" rx="5" fill="#fdeee7" stroke="#c25327"/><text x="120" y="97" text-anchor="middle" font-size="10">derive commitment locally</text>
+
+    <line x1="120" y1="120" x2="398" y2="120" stroke="#4a38c0" marker-end="url(#arv)"/><text x="255" y="114" text-anchor="middle" font-size="10">GET /api/merkle-path(division, commitment)</text>
+    <rect x="300" y="130" width="200" height="40" rx="6" fill="#e8eefc" stroke="#2456c4"/><text x="400" y="147" text-anchor="middle" font-size="9.7">replay NewLeaf events → rebuild</text><text x="400" y="160" text-anchor="middle" font-size="9.7">LeanIMT → inclusion proof</text>
+    <line x1="398" y1="182" x2="122" y2="182" stroke="#2456c4" marker-end="url(#arv)"/><text x="255" y="176" text-anchor="middle" font-size="10">siblings[16], circuitIndex, root</text>
+
+    <rect x="20" y="194" width="200" height="40" rx="6" fill="#dcf3ea" stroke="#0f7a53"/><text x="120" y="211" text-anchor="middle" font-size="9.7">generate ZK proof on-device</text><text x="120" y="224" text-anchor="middle" font-size="9.7">(Barretenberg / Honk)</text>
+    <rect x="20" y="240" width="200" height="26" rx="5" fill="#dcf3ea" stroke="#0f7a53"/><text x="120" y="257" text-anchor="middle" font-size="10">fund fresh burner wallet</text>
+
+    <line x1="120" y1="282" x2="698" y2="282" stroke="#4a38c0" marker-end="url(#arv)"/><text x="410" y="276" text-anchor="middle" font-size="10">vote(proof, nullifierHash, root, vote, depth)  — from burner</text>
+    <rect x="600" y="120" width="210" height="150" rx="8" fill="#f6f4ff" stroke="#5b4bd6"/>
+    <text x="705" y="140" text-anchor="middle" font-size="9.7" fill="#4e3ec0" font-weight="600">on-chain checks (all must pass)</text>
+    <text x="610" y="160" font-size="9.5" fill="#3a4353">• root == live tree root</text>
+    <text x="610" y="176" font-size="9.5" fill="#3a4353">• verifier.verify(proof) ✓</text>
+    <text x="610" y="192" font-size="9.5" fill="#3a4353">  (BN254 pairing 0x08)</text>
+    <text x="610" y="208" font-size="9.5" fill="#3a4353">• nullifierHash NOT used</text>
+    <text x="610" y="224" font-size="9.5" fill="#3a4353">  else revert (double-vote)</text>
+    <text x="610" y="244" font-size="9.5" fill="#0c7052">→ mark nullifier used</text>
+    <text x="610" y="260" font-size="9.5" fill="#0c7052">→ voteCounts[candidate]++</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 3.5</b> The server rebuilds the tree only to hand the phone a proof path; the double-vote decision is the <code>nullifierHash</code> check inside <code>vote()</code> — never a client-side scan.</figcaption></figure>
+
+  <div class="code">
+    <div class="fname"><span class="path">mobile/app/vote.tsx</span><span class="ln">castVote() — the real sequence</span></div>
+<pre><span class="k">const</span> { commitment } = <span class="f">deriveFromSecrets</span>(secrets.nullifier, secrets.secret);
+<span class="k">const</span> path = <span class="k">await</span> api.<span class="f">getMerklePath</span>(division.votingContract, commitment); <span class="c">// server rebuilds tree</span>
+<span class="k">const</span> callData = <span class="k">await</span> <span class="f">generateVoteCallData</span>({ nullifier, secret,       <span class="c">// on-device ZK proof</span>
+    circuitIndex: path.circuitIndex, siblings: path.siblings, root: path.root,
+    candidateIndex: candidate, depth: path.depth });
+<span class="k">const</span> burner = <span class="f">newBurnerAccount</span>();                <span class="c">// anonymous sender</span>
+<span class="k">await</span> api.<span class="f">fundBurner</span>(burner.address);
+<span class="k">await</span> <span class="f">submitVote</span>(division.votingContract, callData, burner.privateKey);</pre>
+  </div>
+
+  <h3>Stage E · Verify &amp; tally — anyone can audit, no one is de-anonymised</h3>
+  <p>After voting, the app can prove <i>your</i> vote counted without revealing you: it derives your <code>nullifierHash</code> locally and asks <code>GET /api/verify-vote</code>, which checks <code>isNullifierUsed()</code> on-chain and scans <code>VoteCast</code> events. Because the nullifier hash is already public and unlinkable to identity, this leaks nothing. Live tallies come from each division's <code>getVoteCounts()</code>, and <code>ElectionRegistry.getNationalResults()</code> sums them across divisions.</p>
+  <div class="call key"><b class="lbl">Key idea — where each guarantee actually lives</b>
+  <b>Eligibility</b> = the GN's on-chain allowlist. <b>One-person-one-registration</b> = <code>NicRegistry</code> hashed-NIC. <b>Anonymity</b> = the ZK proof + burner sender. <b>One-vote</b> = the on-chain nullifier-hash set. No single component carries two of these, which is why compromising one doesn't collapse the others.</div>
+</section>
+<!-- ============================== §4 CONTRACTS ============================== -->
+<section class="page" id="s4">
+  <div class="kicker"><span class="sec-no">04</span> &nbsp;On-chain rules</div>
+  <h2>Smart contracts</h2>
+  <p class="lead">Four contracts. <code>Voting.sol</code> is one election; <code>ElectionRegistry</code> turns it into a national, division-per-contract system; <code>NicRegistry</code> stops the same citizen registering twice; <code>Verifier</code> checks the ZK proof.</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 300" font-family="Inter" font-size="12">
+    <defs><marker id="arc" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#7b6cf6"/></marker></defs>
+    <rect x="300" y="20" width="260" height="70" rx="10" fill="#ece8ff" stroke="#7b6cf6" stroke-width="1.5"/>
+    <text x="430" y="44" text-anchor="middle" font-weight="700" fill="#4e3ec0">ElectionRegistry.sol</text>
+    <text x="430" y="62" text-anchor="middle" font-size="11" fill="#3a4353">factory + national aggregator</text>
+    <text x="430" y="78" text-anchor="middle" font-size="10.5" fill="#6b7688">createDivision() · getNationalResults()</text>
+
+    <rect x="40" y="150" width="200" height="76" rx="10" fill="#f4f1ff" stroke="#7b6cf6"/>
+    <text x="140" y="174" text-anchor="middle" font-weight="700" fill="#4e3ec0">Voting.sol (Colombo)</text>
+    <text x="140" y="192" text-anchor="middle" font-size="10.5" fill="#3a4353">phases · allowlist · tree</text>
+    <text x="140" y="208" text-anchor="middle" font-size="10.5" fill="#3a4353">register() · vote()</text>
+    <rect x="330" y="150" width="200" height="76" rx="10" fill="#f4f1ff" stroke="#7b6cf6"/>
+    <text x="430" y="174" text-anchor="middle" font-weight="700" fill="#4e3ec0">Voting.sol (Kandy)</text>
+    <text x="430" y="192" text-anchor="middle" font-size="10.5" fill="#3a4353">one per division</text>
+    <text x="430" y="208" text-anchor="middle" font-size="10.5" fill="#6b7688">own GN officer + tree</text>
+    <text x="600" y="192" font-size="22" fill="#b9b3e0">···</text>
+
+    <rect x="660" y="150" width="170" height="76" rx="10" fill="#fdf3dc" stroke="#c9820b"/>
+    <text x="745" y="174" text-anchor="middle" font-weight="700" fill="#8a5a06">NicRegistry.sol</text>
+    <text x="745" y="192" text-anchor="middle" font-size="10.5" fill="#3a4353">hashed-NIC dedup</text>
+    <text x="745" y="208" text-anchor="middle" font-size="10.5" fill="#6b7688">reserveNicHash()</text>
+
+    <rect x="330" y="252" width="200" height="40" rx="10" fill="#e0f5ee" stroke="#12896a"/>
+    <text x="430" y="277" text-anchor="middle" font-weight="700" fill="#0c7052">Verifier.sol (HonkVerifier)</text>
+
+    <line x1="380" y1="90" x2="180" y2="148" stroke="#7b6cf6" marker-end="url(#arc)"/><text x="235" y="120" font-size="10" fill="#6b7688">deploys</text>
+    <line x1="430" y1="90" x2="430" y2="148" stroke="#7b6cf6" marker-end="url(#arc)"/>
+    <line x1="140" y1="226" x2="345" y2="252" stroke="#12896a" stroke-dasharray="3 3" marker-end="url(#arc)"/>
+    <line x1="430" y1="226" x2="430" y2="250" stroke="#12896a" marker-end="url(#arc)"/><text x="452" y="244" font-size="10" fill="#6b7688">verify()</text>
+    <line x1="560" y1="188" x2="658" y2="188" stroke="#c9820b" stroke-dasharray="3 3" marker-end="url(#arc)"/><text x="590" y="180" font-size="10" fill="#8a5a06">GN-gated</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 4.1</b> Contract relationships. The registry deploys and aggregates many <code>Voting</code> contracts; all share one verifier and one NIC registry.</figcaption></figure>
+
+  <h3>Voting.sol — the phase state machine</h3>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 150" font-family="Inter" font-size="12">
+    <defs><marker id="arp" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2f6fed"/></marker></defs>
+    <rect x="20" y="55" width="150" height="46" rx="9" fill="#e2ecff" stroke="#2f6fed"/><text x="95" y="74" text-anchor="middle" font-weight="700" fill="#1d4fb8">Setup</text><text x="95" y="90" text-anchor="middle" font-size="10" fill="#3a4353">addVoters · setQuestion</text>
+    <rect x="250" y="55" width="150" height="46" rx="9" fill="#e2ecff" stroke="#2f6fed"/><text x="325" y="74" text-anchor="middle" font-weight="700" fill="#1d4fb8">Registration</text><text x="325" y="90" text-anchor="middle" font-size="10" fill="#3a4353">register()</text>
+    <rect x="480" y="55" width="150" height="46" rx="9" fill="#fff2ec" stroke="#e8663a"/><text x="555" y="74" text-anchor="middle" font-weight="700" fill="#b64a24">Voting</text><text x="555" y="90" text-anchor="middle" font-size="10" fill="#3a4353">vote()</text>
+    <rect x="710" y="55" width="130" height="46" rx="9" fill="#e0f5ee" stroke="#12896a"/><text x="775" y="74" text-anchor="middle" font-weight="700" fill="#0c7052">Ended</text><text x="775" y="90" text-anchor="middle" font-size="10" fill="#3a4353">results final</text>
+    <line x1="170" y1="78" x2="248" y2="78" stroke="#2f6fed" marker-end="url(#arp)"/><text x="209" y="70" text-anchor="middle" font-size="9.5" fill="#6b7688">startRegistration</text>
+    <line x1="400" y1="78" x2="478" y2="78" stroke="#2f6fed" marker-end="url(#arp)"/><text x="439" y="70" text-anchor="middle" font-size="9.5" fill="#6b7688">startVoting</text>
+    <line x1="630" y1="78" x2="708" y2="78" stroke="#2f6fed" marker-end="url(#arp)"/><text x="669" y="70" text-anchor="middle" font-size="9.5" fill="#6b7688">endElection / timeout</text>
+    <path d="M775,101 Q775,135 95,135 Q30,135 30,103" fill="none" stroke="#8a94a6" stroke-dasharray="4 3" marker-end="url(#arp)"/>
+    <text x="420" y="130" text-anchor="middle" font-size="10" fill="#6b7688">resetElection() — bumps s_electionId, clears all per-election state</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 4.2</b> Phases are admin-driven but self-advance on deadline (<code>_maybeAdvancePhase</code>). Everything is keyed by <code>s_electionId</code> so reset is O(1).</figcaption></figure>
+
+  <div class="grid2">
+    <div class="code">
+      <div class="fname"><span class="path">hardhat/contracts/Voting.sol</span><span class="ln">45–86</span></div>
+<pre><span class="k">enum</span> <span class="t">Phase</span> { Setup, Registration, Voting, Ended }
+
+<span class="t">address</span> <span class="k">public</span> s_gnOfficer;            <span class="c">// GN for this division</span>
+<span class="t">uint256</span> <span class="k">private</span> s_electionId;        <span class="c">// bump = reset</span>
+<span class="c">// electionId ⇒ voter ⇒ allowed / registered</span>
+<span class="k">mapping</span>(...) <span class="k">private</span> s_voters;
+<span class="k">mapping</span>(...) <span class="k">private</span> s_hasRegistered;
+<span class="k">mapping</span>(...) <span class="k">private</span> s_commitments;
+<span class="k">mapping</span>(...) <span class="k">private</span> s_nullifierHashes;
+<span class="k">mapping</span>(<span class="t">uint256</span> => <span class="t">LeanIMTData</span>) s_trees;</pre>
+    </div>
+    <div class="code">
+      <div class="fname"><span class="path">hardhat/contracts/Voting.sol</span><span class="ln">251–263</span></div>
+<pre><span class="k">function</span> <span class="f">register</span>(<span class="t">uint256</span> _commitment)
+    <span class="k">external</span> <span class="f">inPhase</span>(Phase.Registration) {
+  <span class="k">if</span> (!s_voters[id][msg.sender]
+      || s_hasRegistered[id][msg.sender])
+    <span class="k">revert</span> <span class="t">Voting__NotAllowedToVote</span>();
+  s_commitments[id][_commitment] = <span class="k">true</span>;
+  s_hasRegistered[id][msg.sender] = <span class="k">true</span>;
+  s_trees[id].<span class="f">insert</span>(_commitment);   <span class="c">// Poseidon</span>
+  <span class="k">emit</span> <span class="f">NewLeaf</span>(s_trees[id].size-<span class="n">1</span>, _commitment);
+}</pre>
+    </div>
+  </div>
+
+  <div class="code">
+    <div class="fname"><span class="path">hardhat/contracts/Voting.sol</span><span class="ln">267–304 · vote()</span></div>
+<pre><span class="k">function</span> <span class="f">vote</span>(<span class="t">bytes</span> _proof, <span class="t">bytes32</span> _nullifierHash, <span class="t">bytes32</span> _root, <span class="t">bytes32</span> _vote, <span class="t">bytes32</span> _depth)
+    <span class="k">external</span> <span class="f">inPhase</span>(Phase.Voting) {
+  <span class="k">if</span> (_root != <span class="t">bytes32</span>(s_trees[id].<span class="f">root</span>()))  <span class="k">revert</span> <span class="t">Voting__InvalidRoot</span>();      <span class="c">// proof must target the live tree</span>
+  <span class="t">uint256</span> candidateIdx = <span class="t">uint256</span>(_vote);
+  <span class="k">if</span> (candidateIdx >= s_candidates.length)     <span class="k">revert</span> <span class="t">Voting__InvalidCandidate</span>(candidateIdx);
+  <span class="t">bytes32</span>[] publicInputs = [_nullifierHash, _root, _vote, _depth];
+  <span class="k">if</span> (!i_verifier.<span class="f">verify</span>(_proof, publicInputs)) <span class="k">revert</span> <span class="t">Voting__InvalidProof</span>();        <span class="c">// ← HonkVerifier + BN254</span>
+  <span class="k">if</span> (s_nullifierHashes[id][_nullifierHash])   <span class="k">revert</span> <span class="t">Voting__NullifierHashAlreadyUsed</span>(_nullifierHash);
+  s_nullifierHashes[id][_nullifierHash] = <span class="k">true</span>;   <span class="c">// double-vote guard</span>
+  ++s_voteCounts[id][candidateIdx];                <span class="c">// tally</span>
+}</pre>
+  </div>
+
+  <h3>ElectionRegistry &amp; the GN role</h3>
+  <p><code>ElectionRegistry.createDivision(name)</code> deploys a fresh <code>Voting</code> owned by the admin; the GN officer is attached later via <code>Voting.setGNOfficer()</code>. That officer — and only that officer — may enroll voters:</p>
+  <div class="grid2">
+    <div class="code">
+      <div class="fname"><span class="path">hardhat/contracts/Voting.sol</span><span class="ln">122–188</span></div>
+<pre><span class="k">modifier</span> <span class="f">onlyOwnerOrGN</span>() {
+  <span class="k">require</span>(msg.sender == <span class="f">owner</span>()
+    || msg.sender == s_gnOfficer, <span class="s">"Not owner or GN"</span>);
+  _;
+}
+<span class="k">function</span> <span class="f">setGNOfficer</span>(<span class="t">address</span> _gn) <span class="k">external</span> <span class="f">onlyOwner</span> {...}
+<span class="k">function</span> <span class="f">addVoters</span>(<span class="t">address</span>[] voters, <span class="t">bool</span>[] statuses)
+  <span class="k">external</span> <span class="f">onlyOwnerOrGN</span> <span class="f">inPhase</span>(Phase.Setup) {...}</pre>
+    </div>
+    <div class="code">
+      <div class="fname"><span class="path">hardhat/contracts/ElectionRegistry.sol</span><span class="ln">53–86 · createDivision</span></div>
+<pre><span class="k">function</span> <span class="f">createDivision</span>(<span class="t">string</span> _name)
+    <span class="k">external</span> <span class="f">onlyOwner</span>
+    <span class="k">returns</span> (<span class="t">uint256</span> id, <span class="t">address</span> votingContract) {
+  <span class="t">Voting</span> nv = <span class="k">new</span> <span class="t">Voting</span>(<span class="f">owner</span>(), i_verifier, <span class="s">""</span>, empty);
+  divisions.<span class="f">push</span>(<span class="t">Division</span>({name:_name,
+     votingContract:<span class="k">address</span>(nv), gnOfficer:<span class="k">address</span>(0),
+     active:<span class="k">true</span>}));
+  <span class="k">emit</span> <span class="f">DivisionCreated</span>(id, _name, <span class="k">address</span>(nv));
+}</pre>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Contract</th><th>Purpose</th><th>Landmark functions</th><th>File</th></tr>
+    <tr><td><b>Voting.sol</b></td><td>One phased, ZK-gated election.</td><td><code>register</code> · <code>vote</code> · <code>addVoters</code> · <code>setGNOfficer</code> · <code>start*/end/reset</code> · <code>isNullifierUsed</code></td><td>401 lines</td></tr>
+    <tr><td><b>ElectionRegistry.sol</b></td><td>Deploys &amp; tracks one Voting per division; national totals.</td><td><code>createDivision</code> · <code>getAllDivisions</code> · <code>getNationalResults</code></td><td>147 lines</td></tr>
+    <tr><td><b>NicRegistry.sol</b></td><td>One national ID → one registration, across divisions.</td><td><code>reserveNicHash</code> · <code>setVotingContract</code></td><td>41 lines</td></tr>
+    <tr><td><b>Verifier.sol</b></td><td>Auto-generated UltraHonk verifier for the circuit.</td><td><code>verify(proof, publicInputs)</code></td><td>generated</td></tr>
+  </table>
+  <div class="call warn"><b class="lbl">Watch out — invariant</b>
+  A proof is generated against a specific Merkle <code>root</code>. If anyone registers after the proof is made, <code>vote()</code> reverts with <code>Voting__InvalidRoot</code>. In practice registration closes before voting opens, which is exactly why the phases are separate.</div>
+</section>
+
+<!-- ============================== §5 DUAL BACKEND ============================== -->
+<section class="page" id="s5">
+  <div class="kicker"><span class="sec-no">05</span> &nbsp;The seam</div>
+  <h2>The dual-backend seam</h2>
+  <p class="lead">The single most important design decision in the web app: components never talk to a chain directly. They call hooks that route to <b>either</b> the Hardhat EVM (wallets, gas) <b>or</b> the Go node's REST API (no wallets, no gas) — chosen by one env var.</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 300" font-family="Inter" font-size="12">
+    <defs><marker id="ars" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5b46e5"/></marker></defs>
+    <rect x="300" y="14" width="260" height="44" rx="9" fill="#e2ecff" stroke="#2f6fed"/>
+    <text x="430" y="33" text-anchor="middle" font-weight="700" fill="#1d4fb8">UI components (admin, voting, results…)</text>
+    <text x="430" y="49" text-anchor="middle" font-size="10.5" fill="#6b7688">consume normalized types only</text>
+
+    <rect x="270" y="92" width="320" height="66" rx="10" fill="#efeaff" stroke="#5b46e5" stroke-width="1.5"/>
+    <text x="430" y="114" text-anchor="middle" font-weight="700" fill="#3a2bb0">services/chain/ — hook facade</text>
+    <text x="430" y="132" text-anchor="middle" font-size="11" fill="#3a4353">useVotingData · useRegisterVoter · useCastVote …</text>
+    <text x="430" y="148" text-anchor="middle" font-size="10.5" fill="#6b7688">const BACKEND = scaffoldConfig.chainBackend</text>
+
+    <rect x="90" y="200" width="300" height="80" rx="10" fill="#f4f1ff" stroke="#7b6cf6"/>
+    <text x="240" y="224" text-anchor="middle" font-weight="700" fill="#4e3ec0">EVM branch (hardhat)</text>
+    <text x="240" y="244" text-anchor="middle" font-size="11" fill="#3a4353">wagmi/viem · useScaffoldReadContract</text>
+    <text x="240" y="260" text-anchor="middle" font-size="11" fill="#3a4353">writeContractAsync → wallet → gas</text>
+    <text x="240" y="274" text-anchor="middle" font-size="10" fill="#6b7688">Hardhat / Sepolia · :8545</text>
+
+    <rect x="470" y="200" width="300" height="80" rx="10" fill="#dbf6fc" stroke="#00add8"/>
+    <text x="620" y="224" text-anchor="middle" font-weight="700" fill="#046b83">REST branch (custom)</text>
+    <text x="620" y="244" text-anchor="middle" font-size="11" fill="#3a4353">restClient.ts → fetch()</text>
+    <text x="620" y="260" text-anchor="middle" font-size="11" fill="#3a4353">POST /register · /vote (no signature)</text>
+    <text x="620" y="274" text-anchor="middle" font-size="10" fill="#6b7688">Go node · :3001</text>
+
+    <line x1="430" y1="58" x2="430" y2="90" stroke="#5b46e5" marker-end="url(#ars)"/>
+    <line x1="360" y1="158" x2="240" y2="198" stroke="#7b6cf6" marker-end="url(#ars)"/>
+    <line x1="500" y1="158" x2="620" y2="198" stroke="#00add8" marker-end="url(#ars)"/>
+    <text x="300" y="182" font-size="10" fill="#6b7688">backend==="hardhat"</text>
+    <text x="560" y="182" font-size="10" fill="#6b7688">backend==="custom"</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 5.1</b> One facade, two implementations. Flip <code>NEXT_PUBLIC_CHAIN_BACKEND</code> and the entire UI retargets with zero component changes.</figcaption></figure>
+
+  <div class="grid2">
+    <div class="code">
+      <div class="fname"><span class="path">nextjs/services/chain/types.ts</span><span class="ln">15–55</span></div>
+<pre><span class="c">// The normalized contract every component sees.</span>
+<span class="k">export interface</span> <span class="t">VotingData</span> {
+  question: <span class="t">string</span>; phase: <span class="t">number</span>;
+  registrationEndTime: <span class="t">number</span>; votingEndTime: <span class="t">number</span>;
+  treeSize: <span class="t">number</span>; depth: <span class="t">number</span>;
+  root: <span class="t">bigint</span>; candidateCount: <span class="t">number</span>;
+  electionId: <span class="t">string</span>;
+}
+<span class="k">export interface</span> <span class="t">VoteSubmission</span> {
+  proof: <span class="t">Uint8Array</span>; publicInputs: <span class="t">string</span>[];
+  candidateIndex: <span class="t">number</span>;
+}</pre>
+    </div>
+    <div class="code">
+      <div class="fname"><span class="path">nextjs/services/chain/hooks.ts</span><span class="ln">43–66</span></div>
+<pre><span class="k">const</span> BACKEND = scaffoldConfig.chainBackend;
+<span class="k">export const</span> isCustomChain = BACKEND === <span class="s">"custom"</span>;
+
+<span class="k">export function</span> <span class="f">useVotingData</span>() {
+  <span class="k">const</span> evm  = <span class="f">useScaffoldReadContract</span>({...});  <span class="c">// EVM</span>
+  <span class="k">const</span> rest = <span class="f">useRestVotingData</span>();            <span class="c">// REST</span>
+  <span class="k">return</span> isCustomChain ? rest : evm;         <span class="c">// pick</span>
+}</pre>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Concern</th><th>Hardhat backend</th><th>Custom Go backend</th></tr>
+    <tr><td>Env switch</td><td><code>NEXT_PUBLIC_CHAIN_BACKEND=hardhat</code> (default)</td><td><code>=custom</code></td></tr>
+    <tr><td>Voter identity</td><td>Wallet address (MetaMask / burner)</td><td>Opaque voter-ID string (e.g. email)</td></tr>
+    <tr><td>Casting a vote</td><td>Signed EVM tx — wallet confirms, costs gas</td><td>One unsigned <code>POST /vote</code> — no wallet, no gas</td></tr>
+    <tr><td>Admin auth</td><td>Owner wallet signature</td><td>RSA <code>X-Admin-Signature</code> via the Next.js proxy</td></tr>
+    <tr><td>Reads</td><td>Contract view calls via viem</td><td><code>GET /voting-data</code>, <code>/candidates</code>, <code>/commitments</code>…</td></tr>
+  </table>
+
+  <div class="call gap"><b class="lbl">Gap — the seam only covers the original single-election model</b>
+  The REST branch (<code>restClient.ts</code>) and the Go node implement <i>only</i> the single-<code>Voting</code> surface. The newer division/GN/NIC features (§4) and the mobile app talk to the chain over JSON-RPC and target Hardhat directly (<code>http://127.0.0.1:8545</code>). Extending the custom backend to the multi-contract model is the main open work — see §10.</div>
+</section>
+
+<!-- ============================== §6 GO CHAIN ============================== -->
+<section class="page" id="s6">
+  <div class="kicker"><span class="sec-no">06</span> &nbsp;Custom chain</div>
+  <h2>Custom Go blockchain</h2>
+  <p class="lead">A single Go binary that <b>embeds a real Geth EVM</b> and runs the exact Hardhat bytecode — but with an authority model: no mining, no gas, no wallets. Writes arrive as REST calls; every write executes in the EVM <i>before</i> a block is committed.</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 320" font-family="Inter" font-size="12">
+    <defs><marker id="arh" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#00add8"/></marker></defs>
+    <rect x="270" y="12" width="320" height="42" rx="9" fill="#e2ecff" stroke="#2f6fed"/>
+    <text x="430" y="32" text-anchor="middle" font-weight="700" fill="#1d4fb8">Browser / Admin / Mobile</text>
+    <text x="430" y="47" text-anchor="middle" font-size="10.5" fill="#6b7688">public HTTP :3001 (REST)</text>
+
+    <rect x="60" y="80" width="740" height="60" rx="10" fill="#eafafd" stroke="#00add8" stroke-width="1.5"/>
+    <text x="82" y="102" font-weight="700" fill="#046b83">internal/api — server.go + middleware.go</text>
+    <text x="82" y="122" font-size="11" fill="#3a4353">CORS · per-IP rate limit · RSA admin auth · logging · two muxes (public + mTLS P2P)</text>
+
+    <rect x="60" y="160" width="175" height="66" rx="9" fill="#f0fbfd" stroke="#00add8"/>
+    <text x="147" y="182" text-anchor="middle" font-weight="700" fill="#046b83">core/</text>
+    <text x="147" y="200" text-anchor="middle" font-size="10.5" fill="#3a4353">Blockchain · Block</text>
+    <text x="147" y="215" text-anchor="middle" font-size="10.5" fill="#3a4353">Transaction (9 TxTypes)</text>
+
+    <rect x="250" y="160" width="200" height="66" rx="9" fill="#ece8ff" stroke="#7b6cf6"/>
+    <text x="350" y="182" text-anchor="middle" font-weight="700" fill="#4e3ec0">evm/</text>
+    <text x="350" y="200" text-anchor="middle" font-size="10.5" fill="#3a4353">Geth EVM + bridge.go</text>
+    <text x="350" y="215" text-anchor="middle" font-size="10.5" fill="#3a4353">Voting.sol · HonkVerifier</text>
+
+    <rect x="465" y="160" width="160" height="66" rx="9" fill="#f0fbfd" stroke="#00add8"/>
+    <text x="545" y="182" text-anchor="middle" font-weight="700" fill="#046b83">network/</text>
+    <text x="545" y="200" text-anchor="middle" font-size="10.5" fill="#3a4353">mTLS broadcast</text>
+    <text x="545" y="215" text-anchor="middle" font-size="10.5" fill="#3a4353">periodic chain sync</text>
+
+    <rect x="640" y="160" width="160" height="66" rx="9" fill="#f0fbfd" stroke="#00add8"/>
+    <text x="720" y="182" text-anchor="middle" font-weight="700" fill="#046b83">security/</text>
+    <text x="720" y="200" text-anchor="middle" font-size="10.5" fill="#3a4353">RSA admin key</text>
+    <text x="720" y="215" text-anchor="middle" font-size="10.5" fill="#3a4353">TLS / mTLS certs</text>
+
+    <rect x="60" y="248" width="360" height="52" rx="9" fill="#fff8e8" stroke="#c9820b"/>
+    <text x="240" y="270" text-anchor="middle" font-weight="700" fill="#8a5a06">persistence/ — BoltDB (bbolt)</text>
+    <text x="240" y="288" text-anchor="middle" font-size="10.5" fill="#3a4353">JSON blocks keyed by 8-byte big-endian index</text>
+
+    <rect x="440" y="248" width="360" height="52" rx="9" fill="#f6f8fb" stroke="#e4e8ef"/>
+    <text x="620" y="270" text-anchor="middle" font-weight="700" fill="#141821">cmd/node/main.go</text>
+    <text x="620" y="288" text-anchor="middle" font-size="10.5" fill="#3a4353">boots every subsystem in dependency order</text>
+
+    <line x1="430" y1="54" x2="430" y2="78" stroke="#00add8" marker-end="url(#arh)"/>
+    <line x1="200" y1="140" x2="180" y2="158" stroke="#00add8" marker-end="url(#arh)"/>
+    <line x1="360" y1="140" x2="350" y2="158" stroke="#00add8" marker-end="url(#arh)"/>
+    <line x1="560" y1="140" x2="545" y2="158" stroke="#00add8" marker-end="url(#arh)"/>
+    <line x1="720" y1="140" x2="720" y2="158" stroke="#00add8" marker-end="url(#arh)"/>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 6.1</b> Six internal packages + one entry point. Reference: <code>blockchain/BLOCKCHAIN_OVERVIEW.md</code>.</figcaption></figure>
+
+  <h3>Write path — "EVM first, commit only on success"</h3>
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 250" font-family="Inter" font-size="11.5">
+    <defs><marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#5b46e5"/></marker></defs>
+    <line x1="80"  y1="30" x2="80"  y2="230" stroke="#cdd4e0"/><text x="80"  y="20" text-anchor="middle" font-weight="700" fill="#b64a24">Voter</text>
+    <line x1="250" y1="30" x2="250" y2="230" stroke="#cdd4e0"/><text x="250" y="20" text-anchor="middle" font-weight="700" fill="#046b83">api/server.go</text>
+    <line x1="470" y1="30" x2="470" y2="230" stroke="#cdd4e0"/><text x="470" y="20" text-anchor="middle" font-weight="700" fill="#4e3ec0">evm/bridge.go</text>
+    <line x1="690" y1="30" x2="690" y2="230" stroke="#cdd4e0"/><text x="690" y="20" text-anchor="middle" font-weight="700" fill="#8a5a06">core + BoltDB</text>
+
+    <line x1="80" y1="50" x2="248" y2="50" stroke="#5b46e5" marker-end="url(#arw)"/><text x="164" y="44" text-anchor="middle">POST /vote {proof,…}</text>
+    <line x1="250" y1="80" x2="468" y2="80" stroke="#5b46e5" marker-end="url(#arw)"/><text x="360" y="74" text-anchor="middle">Vote(...) — SetTime(blockTime)</text>
+    <rect x="380" y="95" width="180" height="34" rx="6" fill="#e0f5ee" stroke="#12896a"/><text x="470" y="116" text-anchor="middle" font-size="10.5" fill="#0c7052">HonkVerifier via precompile 0x08</text>
+    <line x1="470" y1="140" x2="470" y2="140"/>
+    <line x1="468" y1="155" x2="252" y2="155" stroke="#12896a" marker-end="url(#arw)"/><text x="360" y="149" text-anchor="middle">ok / decoded revert</text>
+    <line x1="250" y1="185" x2="688" y2="185" stroke="#5b46e5" marker-end="url(#arw)"/><text x="460" y="179" text-anchor="middle">on success: AddTransactionAt → SaveBlock → broadcast</text>
+    <line x1="248" y1="215" x2="82" y2="215" stroke="#5b46e5" marker-end="url(#arw)"/><text x="164" y="209" text-anchor="middle">200 {tx_id, block_index}</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 6.2</b> A revert (bad proof, used nullifier, wrong phase) is returned as a decoded 400 and never becomes a permanent block.</figcaption></figure>
+
+  <div class="grid2">
+    <div>
+      <h4>The 9 transaction types</h4>
+      <table>
+        <tr><th>TxType</th><th>Phase</th></tr>
+        <tr><td><code>ADD_VOTER</code></td><td>Setup</td></tr>
+        <tr><td><code>SET_QUESTION</code> / <code>SET_CANDIDATES</code></td><td>Setup</td></tr>
+        <tr><td><code>START_REGISTRATION</code></td><td>Setup→Reg</td></tr>
+        <tr><td><code>REGISTER</code></td><td>Registration</td></tr>
+        <tr><td><code>START_VOTING</code></td><td>Reg→Voting</td></tr>
+        <tr><td><code>VOTE</code></td><td>Voting</td></tr>
+        <tr><td><code>END_ELECTION</code> / <code>RESET_ELECTION</code></td><td>any</td></tr>
+      </table>
+      <p style="font-size:11.5px;color:var(--muted)"><code>core/types.go:12–48</code>. A <code>VOTE</code> payload carries <b>no voter identity</b> — only proof, nullifierHash, root, candidateIndex, depth.</p>
+    </div>
+    <div>
+      <h4>Deterministic-by-design choices</h4>
+      <table>
+        <tr><th>Property</th><th>How</th></tr>
+        <tr><td>No gas/mining</td><td>Authority commits on demand</td></tr>
+        <tr><td>Same addresses every boot</td><td>Fixed <code>0x…1337</code> deployer + fixed nonce order</td></tr>
+        <tr><td>Deterministic phase deadlines</td><td>EVM <code>block.timestamp</code> stamped from the block's own time (<code>SetTime</code>)</td></tr>
+        <tr><td>State survives restart</td><td><code>ReplayBlockchain</code> re-runs every block into a fresh EVM</td></tr>
+        <tr><td>ZK actually verified</td><td>Missing artifacts = <b>fatal</b> startup unless <code>ALLOW_STORAGE_ONLY</code></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="code">
+    <div class="fname"><span class="path">blockchain/internal/evm/bridge.go</span><span class="ln">4-step deterministic deployment</span></div>
+<pre><span class="c">// nonce 0..3 from a FIXED admin address ⇒ identical contract addresses every run</span>
+1) Deploy <span class="t">HonkVerifier</span>              <span class="c">// nonce 0</span>
+2) Deploy <span class="t">PoseidonT3</span>                <span class="c">// nonce 1</span>
+3) Link PoseidonT3 → Deploy <span class="t">LeanIMT</span>   <span class="c">// nonce 2  (library placeholder substitution)</span>
+4) Link LeanIMT → Deploy <span class="t">Voting</span>(admin, verifier, question, candidates)  <span class="c">// nonce 3</span></pre>
+  </div>
+
+  <table>
+    <tr><th>Package / file</th><th>Role</th><th>Landmark symbols</th></tr>
+    <tr><td><code>core/blockchain.go</code></td><td>Thread-safe append-only chain; SHA-256 hash chaining.</td><td><code>AddBlockAt</code> · <code>ReplaceBlocks</code> · <code>ValidateChain</code></td></tr>
+    <tr><td><code>evm/vm.go</code></td><td>Configures the Geth EVM; every hard-fork enabled deliberately (Istanbul → BN254 pairing, Berlin → EIP-2929).</td><td><code>CreateStatelessEVM</code></td></tr>
+    <tr><td><code>evm/bridge.go</code></td><td>One typed Go method per Solidity function; mutex-serialised; decodes reverts.</td><td><code>AddVoter</code> · <code>Register</code> · <code>Vote</code> · <code>GetVotingData</code></td></tr>
+    <tr><td><code>evm/replay.go</code></td><td>Rebuilds EVM state from the chain on boot / after sync.</td><td><code>ReplayBlockchain</code> · <code>ReplayTransaction</code></td></tr>
+    <tr><td><code>api/server.go</code></td><td>Route tables + handlers; write tail <code>commitAdminTx</code>.</td><td><code>handleVote</code> · <code>handleRegister</code></td></tr>
+    <tr><td><code>network/sync.go</code></td><td>Longest-valid-chain adoption over mTLS; self-heals missed broadcasts.</td><td><code>SyncWithPeers</code> · <code>StartPeriodicSync</code></td></tr>
+    <tr><td><code>persistence/store.go</code></td><td>Durable BoltDB block storage.</td><td><code>SaveBlock</code> · <code>LoadBlockchain</code></td></tr>
+  </table>
+
+  <div class="call key"><b class="lbl">Key idea — the hand-written bridge is the price of the design</b>
+  Unlike scaffold-eth (auto-generated bindings), the Go node exposes one typed method + one REST endpoint <i>per contract function</i>, written by hand. The payoff is decoded revert errors, pre-commit validation and caching. The cost: a contract change must be threaded through <code>bridge.go → types.go → replay.go → server.go → API.md</code>. That checklist lives in <code>blockchain/CONTRACT_CHANGE_CHECKLIST.md</code>.</div>
+</section>
+
+<!-- ============================== §7 NEXTJS ============================== -->
+<section class="page" id="s7">
+  <div class="kicker"><span class="sec-no">07</span> &nbsp;Officials' web app</div>
+  <h2>Next.js web app</h2>
+  <p class="lead">Built on Scaffold-ETH. It is the officials' console <b>and</b> the backend-for-frontend that the mobile app calls. Voters do not use it to vote — that moved to the phone.</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 250" font-family="Inter" font-size="11.5">
+    <text x="20" y="22" font-weight="700" fill="#1d4fb8">Pages (app/…/page.tsx)</text>
+    <g fill="#3a4353">
+      <rect x="20" y="34" width="180" height="34" rx="7" fill="#e2ecff" stroke="#2f6fed"/><text x="110" y="55" text-anchor="middle">/voting/admin — divisions</text>
+      <rect x="20" y="76" width="180" height="34" rx="7" fill="#e2ecff" stroke="#2f6fed"/><text x="110" y="97" text-anchor="middle">/gn · /gn/register</text>
+      <rect x="20" y="118" width="180" height="34" rx="7" fill="#e2ecff" stroke="#2f6fed"/><text x="110" y="139" text-anchor="middle">/results — national</text>
+      <rect x="20" y="160" width="180" height="34" rx="7" fill="#e2ecff" stroke="#2f6fed"/><text x="110" y="181" text-anchor="middle">/audit · /prover</text>
+    </g>
+    <text x="330" y="22" font-weight="700" fill="#b64a24">API routes (app/api/…) — mobile-facing</text>
+    <g>
+      <rect x="330" y="34" width="230" height="30" rx="6" fill="#fff2ec" stroke="#e8663a"/><text x="345" y="54" fill="#3a4353">GET /api/election — division state</text>
+      <rect x="330" y="70" width="230" height="30" rx="6" fill="#fff2ec" stroke="#e8663a"/><text x="345" y="90" fill="#3a4353">GET /api/merkle-path — siblings</text>
+      <rect x="330" y="106" width="230" height="30" rx="6" fill="#fff2ec" stroke="#e8663a"/><text x="345" y="126" fill="#3a4353">POST /api/otp/send · /verify</text>
+      <rect x="330" y="142" width="230" height="30" rx="6" fill="#fff2ec" stroke="#e8663a"/><text x="345" y="162" fill="#3a4353">POST /api/nic/hash — dedup</text>
+      <rect x="330" y="178" width="230" height="30" rx="6" fill="#fff2ec" stroke="#e8663a"/><text x="345" y="198" fill="#3a4353">GET /api/verify-vote · POST /faucet</text>
+    </g>
+    <rect x="600" y="70" width="230" height="100" rx="9" fill="#dbf6fc" stroke="#00add8"/>
+    <text x="715" y="94" text-anchor="middle" font-weight="700" fill="#046b83">chain (viem)</text>
+    <text x="715" y="114" text-anchor="middle" fill="#3a4353">reads ElectionRegistry</text>
+    <text x="715" y="130" text-anchor="middle" fill="#3a4353">+ each Voting division</text>
+    <text x="715" y="150" text-anchor="middle" font-size="10" fill="#6b7688">RPC_URL :8545</text>
+    <line x1="560" y1="120" x2="598" y2="120" stroke="#00add8" stroke-width="1.4"/>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 7.1</b> Pages for officials; API routes as a thin, secret-free proxy that serves public on-chain data to the phone.</figcaption></figure>
+
+  <table>
+    <tr><th>API route</th><th>Method</th><th>Purpose</th><th>File</th></tr>
+    <tr><td><code>/api/election</code></td><td>GET</td><td>All divisions + national aggregate, read from chain. Consumed by the app's home/register/vote screens.</td><td><code>app/api/election/route.ts</code></td></tr>
+    <tr><td><code>/api/merkle-path</code></td><td>GET</td><td>Rebuilds a division's tree from <code>NewLeaf</code> events; returns siblings + circuit index + root (mirrors <code>GenerateProof.tsx</code>).</td><td><code>app/api/merkle-path/route.ts</code></td></tr>
+    <tr><td><code>/api/otp/send</code> · <code>/verify</code></td><td>POST</td><td>Phone verification; on success returns an HMAC token never linked to the vote.</td><td><code>app/api/otp/*</code></td></tr>
+    <tr><td><code>/api/nic/hash</code></td><td>POST</td><td>Signature-gated NIC hashing + reservation to block cross-division duplicates.</td><td><code>app/api/nic/hash/route.ts</code></td></tr>
+    <tr><td><code>/api/verify-vote</code></td><td>GET</td><td>Privacy-preserving check that a nullifier was counted (scans <code>VoteCast</code>).</td><td><code>app/api/verify-vote/route.ts</code></td></tr>
+    <tr><td><code>/api/faucet</code></td><td>POST</td><td><b>Dev-only</b> — funds a burner's gas on local Hardhat; refuses non-local chains.</td><td><code>app/api/faucet/route.ts</code></td></tr>
+  </table>
+
+  <div class="call"><b class="lbl">Note — the API holds no secrets</b>
+  Every mobile-facing route serves only public on-chain data or issues short-lived tokens. Nullifiers, secrets and keys never reach the server — they live only on the voter's device (§8).</div>
+
+  <p>Division awareness on the client is centralised in <code>hooks/useDivisions.ts</code> (199 lines) with <code>findDivisionForGN()</code> resolving a connected GN wallet to the one division it may manage — used by both <code>/gn</code> and <code>/gn/register</code>.</p>
+</section>
+
+<!-- ============================== §8 MOBILE ============================== -->
+<section class="page" id="s8">
+  <div class="kicker"><span class="sec-no">08</span> &nbsp;Voter device</div>
+  <h2>Mobile voter app</h2>
+  <p class="lead">React Native / Expo. The voter's phone is the trust anchor: it generates a key in <b>secure hardware</b>, stores the ZK secrets locally, and produces the proof on-device. "Nothing sensitive ever leaves the device."</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 200" font-family="Inter" font-size="11.5">
+    <defs><marker id="arm" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#e8663a"/></marker></defs>
+    <rect x="16"  y="70" width="150" height="60" rx="10" fill="#fdeee7" stroke="#c25327"/><text x="91" y="94" text-anchor="middle" font-weight="700" fill="#b64a24">Onboarding</text><text x="91" y="112" text-anchor="middle" font-size="10" fill="#3a4353">hardware key + QR</text>
+    <rect x="196" y="70" width="150" height="60" rx="10" fill="#fdeee7" stroke="#c25327"/><text x="271" y="94" text-anchor="middle" font-weight="700" fill="#b64a24">Register</text><text x="271" y="112" text-anchor="middle" font-size="10" fill="#3a4353">commitment → register()</text>
+    <rect x="376" y="70" width="160" height="60" rx="10" fill="#fdeee7" stroke="#c25327"/><text x="456" y="90" text-anchor="middle" font-weight="700" fill="#b64a24">Vote</text><text x="456" y="107" text-anchor="middle" font-size="10" fill="#3a4353">OTP + biometric →</text><text x="456" y="121" text-anchor="middle" font-size="10" fill="#3a4353">ZK proof → burner</text>
+    <rect x="566" y="70" width="150" height="60" rx="10" fill="#dcf3ea" stroke="#0f7a53"/><text x="641" y="90" text-anchor="middle" font-weight="700" fill="#0c7052">Verify (optional)</text><text x="641" y="108" text-anchor="middle" font-size="10" fill="#3a4353">nullifier lookup</text><text x="641" y="122" text-anchor="middle" font-size="10" fill="#3a4353">confirm counted</text>
+    <rect x="746" y="70" width="98" height="60" rx="10" fill="#f4f6fb" stroke="#dbe1ea"/><text x="795" y="94" text-anchor="middle" font-weight="700" fill="#3a4353">Settings</text><text x="795" y="112" text-anchor="middle" font-size="10" fill="#6b7688">wipe id</text>
+    <line x1="166" y1="100" x2="194" y2="100" stroke="#c25327" marker-end="url(#arm)"/>
+    <line x1="346" y1="100" x2="374" y2="100" stroke="#c25327" marker-end="url(#arm)"/>
+    <line x1="536" y1="100" x2="564" y2="100" stroke="#0f7a53" stroke-dasharray="4 3" marker-end="url(#arm)"/>
+    <text x="430" y="30" text-anchor="middle" font-weight="700" fill="#141821">mobile/app/*.tsx — screen flow</text>
+    <text x="430" y="168" text-anchor="middle" font-size="10.5" fill="#6b7688">Register (Registration phase) then Vote (Voting phase); Verify is an after-the-fact receipt check.</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 8.1</b> Four voter screens. Secrets are created at Register and never re-shown.</figcaption></figure>
+
+  <div class="grid2">
+    <div>
+      <h4>Services (src/services/)</h4>
+      <table>
+        <tr><th>File</th><th>Does</th></tr>
+        <tr><td><code>keystore.ts</code></td><td>Hardware-backed key + biometric gate; stores voter secrets &amp; division; <code>wipeIdentity</code>.</td></tr>
+        <tr><td><code>crypto.ts</code></td><td><code>generateCommitment</code> / <code>deriveFromSecrets</code> — Poseidon, matches the circuit exactly.</td></tr>
+        <tr><td><code>zkproof.ts</code></td><td>Builds circuit witness (siblings padded to 16); <code>generateVoteCallData</code>.</td></tr>
+        <tr><td><code>nativeProver.ts</code></td><td>Barretenberg/Honk prover; auto-enabled when the native module is present.</td></tr>
+        <tr><td><code>chain.ts</code></td><td>Hand-built legacy tx signing; <code>submitVote</code> from <code>newBurnerAccount()</code>.</td></tr>
+        <tr><td><code>api.ts</code></td><td>Thin client for the Next.js routes (election, merkle-path, otp).</td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Why a burner wallet?</h4>
+      <p>Registration is signed by the voter's <b>own</b> hardware key (they're on the allowlist). Voting is sent from a <b>fresh, throwaway</b> key so the on-chain <code>msg.sender</code> can't be linked back. Anonymity comes from the proof, not the sender.</p>
+      <div class="code">
+        <div class="fname"><span class="path">mobile/src/services/chain.ts</span><span class="ln">124</span></div>
+<pre><span class="k">export function</span> <span class="f">newBurnerAccount</span>() {
+  <span class="k">const</span> pk = <span class="f">generatePrivateKey</span>();
+  <span class="k">return</span> <span class="f">privateKeyToAccount</span>(pk); <span class="c">// unlinkable</span>
+}</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="call gap"><b class="lbl">Gap — on-device prover &amp; Hardhat coupling</b>
+  Two things to know before extending the app: (1) the native Barretenberg prover is wired but requires an <code>expo prebuild</code> step to leave Expo Go (see <code>mobile/README.md</code>); (2) <code>config.ts</code> defaults to <code>chainId 31337</code> and a Hardhat RPC — the app currently assumes the EVM backend, not the Go node.</div>
+</section>
+
+<!-- ============================== §9 WIRING ============================== -->
+<section class="page" id="s9">
+  <div class="kicker"><span class="sec-no">09</span> &nbsp;Deployment</div>
+  <h2>How it's all wired</h2>
+  <p class="lead">Local development topology and the environment variables that connect the pieces.</p>
+
+  <figure><div class="fig-pad">
+  <svg viewBox="0 0 860 280" font-family="Inter" font-size="11.5">
+    <defs><marker id="arx" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#6b7688"/></marker></defs>
+    <rect x="30" y="30" width="150" height="60" rx="10" fill="#fff2ec" stroke="#e8663a"/><text x="105" y="54" text-anchor="middle" font-weight="700" fill="#b64a24">Phone</text><text x="105" y="72" text-anchor="middle" font-size="10" fill="#3a4353">Expo app</text>
+    <rect x="30" y="180" width="150" height="60" rx="10" fill="#e2ecff" stroke="#2f6fed"/><text x="105" y="204" text-anchor="middle" font-weight="700" fill="#1d4fb8">Browser</text><text x="105" y="222" text-anchor="middle" font-size="10" fill="#3a4353">officials</text>
+
+    <rect x="330" y="100" width="200" height="80" rx="10" fill="#f4f7ff" stroke="#2f6fed"/><text x="430" y="126" text-anchor="middle" font-weight="700" fill="#1d4fb8">Next.js :3000</text><text x="430" y="146" text-anchor="middle" font-size="10.5" fill="#3a4353">pages + /api routes</text><text x="430" y="162" text-anchor="middle" font-size="10" fill="#6b7688">NEXT_PUBLIC_CHAIN_BACKEND</text>
+
+    <rect x="680" y="40" width="160" height="70" rx="10" fill="#ece8ff" stroke="#7b6cf6"/><text x="760" y="66" text-anchor="middle" font-weight="700" fill="#4e3ec0">Hardhat :8545</text><text x="760" y="86" text-anchor="middle" font-size="10.5" fill="#3a4353">EVM · JSON-RPC</text><text x="760" y="100" text-anchor="middle" font-size="10" fill="#6b7688">default backend</text>
+    <rect x="680" y="170" width="160" height="70" rx="10" fill="#dbf6fc" stroke="#00add8"/><text x="760" y="196" text-anchor="middle" font-weight="700" fill="#046b83">Go node :3001</text><text x="760" y="216" text-anchor="middle" font-size="10.5" fill="#3a4353">REST · no gas</text><text x="760" y="230" text-anchor="middle" font-size="10" fill="#6b7688">custom backend</text>
+
+    <line x1="180" y1="60" x2="328" y2="120" stroke="#6b7688" marker-end="url(#arx)"/><text x="250" y="82" font-size="9.5" fill="#6b7688">API + RPC</text>
+    <line x1="180" y1="210" x2="328" y2="150" stroke="#6b7688" marker-end="url(#arx)"/>
+    <line x1="530" y1="130" x2="678" y2="80" stroke="#7b6cf6" marker-end="url(#arx)"/><text x="600" y="98" font-size="9.5" fill="#6b7688">viem</text>
+    <line x1="530" y1="150" x2="678" y2="200" stroke="#00add8" stroke-dasharray="4 3" marker-end="url(#arx)"/><text x="600" y="188" font-size="9.5" fill="#6b7688">fetch (when custom)</text>
+    <line x1="180" y1="50" x2="678" y2="60" stroke="#e8663a" stroke-dasharray="3 3" marker-end="url(#arx)"/><text x="430" y="42" text-anchor="middle" font-size="9.5" fill="#b64a24">phone → chain RPC directly (vote tx)</text>
+  </svg>
+  </div><figcaption class="cap"><b>Fig 9.1</b> The phone talks to Next.js for data/OTP and to the chain RPC directly to submit its burner-signed vote.</figcaption></figure>
+
+  <div class="grid2">
+    <div>
+      <h4>Run it (Hardhat path)</h4>
+      <div class="code"><div class="fname"><span class="path">repo root</span><span class="ln">yarn</span></div>
+<pre><span class="f">yarn</span> chain     <span class="c"># local EVM :8545</span>
+<span class="f">yarn</span> deploy    <span class="c"># 00_ + 01_deploy_divisions</span>
+<span class="f">yarn</span> start     <span class="c"># Next.js :3000</span>
+<span class="c"># mobile:</span>
+cd packages/mobile &amp;&amp; npx expo start</pre>
+      </div>
+    </div>
+    <div>
+      <h4>Run it (custom Go path)</h4>
+      <div class="code"><div class="fname"><span class="path">packages/blockchain</span><span class="ln">make</span></div>
+<pre><span class="f">make</span> sync-artifacts   <span class="c"># embed .sol → assets/</span>
+<span class="f">go</span> run ./cmd/node     <span class="c"># REST :3001</span>
+<span class="c"># then, in nextjs:</span>
+NEXT_PUBLIC_CHAIN_BACKEND=custom \
+NEXT_PUBLIC_CHAIN_API_URL=http://localhost:3001 \
+  <span class="f">yarn</span> start</pre>
+      </div>
+    </div>
+  </div>
+
+  <h4>Key environment variables</h4>
+  <table>
+    <tr><th>Var</th><th>Where</th><th>Meaning</th></tr>
+    <tr><td><code>NEXT_PUBLIC_CHAIN_BACKEND</code></td><td>nextjs</td><td><code>hardhat</code> (default) or <code>custom</code> — flips the §5 seam.</td></tr>
+    <tr><td><code>NEXT_PUBLIC_CHAIN_API_URL</code></td><td>nextjs</td><td>Go node public API (custom only), default <code>:3001</code>.</td></tr>
+    <tr><td><code>RPC_URL</code> / <code>NEXT_PUBLIC_CHAIN_ID</code></td><td>nextjs API</td><td>EVM RPC the server-side routes read (default <code>:8545</code> / <code>31337</code>).</td></tr>
+    <tr><td><code>EXPO_PUBLIC_API_URL</code> / <code>_RPC_URL</code></td><td>mobile</td><td>LAN IP of the dev machine so a physical phone can reach API + RPC.</td></tr>
+    <tr><td><code>NODE_ID</code> · <code>PEERS</code> · <code>ALLOW_STORAGE_ONLY</code></td><td>Go node</td><td>Port/data dir · P2P peers · dev escape hatch (skips ZK verify).</td></tr>
+  </table>
+</section>
+
+<!-- ============================== §10 GAPS ============================== -->
+<section class="page" id="s10">
+  <div class="kicker"><span class="sec-no">10</span> &nbsp;Extending</div>
+  <h2>Gaps &amp; where to extend</h2>
+  <p class="lead">The architecture is sound; the main incompleteness is that the newest features live on the EVM/Hardhat side and haven't been threaded back into the custom Go chain or fully productionised.</p>
+
+  <table>
+    <tr><th>#</th><th>Gap</th><th>Impact</th><th>Where to start</th></tr>
+    <tr><td>1</td><td><b>Custom chain is single-election only.</b> No <code>ElectionRegistry</code>, <code>NicRegistry</code>, GN role or divisions in the Go node (its <code>assets/</code> embeds only <code>Voting.json</code>).</td><td>Custom backend can't run the division/GN/NIC flow; those features are Hardhat-only today.</td><td>Follow <code>CONTRACT_CHANGE_CHECKLIST.md</code>: embed the two new artifacts, add bridge methods, TxTypes, replay cases, endpoints.</td></tr>
+    <tr><td>2</td><td><b>Mobile app assumes Hardhat.</b> <code>config.ts</code> hardcodes chainId <code>31337</code> + JSON-RPC; it signs EVM txs via viem.</td><td>App won't work against the Go node's REST API without an adapter.</td><td>Add a REST submit path mirroring <code>nextjs/services/chain/restClient.ts</code>.</td></tr>
+    <tr><td>3</td><td><b>On-device prover not turned on by default.</b> Witness building is done; native Barretenberg needs <code>expo prebuild</code>.</td><td>Proof generation is stubbed/limited in Expo Go.</td><td><code>mobile/src/services/nativeProver.ts</code> + README checklist.</td></tr>
+    <tr><td>4</td><td><b>Dev-only auth shortcuts.</b> <code>/api/faucet</code> uses a well-known key; OTP uses a mock provider.</td><td>Not production-safe as-is (by design, guarded to local chains).</td><td>Swap in a paymaster/relayer and Twilio/Firebase; both are isolated behind their service modules.</td></tr>
+    <tr><td>5</td><td><b>Frontend REST adapter lags the EVM adapter.</b> <code>restClient.ts</code> covers only the original Voting surface.</td><td>Division-aware pages only work on Hardhat.</td><td>Extend the <code>ChainAdapter</code> and implement both branches (§5).</td></tr>
+  </table>
+
+  <div class="call key"><b class="lbl">The one document to keep open while extending</b>
+  <code>packages/blockchain/CONTRACT_CHANGE_CHECKLIST.md</code> enumerates every file that must change when a contract changes: artifacts → <code>bridge.go</code> → <code>core/types.go</code> → <code>replay.go</code> → <code>server.go</code> → <code>API.md</code> → tests → frontend adapter. Treat any new contract function as a full pass down that list.</div>
+
+  <h3>Suggested first milestone</h3>
+  <p>Bring the custom Go chain to feature parity with the EVM path for a <b>single division</b>: it already runs <code>Voting.sol</code> end-to-end. The highest-leverage next step is deciding whether the Go node should (a) expose a thin JSON-RPC shim so the existing mobile app and division-aware routes work unchanged, or (b) gain REST endpoints for <code>ElectionRegistry</code>/<code>NicRegistry</code> and have the clients grow a REST branch. Option (a) minimises client churn; option (b) keeps the node's "typed REST" philosophy intact.</p>
+</section>
+
+<!-- ============================== APPENDIX ============================== -->
+<section class="page" id="appx">
+  <div class="kicker">Appendix</div>
+  <h2>File &amp; symbol index</h2>
+  <p class="lead">Fast jump-list of the load-bearing files referenced above.</p>
+  <table>
+    <tr><th>Concern</th><th>File</th><th>Key symbols / lines</th></tr>
+    <tr><td>ZK circuit</td><td><code>packages/circuits/src/main.nr</code></td><td><code>main()</code> — 4 asserts</td></tr>
+    <tr><td>Commitment crypto</td><td><code>packages/mobile/src/services/crypto.ts</code></td><td><code>generateCommitment:33</code>, <code>deriveFromSecrets:47</code></td></tr>
+    <tr><td>Election contract</td><td><code>packages/hardhat/contracts/Voting.sol</code></td><td>phases <code>:45</code>, <code>register:251</code>, <code>vote:267</code>, <code>addVoters:181</code></td></tr>
+    <tr><td>Division factory</td><td><code>packages/hardhat/contracts/ElectionRegistry.sol</code></td><td><code>createDivision:54</code>, <code>getNationalResults</code></td></tr>
+    <tr><td>NIC dedup</td><td><code>packages/hardhat/contracts/NicRegistry.sol</code></td><td><code>reserveNicHash</code></td></tr>
+    <tr><td>Backend seam</td><td><code>packages/nextjs/services/chain/</code></td><td><code>types.ts</code>, <code>hooks.ts:43</code>, <code>restClient.ts</code></td></tr>
+    <tr><td>Backend switch</td><td><code>packages/nextjs/scaffold.config.ts</code></td><td><code>chainBackend:58</code>, <code>chainApiUrl:59</code></td></tr>
+    <tr><td>Go node entry</td><td><code>packages/blockchain/cmd/node/main.go</code></td><td>boot sequence, genesis <code>:60</code></td></tr>
+    <tr><td>Go typed bridge</td><td><code>packages/blockchain/internal/evm/bridge.go</code></td><td><code>Vote:393</code>, <code>Register:341</code>, <code>AddVoter:308</code></td></tr>
+    <tr><td>Go tx types</td><td><code>packages/blockchain/internal/core/types.go</code></td><td>9 <code>TxType</code> consts <code>:12</code></td></tr>
+    <tr><td>Go REST handlers</td><td><code>packages/blockchain/internal/api/server.go</code></td><td><code>handleVote</code>, <code>handleRegister</code>, <code>commitAdminTx</code></td></tr>
+    <tr><td>Mobile screens</td><td><code>packages/mobile/app/{onboarding,register,verify,vote}.tsx</code></td><td>screen flow</td></tr>
+    <tr><td>Mobile chain</td><td><code>packages/mobile/src/services/chain.ts</code></td><td><code>submitVote:109</code>, <code>newBurnerAccount:124</code></td></tr>
+  </table>
+
+  <h3>Reference docs already in the repo</h3>
+  <ul class="tight">
+    <li><code>README.md</code> — project intro + backend-switch table.</li>
+    <li><code>packages/blockchain/BLOCKCHAIN_OVERVIEW.md</code> — per-file Go reference with mermaid flows (source for §6).</li>
+    <li><code>packages/blockchain/API.md</code> — authoritative REST contract.</li>
+    <li><code>packages/blockchain/CONTRACT_CHANGE_CHECKLIST.md</code> — the sync playbook.</li>
+    <li><code>packages/mobile/README.md</code> — app flow + native-prover setup.</li>
+    <li><code>MIGRATION.md</code> — Hardhat → custom-chain migration notes.</li>
+  </ul>
+  <div class="foot">ZK Voting — Architecture Reference · generated 29 Jul 2026 · print to PDF via your browser (A4, background graphics on)</div>
+</section>
+
+</main>
+</body>
+</html>
