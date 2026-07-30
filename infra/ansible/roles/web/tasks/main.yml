@@ -1,9 +1,16 @@
 ---
-- name: Clone repo (if not already by blockchain role)
+- name: Create project dir
+  file:
+    path: /opt/zk-voting
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+
+- name: Clone repo
   git:
     repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
     dest: /opt/zk-voting
-    version: "{{ branch | default('main') }}"
+    version: "{{ branch | default('Piyumal') }}"
     force: yes
   become_user: ubuntu
 
