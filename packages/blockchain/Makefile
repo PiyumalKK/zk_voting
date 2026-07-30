@@ -27,8 +27,18 @@ fmt:
 # Delete this node's on-disk chain state so the next run starts from a
 # fresh genesis. Override DATA_DIR to match a non-default $DATA_DIR env var,
 # e.g. `make reset DATA_DIR=./data_replica2`.
+#
+# `rm -rf` is POSIX-only; this repo's `make` is also run on Windows where
+# recipes execute via cmd.exe (no `rm` on PATH), so reset branches on
+# $(OS), which GNU Make/cmd.exe set to "Windows_NT" and POSIX shells leave
+# unset.
+ifeq ($(OS),Windows_NT)
+reset:
+	if exist $(DATA_DIR) rmdir /s /q $(DATA_DIR)
+else
 reset:
 	rm -rf $(DATA_DIR)
+endif
 
 # Sync go.mod/go.sum with the source tree (requires network access to the
 # Go module proxy).

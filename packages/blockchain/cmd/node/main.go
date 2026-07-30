@@ -1,6 +1,6 @@
 // Command node is the entrypoint for the packages/blockchain v2 Go node:
-// config → logging → HTTP server (health-only in M01; the full JSON-RPC
-// surface is mounted starting M04) → graceful shutdown.
+// config → logging → storage/genesis (M02) → HTTP server (health-only
+// until M04 mounts the full JSON-RPC surface) → graceful shutdown.
 package main
 
 import (
@@ -19,6 +19,8 @@ import (
 
 	"zk-blockchain/internal/config"
 	"zk-blockchain/internal/rpc"
+	"zk-blockchain/internal/state"
+	"zk-blockchain/internal/storage"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
@@ -48,10 +50,28 @@ func main() {
 		Str("dataDir", cfg.DataDir).
 		Msg("starting zk-blockchain node")
 
+	db, err := storage.Open(cfg.DataDir)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to open chain database")
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Error().Err(err).Msg("error closing chain database")
+		}
+	}()
+
+	genesisBlock, err := state.EnsureGenesis(db, cfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to ensure genesis")
+	}
+	log.Info().
+		Str("genesisHash", genesisBlock.Hash().Hex()).
+		Uint64("chainId", cfg.ChainID).
+		Uint64("height", state.Height(db)).
+		Msg("genesis ready")
+
 	mux := http.NewServeMux()
-	// M01 has no chain yet, so height always reports 0. M02+ replaces this
-	// provider with a function reading the real chain head.
-	mux.Handle("/health", rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return 0 }))
+	mux.Handle("/health", rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return state.Height(db) }))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.RPCPort),
