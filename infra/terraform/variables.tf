@@ -19,6 +19,10 @@ variable "instance_type" {
   default = "t3.small"
 }
 
+variable "web_instance_type" {
+  default = "t3.medium"
+}
+
 variable "domain" {
   description = "Domain for the app (optional — set after deploy)"
   default     = ""

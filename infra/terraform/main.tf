@@ -141,7 +141,7 @@ resource "aws_instance" "node" {
 # --- EC2: 1 Web Server ---
 resource "aws_instance" "web" {
   ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
+  instance_type          = var.web_instance_type
   key_name               = var.key_name
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.nodes.id]

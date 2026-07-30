@@ -39,7 +39,9 @@
   become_user: ubuntu
   environment:
     HOME: /home/ubuntu
-    NODE_OPTIONS: "--max-old-space-size=768"
+    NODE_OPTIONS: "--max-old-space-size=1536"
+  async: 600
+  poll: 15
 
 - name: Start with PM2
   shell: |

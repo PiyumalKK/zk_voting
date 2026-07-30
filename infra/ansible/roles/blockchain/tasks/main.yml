@@ -26,6 +26,13 @@
     HOME: /home/ubuntu
     GOPATH: /home/ubuntu/go
 
+- name: Create data dirs
+  file:
+    path: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/{{ item }}"
+    state: directory
+    owner: ubuntu
+  loop: [certs, keys]
+
 - name: Generate admin RSA keypair (if missing)
   shell: |
     openssl genrsa -out admin_private.pem 2048
