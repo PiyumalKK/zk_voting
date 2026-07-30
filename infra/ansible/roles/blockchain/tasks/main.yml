@@ -9,7 +9,13 @@
     repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
     dest: /opt/zk-voting
     version: "{{ branch | default('Piyumal') }}"
-  become_user: ubuntu
+
+- name: Own by ubuntu
+  file:
+    path: /opt/zk-voting
+    owner: ubuntu
+    group: ubuntu
+    recurse: yes
 
 - name: Build Go binary
   shell: /snap/bin/go build -o bin/zk-node ./cmd/node
