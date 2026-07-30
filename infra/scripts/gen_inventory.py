@@ -46,6 +46,7 @@ def main():
     lines.append("        webserver:")
     lines.append(f"          ansible_host: {web_pub}")
     lines.append(f"          node1_ip: {node_priv[0]}")
+    lines.append(f"          alb_dns: {tf['alb_dns']['value'].replace('http://', '')}")
 
     print("\n".join(lines))
 
