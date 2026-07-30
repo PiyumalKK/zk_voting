@@ -1,58 +1,49 @@
-name: "2. Deploy Application (Ansible)"
+name: Deploy Application
 
 on:
   workflow_dispatch:
 
 jobs:
   deploy:
+    name: Deploy (Ansible)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: Piyumal
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
-
       - name: Install Ansible
         run: pip install ansible
-
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
           chmod 400 ~/.ssh/zk-voting-key.pem
-
-      - name: Terraform Init (to read state)
+      - name: Terraform Init
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: terraform init
-
-      - name: Generate Ansible inventory
+      - name: Generate inventory
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: python infra/scripts/gen_inventory.py infra/terraform > infra/ansible/inventory.yml
-
-      - name: Show generated inventory
+      - name: Show inventory
         run: cat infra/ansible/inventory.yml
-
-      - name: Run Ansible playbook
+      - name: Run Ansible
         working-directory: infra/ansible
         run: ansible-playbook playbook.yml -i inventory.yml -v
-
-      - name: Verify nodes
+      - name: Health check
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           cd infra/terraform
-          echo "=== Health Check ==="
+          echo "=== Node Health ==="
           for ip in $(terraform output -json node_public_ips | python3 -c "import sys,json;[print(x) for x in json.load(sys.stdin)]"); do
             echo "$ip: $(curl -sf --max-time 5 http://$ip:3001/health || echo 'starting...')"
           done
-          WEB=$(terraform output -raw web_public_ip)
-          echo "Web: http://$WEB:3000"
+          echo "=== ALB ==="
+          terraform output alb_dns

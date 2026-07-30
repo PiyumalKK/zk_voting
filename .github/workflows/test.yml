@@ -1,12 +1,12 @@
-name: "3. Run Tests"
+name: Run Tests
 
 on:
   workflow_dispatch:
   pull_request:
-    branches: [Piyumal, main]
 
 jobs:
   contracts:
+    name: Smart Contract Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +16,8 @@ jobs:
       - run: cd packages/hardhat && yarn install
       - run: cd packages/hardhat && npx hardhat test --network hardhat
 
-  web-lint:
+  web:
+    name: Web Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

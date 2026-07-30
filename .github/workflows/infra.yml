@@ -1,63 +1,62 @@
-name: "1. Infrastructure (Terraform)"
+name: Infrastructure
 
 on:
   workflow_dispatch:
-    inputs:
-      action:
-        description: "Action to perform"
-        required: true
-        type: choice
-        options:
-          - plan
-          - apply
-          - destroy
 
 jobs:
-  plan:
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: Piyumal
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
-
-      - name: Terraform Init
+      - name: Init
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: terraform init
+      - name: Validate
+        working-directory: infra/terraform
+        run: terraform validate
 
-      - name: Terraform Plan
+  plan:
+    name: Plan
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+      - name: Init & Plan
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          if [ "${{ inputs.action }}" = "destroy" ]; then
-            terraform plan -destroy
-          else
-            terraform plan
-          fi
+          terraform init
+          terraform plan -out=tfplan
+      - name: Show plan summary
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform show tfplan -no-color
 
   apply:
+    name: Apply
     needs: plan
-    if: inputs.action == 'apply'
     runs-on: ubuntu-latest
     environment: tf-apply
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: Piyumal
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
-
-      - name: Terraform Init & Apply
+      - name: Init & Apply
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -65,33 +64,30 @@ jobs:
         run: |
           terraform init
           terraform apply -auto-approve
-
-      - name: Show outputs
+      - name: Outputs
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
+          echo "=== ALB URL ==="
+          terraform output alb_dns
           echo "=== Node IPs ==="
           terraform output node_public_ips
           echo "=== Web IP ==="
           terraform output web_public_ip
 
   destroy:
+    name: Destroy
     needs: plan
-    if: inputs.action == 'destroy'
     runs-on: ubuntu-latest
     environment: tf-destroy
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: Piyumal
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
-
-      - name: Terraform Init & Destroy
+      - name: Init & Destroy
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

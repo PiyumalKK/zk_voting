@@ -1,30 +1,22 @@
-name: "4. Build Mobile APK"
+name: Build Mobile APK
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-apk:
+  build:
+    name: Build Android APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: Piyumal
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install EAS CLI
         run: npm install -g eas-cli
-
       - name: Install dependencies
         run: cd packages/mobile && yarn install
-
       - name: Build APK
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: cd packages/mobile && eas build --platform android --profile preview --non-interactive
-
-      - name: Print download link
-        run: echo "✅ APK build submitted. Check https://expo.dev for download link."
