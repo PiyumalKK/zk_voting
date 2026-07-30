@@ -1,0 +1,24 @@
+---
+- name: Setup all servers
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: Generate mTLS certs for P2P
+  hosts: nodes
+  become: true
+  roles:
+    - certs
+
+- name: Deploy blockchain nodes
+  hosts: nodes
+  become: true
+  roles:
+    - blockchain
+
+- name: Deploy web application
+  hosts: web
+  become: true
+  roles:
+    - web

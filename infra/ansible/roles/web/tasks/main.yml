@@ -1,0 +1,44 @@
+---
+- name: Clone repo (if not already by blockchain role)
+  git:
+    repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
+    dest: /opt/zk-voting
+    version: "{{ branch | default('main') }}"
+    force: yes
+  become_user: ubuntu
+
+- name: Create .env.local for Next.js
+  template:
+    src: env.local.j2
+    dest: /opt/zk-voting/packages/nextjs/.env.local
+    owner: ubuntu
+
+- name: Install Next.js dependencies
+  shell: yarn install --frozen-lockfile
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+
+- name: Build Next.js
+  shell: yarn build
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+
+- name: Start with PM2
+  shell: |
+    pm2 delete zk-web 2>/dev/null || true
+    pm2 start npm --name zk-web -- start -- -p 3000
+    pm2 save
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+
+- name: Setup PM2 auto-start
+  shell: |
+    env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu | grep sudo | bash
+  ignore_errors: yes

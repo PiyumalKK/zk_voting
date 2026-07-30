@@ -1,0 +1,16 @@
+---
+- name: Create data dirs
+  file:
+    path: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/{{ item }}"
+    state: directory
+    owner: ubuntu
+  loop: [certs, keys]
+
+- name: Generate self-signed cert
+  shell: |
+    openssl req -x509 -newkey rsa:2048 -nodes \
+      -keyout server.key -out server.crt \
+      -days 365 -subj "/CN=zk-node-{{ node_id }}"
+  args:
+    chdir: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/certs"
+    creates: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/certs/server.crt"
