@@ -70,7 +70,7 @@ resource "aws_security_group" "nodes" {
   ingress {
     description = "Public API"
     from_port   = 3001
-    to_port     = 3004
+    to_port     = 3003
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -78,7 +78,7 @@ resource "aws_security_group" "nodes" {
   ingress {
     description = "P2P between nodes"
     from_port   = 4001
-    to_port     = 4004
+    to_port     = 4003
     protocol    = "tcp"
     self        = true
   }
@@ -285,8 +285,8 @@ resource "aws_cloudwatch_metric_alarm" "healthy_nodes" {
   namespace           = "AWS/ApplicationELB"
   period              = 60
   statistic           = "Minimum"
-  threshold           = 3
-  alarm_description   = "Fewer than 3 healthy blockchain nodes"
+  threshold           = 2
+  alarm_description   = "Fewer than 2 healthy blockchain nodes"
 
   dimensions = {
     TargetGroup  = aws_lb_target_group.chain.arn_suffix

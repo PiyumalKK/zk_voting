@@ -12,7 +12,7 @@ variable "key_name" {
 }
 
 variable "node_count" {
-  default = 4
+  default = 3
 }
 
 variable "instance_type" {
