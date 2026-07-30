@@ -168,17 +168,19 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.nodes.id]
   subnets            = [aws_subnet.public.id, aws_subnet.public_b.id]
   tags               = { Name = "${var.project}-alb" }
+
+  idle_timeout = 120
 }
 
-# Target Group: Blockchain API (nodes on :3001)
+# Target Group: Blockchain nodes on port 80 (nginx rewrites /chain-api/* -> /*)
 resource "aws_lb_target_group" "chain" {
   name     = "${var.project}-chain-tg"
-  port     = 3001
+  port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
   health_check {
-    path                = "/health"
+    path                = "/nginx-health"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 15
@@ -186,15 +188,15 @@ resource "aws_lb_target_group" "chain" {
   }
 }
 
-# Target Group: Web App (web server on :3000)
+# Target Group: Web app on port 80 (nginx proxy with fast /nginx-health)
 resource "aws_lb_target_group" "web" {
   name     = "${var.project}-web-tg"
-  port     = 3000
+  port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
   health_check {
-    path                = "/"
+    path                = "/nginx-health"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 15
@@ -202,19 +204,19 @@ resource "aws_lb_target_group" "web" {
   }
 }
 
-# Register 4 nodes to chain target group
+# Register nodes on port 80 (nginx)
 resource "aws_lb_target_group_attachment" "nodes" {
   count            = var.node_count
   target_group_arn = aws_lb_target_group.chain.arn
   target_id        = aws_instance.node[count.index].id
-  port             = 3001
+  port             = 80
 }
 
-# Register web server to web target group
+# Register web server on port 80 (nginx)
 resource "aws_lb_target_group_attachment" "web" {
   target_group_arn = aws_lb_target_group.web.arn
   target_id        = aws_instance.web.id
-  port             = 3000
+  port             = 80
 }
 
 # HTTP Listener (port 80) — default routes to web app

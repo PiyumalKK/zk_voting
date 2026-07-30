@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/opt/zk-voting/packages/blockchain
-Environment=NODE_ID={{ node_id }}
+Environment=NODE_ID=3001
 Environment=ALLOWED_ORIGIN={{ allowed_origin | default('*') }}
 ExecStart=/opt/zk-voting/packages/blockchain/bin/zk-node
 Restart=always
