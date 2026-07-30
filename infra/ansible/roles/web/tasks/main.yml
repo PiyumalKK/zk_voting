@@ -1,17 +1,14 @@
 ---
-- name: Create project dir
+- name: Remove old checkout
   file:
     path: /opt/zk-voting
-    state: directory
-    owner: ubuntu
-    group: ubuntu
+    state: absent
 
 - name: Clone repo
   git:
     repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
     dest: /opt/zk-voting
     version: "{{ branch | default('Piyumal') }}"
-    force: yes
   become_user: ubuntu
 
 - name: Create .env.local for Next.js
@@ -21,12 +18,13 @@
     owner: ubuntu
 
 - name: Install Next.js dependencies
-  shell: yarn install --frozen-lockfile
-  args:
-    chdir: /opt/zk-voting/packages/nextjs
+  shell: |
+    cd /opt/zk-voting
+    yarn install
   become_user: ubuntu
   environment:
     HOME: /home/ubuntu
+    NODE_OPTIONS: "--max-old-space-size=768"
 
 - name: Build Next.js
   shell: yarn build
@@ -35,6 +33,7 @@
   become_user: ubuntu
   environment:
     HOME: /home/ubuntu
+    NODE_OPTIONS: "--max-old-space-size=768"
 
 - name: Start with PM2
   shell: |
