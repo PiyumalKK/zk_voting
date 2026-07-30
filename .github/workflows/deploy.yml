@@ -4,46 +4,146 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
-    name: Deploy (Ansible)
+  inventory:
+    name: Generate Inventory
     runs-on: ubuntu-latest
+    outputs:
+      node1_ip: ${{ steps.ips.outputs.node1 }}
+      node2_ip: ${{ steps.ips.outputs.node2 }}
+      node3_ip: ${{ steps.ips.outputs.node3 }}
+      web_ip: ${{ steps.ips.outputs.web }}
+      inventory: ${{ steps.inv.outputs.content }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
-      - name: Install Ansible
-        run: pip install ansible
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
-          chmod 400 ~/.ssh/zk-voting-key.pem
       - name: Terraform Init
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: terraform init
-      - name: Generate inventory
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: python infra/scripts/gen_inventory.py infra/terraform > infra/ansible/inventory.yml
-      - name: Show inventory
-        run: cat infra/ansible/inventory.yml
-      - name: Run Ansible
-        working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml -v
-      - name: Health check
+      - name: Get IPs
+        id: ips
+        working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          cd infra/terraform
-          echo "=== Node Health ==="
-          for ip in $(terraform output -json node_public_ips | python3 -c "import sys,json;[print(x) for x in json.load(sys.stdin)]"); do
-            echo "$ip: $(curl -sf --max-time 5 http://$ip:3001/health || echo 'starting...')"
-          done
-          echo "=== ALB ==="
-          terraform output alb_dns
+          echo "node1=$(terraform output -json node_public_ips | jq -r '.[0]')" >> $GITHUB_OUTPUT
+          echo "node2=$(terraform output -json node_public_ips | jq -r '.[1]')" >> $GITHUB_OUTPUT
+          echo "node3=$(terraform output -json node_public_ips | jq -r '.[2]')" >> $GITHUB_OUTPUT
+          echo "web=$(terraform output -raw web_public_ip)" >> $GITHUB_OUTPUT
+      - name: Generate inventory
+        id: inv
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          python infra/scripts/gen_inventory.py infra/terraform > infra/ansible/inventory.yml
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          cat infra/ansible/inventory.yml >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/inventory.yml
+
+  deploy-node1:
+    name: Deploy Node 1
+    needs: inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install ansible
+      - uses: actions/download-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
+          chmod 400 ~/.ssh/zk-voting-key.pem
+      - name: Deploy to Node 1
+        working-directory: infra/ansible
+        run: ansible-playbook playbook.yml -i inventory.yml --limit node1 -v
+
+  deploy-node2:
+    name: Deploy Node 2
+    needs: inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install ansible
+      - uses: actions/download-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
+          chmod 400 ~/.ssh/zk-voting-key.pem
+      - name: Deploy to Node 2
+        working-directory: infra/ansible
+        run: ansible-playbook playbook.yml -i inventory.yml --limit node2 -v
+
+  deploy-node3:
+    name: Deploy Node 3
+    needs: inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install ansible
+      - uses: actions/download-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
+          chmod 400 ~/.ssh/zk-voting-key.pem
+      - name: Deploy to Node 3
+        working-directory: infra/ansible
+        run: ansible-playbook playbook.yml -i inventory.yml --limit node3 -v
+
+  deploy-web:
+    name: Deploy Web Server
+    needs: inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install ansible
+      - uses: actions/download-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
+          chmod 400 ~/.ssh/zk-voting-key.pem
+      - name: Deploy to Web Server
+        working-directory: infra/ansible
+        run: ansible-playbook playbook.yml -i inventory.yml --limit webserver -v
+
+  health-check:
+    name: Health Check
+    needs: [deploy-node1, deploy-node2, deploy-node3, deploy-web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all nodes
+        run: |
+          echo "=== Node 1 ==="
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node1_ip }}:3001/health || echo "NOT READY"
+          echo "=== Node 2 ==="
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node2_ip }}:3002/health || echo "NOT READY"
+          echo "=== Node 3 ==="
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node3_ip }}:3003/health || echo "NOT READY"
+          echo "=== Web ==="
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.web_ip }}:3000 | head -c 100 || echo "NOT READY"
+          echo ""
+          echo "✅ ALB URL: http://zk-voting-alb-712299694.ap-south-1.elb.amazonaws.com"

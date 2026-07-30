@@ -29,17 +29,10 @@
   template:
     src: zk-node.service.j2
     dest: /etc/systemd/system/zk-node.service
-  notify: restart zk-node
 
 - name: Enable and start zk-node
   systemd:
     name: zk-node
     enabled: yes
-    state: started
+    state: restarted
     daemon_reload: yes
-
-handlers:
-  - name: restart zk-node
-    systemd:
-      name: zk-node
-      state: restarted
