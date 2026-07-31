@@ -28,7 +28,7 @@ def main():
         others = []
         for i, ip in enumerate(node_priv):
             if i != idx:
-                others.append(f"https://{ip}:{4001 + i}")
+                others.append(f"https://{ip}:4001")
         return ",".join(others)
 
     lines = ["all:", "  vars:", f"    node1_priv: {node_priv[0]}", f"    node2_priv: {node_priv[1]}", f"    node3_priv: {node_priv[2]}", "  children:", "    nodes:", "      hosts:"]
