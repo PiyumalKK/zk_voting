@@ -31,7 +31,7 @@ def main():
                 others.append(f"https://{ip}:{4001 + i}")
         return ",".join(others)
 
-    lines = ["all:", "  children:", "    nodes:", "      hosts:"]
+    lines = ["all:", "  vars:", f"    node1_priv: {node_priv[0]}", f"    node2_priv: {node_priv[1]}", f"    node3_priv: {node_priv[2]}", "  children:", "    nodes:", "      hosts:"]
     for i in range(len(node_pub)):
         nid = 3001 + i
         lines.append(f"        node{i+1}:")

@@ -1,16 +1,59 @@
 ---
-- name: Create data dirs
+# Generates a shared TLS cert with SANs for all node private IPs.
+# All nodes use the same cert/key so mTLS verification passes (cert acts as its own CA).
+# Must run on node1 first (it creates the cert), then on other nodes (they receive it).
+
+- name: Create certs directory
   file:
-    path: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/{{ item }}"
+    path: "/opt/zk-voting/packages/blockchain/data_3001/certs"
     state: directory
     owner: ubuntu
-  loop: [certs, keys]
 
-- name: Generate self-signed cert
+- name: Generate shared cluster cert with SANs (run once on node1, others skip)
   shell: |
-    openssl req -x509 -newkey rsa:2048 -nodes \
-      -keyout server.key -out server.crt \
-      -days 365 -subj "/CN=zk-node-{{ node_id }}"
+    cat > /tmp/san.cnf << 'EOF'
+    [req]
+    req_extensions = v3_req
+    distinguished_name = req_distinguished_name
+    [req_distinguished_name]
+    [v3_req]
+    subjectAltName = IP:{{ node1_priv }},IP:{{ node2_priv }},IP:{{ node3_priv }}
+    EOF
+
+    openssl genrsa -out /tmp/cluster.key 2048
+    openssl req -new -x509 -key /tmp/cluster.key -out /tmp/cluster.crt -days 365 \
+      -subj "/CN=zk-cluster" -extensions v3_req -config /tmp/san.cnf
+    cp /tmp/cluster.crt /opt/zk-voting/packages/blockchain/data_3001/certs/server.crt
+    cp /tmp/cluster.key /opt/zk-voting/packages/blockchain/data_3001/certs/server.key
   args:
-    chdir: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/certs"
-    creates: "/opt/zk-voting/packages/blockchain/data_{{ node_id }}/certs/server.crt"
+    creates: "/opt/zk-voting/packages/blockchain/data_3001/certs/server.crt"
+  when: inventory_hostname == 'node1'
+  become_user: ubuntu
+
+- name: Fetch cert from node1 to distribute to other nodes
+  fetch:
+    src: "/opt/zk-voting/packages/blockchain/data_3001/certs/server.crt"
+    dest: "/tmp/ansible_cluster.crt"
+    flat: yes
+  when: inventory_hostname == 'node1'
+
+- name: Fetch key from node1 to distribute to other nodes
+  fetch:
+    src: "/opt/zk-voting/packages/blockchain/data_3001/certs/server.key"
+    dest: "/tmp/ansible_cluster.key"
+    flat: yes
+  when: inventory_hostname == 'node1'
+
+- name: Deploy shared cert to non-node1 nodes
+  copy:
+    src: "/tmp/ansible_cluster.crt"
+    dest: "/opt/zk-voting/packages/blockchain/data_3001/certs/server.crt"
+    owner: ubuntu
+  when: inventory_hostname != 'node1'
+
+- name: Deploy shared key to non-node1 nodes
+  copy:
+    src: "/tmp/ansible_cluster.key"
+    dest: "/opt/zk-voting/packages/blockchain/data_3001/certs/server.key"
+    owner: ubuntu
+  when: inventory_hostname != 'node1'
