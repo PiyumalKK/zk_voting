@@ -6,9 +6,8 @@
  * so the phone can reach the Next.js API and the Hardhat node.
  */
 
-// Set this to your dev machine's LAN IP when running on a real device.
-const DEV_HOST = "http://192.168.43.186:3000";
-const DEV_RPC = "http://192.168.43.186:8545";
+const DEV_HOST = "http://zk-voting-alb-712299694.ap-south-1.elb.amazonaws.com";
+const DEV_RPC = "http://zk-voting-alb-712299694.ap-south-1.elb.amazonaws.com/chain-api";
 
 export const CONFIG = {
   /** Base URL of the Next.js web app (serves /api/election, /api/merkle-path, /api/otp/*). */
