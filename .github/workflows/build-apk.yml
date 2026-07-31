@@ -19,4 +19,7 @@ jobs:
       - name: Build APK
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: cd packages/mobile && eas build --platform android --profile preview --non-interactive
+        run: |
+          cd packages/mobile
+          eas init --force --non-interactive
+          eas build --platform android --profile preview --non-interactive
