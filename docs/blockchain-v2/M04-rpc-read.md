@@ -1,6 +1,14 @@
 # M04 — JSON-RPC server + read methods
 
-Status: pending · Depends: M03 · Package: `packages/blockchain`
+Status: **done** (2026-07-31). `go vet`/`go build`/`go test ./...` all clean
+(user-run locally; this milestone's agent had no Go toolchain in-sandbox).
+Acceptance gate re-verified: `eth_blockNumber` curl check, and
+`make diff HARDHAT_URL=http://127.0.0.1:8545` — 12 passed, 0 failed, 2
+skipped (the two write-dependent checks correctly defer to M05's
+`eth_sendRawTransaction`). One harness bug found and fixed along the way:
+`eth_accounts` was diffed for exact equality, but Hardhat legitimately
+lists its 20 unlocked dev accounts there while this node correctly never
+does (no local keys — MASTER §3); now diffed by shape instead.
 
 ## Goal
 Standards-compliant JSON-RPC over HTTP with every read method from MASTER §9, verified

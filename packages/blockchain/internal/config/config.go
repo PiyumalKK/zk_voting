@@ -43,6 +43,15 @@ const (
 	// in .env.example.
 	DefaultLogFormat string = "console"
 
+	// DefaultRPCRateLimitRPS and DefaultRPCRateLimitBurst are not in MASTER
+	// §7's original table either — added here (M04) so internal/rpc's
+	// per-IP token-bucket limiter (MASTER M04 deliverable 1: "100 rps,
+	// burst 200 — generous; env-tunable") has somewhere to read its
+	// defaults from. Documented in .env.example and MASTER §7 (Agent Rule
+	// 8: new env vars must be documented in both places).
+	DefaultRPCRateLimitRPS   float64 = 100
+	DefaultRPCRateLimitBurst int     = 200
+
 	// MinBlockGasLimit: the mobile app submits vote() with a fixed
 	// 15,000,000 gas limit (MASTER §2, "Facts the plan depends on"), so
 	// BLOCK_GAS_LIMIT must stay strictly greater than this.
@@ -82,6 +91,13 @@ type Config struct {
 	// CORSOrigins is either exactly []string{"*"} or a list of explicit
 	// origins; never empty.
 	CORSOrigins []string
+
+	// RPCRateLimitRPS and RPCRateLimitBurst configure internal/rpc's
+	// per-IP token-bucket limiter (M04). RPS is the steady-state refill
+	// rate; Burst is the bucket capacity (how many requests a single IP
+	// can fire instantly before it starts being throttled to RPS).
+	RPCRateLimitRPS   float64
+	RPCRateLimitBurst int
 
 	TLSCert string
 	TLSKey  string
@@ -170,6 +186,19 @@ func load(lookup lookupFunc) (*Config, error) {
 	}
 
 	cfg.CORSOrigins = parseCORSOrigins(get("CORS_ORIGINS", DefaultCORSOrigins))
+
+	if v, err := strconv.ParseFloat(get("RPC_RATE_LIMIT_RPS", strconv.FormatFloat(DefaultRPCRateLimitRPS, 'f', -1, 64)), 64); err != nil {
+		addf("RPC_RATE_LIMIT_RPS must be a number: %w", err)
+	} else {
+		cfg.RPCRateLimitRPS = v
+	}
+
+	if v, err := strconv.Atoi(get("RPC_RATE_LIMIT_BURST", strconv.Itoa(DefaultRPCRateLimitBurst))); err != nil {
+		addf("RPC_RATE_LIMIT_BURST must be an integer: %w", err)
+	} else {
+		cfg.RPCRateLimitBurst = v
+	}
+
 	cfg.TLSCert = get("TLS_CERT", DefaultTLSCert)
 	cfg.TLSKey = get("TLS_KEY", DefaultTLSKey)
 	cfg.TLSCA = get("TLS_CA", DefaultTLSCA)
@@ -243,6 +272,13 @@ func (c *Config) Validate() error {
 
 	if len(c.CORSOrigins) == 0 {
 		addf("CORS_ORIGINS must not resolve to an empty list")
+	}
+
+	if c.RPCRateLimitRPS <= 0 {
+		addf("RPC_RATE_LIMIT_RPS must be greater than 0, got %v", c.RPCRateLimitRPS)
+	}
+	if c.RPCRateLimitBurst <= 0 {
+		addf("RPC_RATE_LIMIT_BURST must be greater than 0, got %d", c.RPCRateLimitBurst)
 	}
 
 	if strings.TrimSpace(c.TLSCert) == "" {

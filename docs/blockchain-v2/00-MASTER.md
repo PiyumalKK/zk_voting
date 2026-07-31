@@ -198,6 +198,8 @@ M10 can run in parallel with M11–M13 (different packages).
 | `BLOCK_GAS_LIMIT` | `60000000` | Must stay > 15M (vote tx) |
 | `DEV_RPC` | `false` | Enables `evm_*`, `hardhat_setBalance`, `anvil_setBalance` |
 | `CORS_ORIGINS` | `*` | RPC CORS allowlist |
+| `RPC_RATE_LIMIT_RPS` | `100` | Per-IP token-bucket steady-state rate (req/s). Added in M04, not in the original table. |
+| `RPC_RATE_LIMIT_BURST` | `200` | Per-IP token-bucket burst capacity. Added in M04, not in the original table. |
 | `TLS_CERT` / `TLS_KEY` / `TLS_CA` | `./certs/…` | P2P mTLS material (M10; `make gen-certs`) |
 | `LOG_LEVEL` | `info` | zerolog level |
 | `LOG_FORMAT` | `console` | `console` (human-readable, dev) \| `json` (prod/replica log aggregation). Added in M01, not in the original table. |

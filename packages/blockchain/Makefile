@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt reset tidy
+.PHONY: build run test vet fmt reset tidy diff diff-install
 
 BINARY  := bin/zk-blockchain-node
 DATA_DIR ?= data
@@ -44,3 +44,19 @@ endif
 # Go module proxy).
 tidy:
 	go mod tidy
+
+# Install the differential harness's Node dependencies (viem). Run once, or
+# whenever e2e/diff/package.json changes.
+diff-install:
+	cd e2e/diff && npm install
+
+# Differential JSON-RPC harness (M04): diffs this node's responses against
+# a live `hardhat node`. Requires both nodes already running — see M04's
+# acceptance gate in docs/blockchain-v2/M04-rpc-read.md. HARDHAT_URL is
+# required; OUR_URL defaults to http://127.0.0.1:9545.
+#
+#   make run &                              # this node
+#   cd ../hardhat && yarn chain &            # a fresh hardhat node
+#   make diff HARDHAT_URL=http://127.0.0.1:8545
+diff:
+	cd e2e/diff && node diff.mjs

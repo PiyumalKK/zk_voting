@@ -49,21 +49,29 @@ func TestLoad(t *testing.T) {
 				if len(cfg.Peers) != 0 {
 					t.Errorf("Peers = %v, want empty", cfg.Peers)
 				}
+				if cfg.RPCRateLimitRPS != DefaultRPCRateLimitRPS {
+					t.Errorf("RPCRateLimitRPS = %v, want %v", cfg.RPCRateLimitRPS, DefaultRPCRateLimitRPS)
+				}
+				if cfg.RPCRateLimitBurst != DefaultRPCRateLimitBurst {
+					t.Errorf("RPCRateLimitBurst = %d, want %d", cfg.RPCRateLimitBurst, DefaultRPCRateLimitBurst)
+				}
 			},
 		},
 		{
 			name: "overrides applied",
 			env: map[string]string{
-				"CHAIN_ID":        "1337",
-				"RPC_PORT":        "8080",
-				"P2P_PORT":        "8081",
-				"DATA_DIR":        "/var/lib/zk",
-				"ROLE":            "primary",
-				"BLOCK_GAS_LIMIT": "30000000",
-				"DEV_RPC":         "true",
-				"LOG_LEVEL":       "DEBUG", // case-insensitive
-				"LOG_FORMAT":      "json",
-				"PEERS":           "https://node2:9546, https://node3:9546",
+				"CHAIN_ID":             "1337",
+				"RPC_PORT":             "8080",
+				"P2P_PORT":             "8081",
+				"DATA_DIR":             "/var/lib/zk",
+				"ROLE":                 "primary",
+				"BLOCK_GAS_LIMIT":      "30000000",
+				"DEV_RPC":              "true",
+				"LOG_LEVEL":            "DEBUG", // case-insensitive
+				"LOG_FORMAT":           "json",
+				"PEERS":                "https://node2:9546, https://node3:9546",
+				"RPC_RATE_LIMIT_RPS":   "50.5",
+				"RPC_RATE_LIMIT_BURST": "150",
 			},
 			check: func(t *testing.T, cfg *Config) {
 				if cfg.ChainID != 1337 {
@@ -96,7 +104,33 @@ func TestLoad(t *testing.T) {
 						t.Errorf("Peers[%d] = %q, want %q", i, cfg.Peers[i], want[i])
 					}
 				}
+				if cfg.RPCRateLimitRPS != 50.5 {
+					t.Errorf("RPCRateLimitRPS = %v, want 50.5", cfg.RPCRateLimitRPS)
+				}
+				if cfg.RPCRateLimitBurst != 150 {
+					t.Errorf("RPCRateLimitBurst = %d, want 150", cfg.RPCRateLimitBurst)
+				}
 			},
+		},
+		{
+			name:    "invalid RPC_RATE_LIMIT_RPS not a number",
+			env:     map[string]string{"RPC_RATE_LIMIT_RPS": "fast"},
+			wantErr: "RPC_RATE_LIMIT_RPS must be a number",
+		},
+		{
+			name:    "invalid RPC_RATE_LIMIT_BURST not an integer",
+			env:     map[string]string{"RPC_RATE_LIMIT_BURST": "lots"},
+			wantErr: "RPC_RATE_LIMIT_BURST must be an integer",
+		},
+		{
+			name:    "RPC_RATE_LIMIT_RPS zero is rejected",
+			env:     map[string]string{"RPC_RATE_LIMIT_RPS": "0"},
+			wantErr: "RPC_RATE_LIMIT_RPS must be greater than 0",
+		},
+		{
+			name:    "RPC_RATE_LIMIT_BURST negative is rejected",
+			env:     map[string]string{"RPC_RATE_LIMIT_BURST": "-1"},
+			wantErr: "RPC_RATE_LIMIT_BURST must be greater than 0",
 		},
 		{
 			name:    "invalid RPC_PORT out of range",
@@ -244,6 +278,8 @@ func TestValidateJoinsAllErrors(t *testing.T) {
 		"ROLE must be",
 		"BLOCK_GAS_LIMIT must be greater than",
 		"CORS_ORIGINS must not resolve",
+		"RPC_RATE_LIMIT_RPS must be greater than 0",
+		"RPC_RATE_LIMIT_BURST must be greater than 0",
 		"TLS_CERT must not be blank",
 		"TLS_KEY must not be blank",
 		"TLS_CA must not be blank",

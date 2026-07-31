@@ -94,17 +94,23 @@ func (s *Sequencer) currentHeader() (*types.Header, error) {
 	return header, nil
 }
 
+// ErrBlockNotFound means the requested block number or hash has no
+// canonical block on this chain. M04's eth_getBlockByNumber/ByHash use this
+// (via errors.Is) to distinguish "no such block" — which the JSON-RPC spec
+// says must return a null result, not an error — from a genuine failure.
+var ErrBlockNotFound = errors.New("block not found")
+
 // HeaderByNumber looks up a historical header by block number. Exported for
 // M04's eth_getBlockByNumber and for this package's own tests (e.g.
 // asserting timestamps strictly increase across blocks).
 func (s *Sequencer) HeaderByNumber(n uint64) (*types.Header, error) {
 	hash := rawdb.ReadCanonicalHash(s.db, n)
 	if hash == (common.Hash{}) {
-		return nil, fmt.Errorf("block %d not found", n)
+		return nil, fmt.Errorf("%w: block %d", ErrBlockNotFound, n)
 	}
 	header := rawdb.ReadHeader(s.db, hash, n)
 	if header == nil {
-		return nil, fmt.Errorf("header %d not found", n)
+		return nil, fmt.Errorf("%w: header for block %d", ErrBlockNotFound, n)
 	}
 	return header, nil
 }

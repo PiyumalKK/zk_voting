@@ -1,0 +1,13 @@
+{
+  "name": "zk-blockchain-diff-harness",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Differential JSON-RPC test harness (MASTER blockchain-v2 M04): diffs the Go node's responses against a live `hardhat node` for every method in MASTER §9's compatibility matrix. Run via `make diff` from packages/blockchain, or directly: `HARDHAT_URL=http://127.0.0.1:8545 node diff.mjs`.",
+  "scripts": {
+    "diff": "node diff.mjs"
+  },
+  "dependencies": {
+    "viem": "2.39.0"
+  }
+}

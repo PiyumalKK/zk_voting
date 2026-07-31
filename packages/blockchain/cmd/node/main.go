@@ -1,6 +1,6 @@
 // Command node is the entrypoint for the packages/blockchain v2 Go node:
-// config → logging → storage/genesis (M02) → HTTP server (health-only
-// until M04 mounts the full JSON-RPC surface) → graceful shutdown.
+// config → logging → storage/genesis (M02) → sequencer (M03) → JSON-RPC +
+// health HTTP server (M04) → graceful shutdown.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"zk-blockchain/internal/chain"
 	"zk-blockchain/internal/config"
 	"zk-blockchain/internal/rpc"
 	"zk-blockchain/internal/state"
@@ -70,12 +71,25 @@ func main() {
 		Uint64("height", state.Height(db)).
 		Msg("genesis ready")
 
-	mux := http.NewServeMux()
-	mux.Handle("/health", rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return state.Height(db) }))
+	chainCfg := state.ChainConfig(cfg.ChainID)
+	seq := chain.New(db, chainCfg, cfg.BlockGasLimit)
+
+	rpcServer, err := rpc.NewJSONRPCServer(seq, cfg.ChainID)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to build JSON-RPC server")
+	}
+	defer rpcServer.Stop()
+
+	healthHandler := rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return state.Height(db) })
+	handler := rpc.NewMux(healthHandler, rpcServer, rpc.MuxConfig{
+		CORSOrigins:    cfg.CORSOrigins,
+		RateLimitRPS:   cfg.RPCRateLimitRPS,
+		RateLimitBurst: cfg.RPCRateLimitBurst,
+	})
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.RPCPort),
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
