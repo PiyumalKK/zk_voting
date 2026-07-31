@@ -50,8 +50,8 @@ jobs:
           name: inventory
           path: infra/ansible/inventory.yml
 
-  deploy-node1:
-    name: Deploy Node 1
+  deploy-nodes:
+    name: Deploy Blockchain Nodes
     needs: inventory
     runs-on: ubuntu-latest
     steps:
@@ -66,49 +66,10 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
           chmod 400 ~/.ssh/zk-voting-key.pem
-      - name: Deploy to Node 1
+      # All 3 nodes in one play so the fetch→copy cert distribution works on the same runner
+      - name: Deploy to all nodes
         working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml --limit node1 -v
-
-  deploy-node2:
-    name: Deploy Node 2
-    needs: inventory
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install ansible
-      - uses: actions/download-artifact@v4
-        with:
-          name: inventory
-          path: infra/ansible/
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
-          chmod 400 ~/.ssh/zk-voting-key.pem
-      - name: Deploy to Node 2
-        working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml --limit node2 -v
-
-  deploy-node3:
-    name: Deploy Node 3
-    needs: inventory
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install ansible
-      - uses: actions/download-artifact@v4
-        with:
-          name: inventory
-          path: infra/ansible/
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
-          chmod 400 ~/.ssh/zk-voting-key.pem
-      - name: Deploy to Node 3
-        working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml --limit node3 -v
+        run: ansible-playbook playbook.yml -i inventory.yml --limit nodes -v
 
   deploy-web:
     name: Deploy Web Server
@@ -132,7 +93,7 @@ jobs:
 
   health-check:
     name: Health Check
-    needs: [deploy-node1, deploy-node2, deploy-node3, deploy-web]
+    needs: [deploy-nodes, deploy-web]
     runs-on: ubuntu-latest
     steps:
       - name: Check all nodes
@@ -140,9 +101,9 @@ jobs:
           echo "=== Node 1 ==="
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.node1_ip }}:3001/health || echo "NOT READY"
           echo "=== Node 2 ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node2_ip }}:3002/health || echo "NOT READY"
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node2_ip }}:3001/health || echo "NOT READY"
           echo "=== Node 3 ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node3_ip }}:3003/health || echo "NOT READY"
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node3_ip }}:3001/health || echo "NOT READY"
           echo "=== Web ==="
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.web_ip }}:3000 | head -c 100 || echo "NOT READY"
           echo ""
