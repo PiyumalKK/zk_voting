@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt reset tidy diff diff-install
+.PHONY: build run test vet fmt reset tidy diff diff-write diff-install shape-check smoke probe-build
 
 BINARY  := bin/zk-blockchain-node
 DATA_DIR ?= data
@@ -45,18 +45,52 @@ endif
 tidy:
 	go mod tidy
 
-# Install the differential harness's Node dependencies (viem). Run once, or
-# whenever e2e/diff/package.json changes.
+# Install the e2e harnesses' Node dependencies (viem, plus solc for
+# probe-build). One install serves the whole e2e/ tree — Node resolves
+# node_modules by walking up, so e2e/diff/*.mjs share it. Run once, or
+# whenever e2e/package.json changes.
 diff-install:
-	cd e2e/diff && npm install
+	cd e2e && npm install
 
-# Differential JSON-RPC harness (M04): diffs this node's responses against
-# a live `hardhat node`. Requires both nodes already running — see M04's
-# acceptance gate in docs/blockchain-v2/M04-rpc-read.md. HARDHAT_URL is
-# required; OUR_URL defaults to http://127.0.0.1:9545.
+# Differential JSON-RPC harness — read methods (M04). Diffs this node's
+# responses against a live `hardhat node`. Requires both nodes already
+# running, both freshly started. HARDHAT_URL is required; OUR_URL defaults
+# to http://127.0.0.1:9545.
 #
-#   make run &                              # this node
+#   make reset && make run &                 # this node, fresh chain
 #   cd ../hardhat && yarn chain &            # a fresh hardhat node
 #   make diff HARDHAT_URL=http://127.0.0.1:8545
 diff:
 	cd e2e/diff && node diff.mjs
+
+# Differential JSON-RPC harness — write methods (M05). Same prerequisites as
+# `diff`: both nodes running and freshly started (several checks compare
+# address-derived fields exactly, which only holds while the deployer's
+# nonce matches on both chains).
+#
+#   make diff-write HARDHAT_URL=http://127.0.0.1:8545
+diff-write:
+	cd e2e/diff && node write.mjs
+
+# JSON-shape contract test (M05). Needs no node and no chain: it runs viem's
+# own formatters and ABI decoders over the exact JSON internal/rpc's receipt,
+# log and transaction structs marshal to. Fast enough to run on every change.
+shape-check:
+	cd e2e && node shape-check.mjs
+
+# Realistic dry-run (M05): deploys the *actual* PoseidonT3 -> LeanIMT ->
+# HonkVerifier -> Voting stack from packages/hardhat/artifacts onto a running
+# node and drives a real registration. Requires `yarn compile` to have been
+# run in packages/hardhat. RPC_URL defaults to this node; point it at
+# http://127.0.0.1:8545 to run the same script against hardhat as a control.
+#
+#   make reset && make run &
+#   make smoke
+smoke:
+	cd e2e && node smoke-deploy.mjs
+
+# Recompile e2e/diff/contracts/Probe.sol into its committed artifact. Only
+# needed after editing Probe.sol; the artifact is checked in so running the
+# harnesses never requires a Solidity toolchain.
+probe-build:
+	cd e2e && node diff/contracts/build.mjs

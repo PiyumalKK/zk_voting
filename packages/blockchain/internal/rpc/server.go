@@ -13,8 +13,9 @@ import (
 )
 
 // NewJSONRPCServer builds a *gethrpc.Server with the eth/net/web3
-// namespaces registered (M04; M05 adds write methods to the same "eth"
-// registration by extending EthService, M07 adds "evm"/"hardhat"/"anvil").
+// namespaces registered (M04 read methods + M05 write methods, the latter
+// as a second receiver under the same "eth" name; M07 adds "evm"/"hardhat"/
+// "anvil").
 // gethrpc.Server implements http.Handler directly (rpc/http.go) and
 // natively batches JSON-RPC array requests and returns -32601/-32602 for
 // unknown methods/malformed params — "geth server gives this free" per the
@@ -24,6 +25,22 @@ func NewJSONRPCServer(seq *chain.Sequencer, chainID uint64) (*gethrpc.Server, er
 
 	if err := srv.RegisterName("eth", NewEthService(seq, chainID)); err != nil {
 		return nil, fmt.Errorf("register eth namespace: %w", err)
+	}
+	// Second receiver, same namespace: go-ethereum's serviceRegistry merges
+	// callbacks into the existing "eth" service entry rather than replacing
+	// it, so the read methods above and the write methods here end up in one
+	// flat eth_* namespace (M05; see eth_write.go's package doc comment).
+	//
+	// *** If this ever returns an error, or the read methods stop resolving
+	// once the write ones are registered: *** the fix is to embed
+	// *EthWriteService in EthService and make a single RegisterName call —
+	// Go promotes an embedded type's methods into the outer type's method
+	// set, which the registry's reflection-based scan picks up regardless of
+	// how it handles duplicate names. internal/rpc's tests exercise a read
+	// method and a write method against the same server, so a regression
+	// here fails loudly rather than silently dropping half the namespace.
+	if err := srv.RegisterName("eth", NewEthWriteService(seq, chainID)); err != nil {
+		return nil, fmt.Errorf("register eth write namespace: %w", err)
 	}
 	if err := srv.RegisterName("net", NewNetService(chainID)); err != nil {
 		return nil, fmt.Errorf("register net namespace: %w", err)

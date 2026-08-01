@@ -44,6 +44,47 @@ var (
 	ErrIntrinsicGas = errors.New("intrinsic gas too low")
 )
 
+// NonceError and GasLimitError carry the *numbers* behind a validation
+// failure, not just a formatted string. M05's eth_sendRawTransaction has to
+// reproduce Hardhat's exact error wording ("Expected nonce to be 4 but got
+// 7") because the mobile and web clients substring-match it (MASTER §10
+// pitfall 1 / M05 spec deliverable 1), and re-parsing those values back out
+// of a message is exactly the kind of fragility that pitfall warns about.
+// Both Unwrap to the matching sentinel above, so every existing
+// errors.Is(err, ErrNonceTooLow)-style check keeps working unchanged.
+
+// NonceError reports a nonce mismatch. Sentinel is ErrNonceTooLow or
+// ErrNonceTooHigh; TooLow() distinguishes them without the caller needing to
+// import errors just to ask.
+type NonceError struct {
+	Sentinel     error
+	TxNonce      uint64
+	AccountNonce uint64
+}
+
+func (e *NonceError) Error() string {
+	return fmt.Sprintf("%s: tx nonce %d, account nonce %d", e.Sentinel, e.TxNonce, e.AccountNonce)
+}
+
+func (e *NonceError) Unwrap() error { return e.Sentinel }
+
+// TooLow reports whether this is the "already used" direction (tx nonce below
+// the account's) rather than the "gap" direction.
+func (e *NonceError) TooLow() bool { return errors.Is(e.Sentinel, ErrNonceTooLow) }
+
+// GasLimitError reports a transaction whose own gas limit exceeds the block
+// gas limit, so it could never be included in any block this chain produces.
+type GasLimitError struct {
+	TxGas         uint64
+	BlockGasLimit uint64
+}
+
+func (e *GasLimitError) Error() string {
+	return fmt.Sprintf("%s: tx gas %d > block gas limit %d", ErrGasLimitExceeded, e.TxGas, e.BlockGasLimit)
+}
+
+func (e *GasLimitError) Unwrap() error { return ErrGasLimitExceeded }
+
 // sender recovers the tx's signer using the signer that accepts every tx
 // type this chain's ChainConfig activates (legacy/EIP-1559/EIP-2930 at
 // minimum; MASTER §10 pitfall 3 — mobile sends legacy txs and must keep
@@ -79,15 +120,15 @@ func validateTx(tx *types.Transaction, chainID *big.Int, statedb *gethstate.Stat
 	}
 
 	if tx.Gas() > blockGasLimit {
-		return from, fmt.Errorf("%w: tx gas %d > block gas limit %d", ErrGasLimitExceeded, tx.Gas(), blockGasLimit)
+		return from, &GasLimitError{TxGas: tx.Gas(), BlockGasLimit: blockGasLimit}
 	}
 
 	stateNonce := statedb.GetNonce(from)
 	switch {
 	case tx.Nonce() < stateNonce:
-		return from, fmt.Errorf("%w: tx nonce %d, account nonce %d", ErrNonceTooLow, tx.Nonce(), stateNonce)
+		return from, &NonceError{Sentinel: ErrNonceTooLow, TxNonce: tx.Nonce(), AccountNonce: stateNonce}
 	case tx.Nonce() > stateNonce:
-		return from, fmt.Errorf("%w: tx nonce %d, account nonce %d", ErrNonceTooHigh, tx.Nonce(), stateNonce)
+		return from, &NonceError{Sentinel: ErrNonceTooHigh, TxNonce: tx.Nonce(), AccountNonce: stateNonce}
 	}
 
 	return from, nil

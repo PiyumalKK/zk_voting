@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 
@@ -81,7 +82,7 @@ func deployContract(t *testing.T, seq *chain.Sequencer, key *ecdsa.PrivateKey, c
 
 func mustSignLegacyTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, nonce uint64, to *common.Address, value *big.Int, gas uint64, data []byte) *types.Transaction {
 	t.Helper()
-	tx := types.NewTx(&types.LegacyTx{
+	return mustSign(t, key, chainID, &types.LegacyTx{
 		Nonce:    nonce,
 		To:       to,
 		Value:    value,
@@ -89,12 +90,60 @@ func mustSignLegacyTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, non
 		GasPrice: big.NewInt(0),
 		Data:     data,
 	})
+}
+
+// mustSignAccessListTx builds an EIP-2930 transaction, and
+// mustSignDynamicFeeTx an EIP-1559 one. All three tx types must keep working
+// on this chain: mobile sends legacy (MASTER §10 pitfall 3) while
+// hardhat-deploy's ethers v6 may send 1559, and every fee field is zero
+// under the free-gas policy.
+func mustSignAccessListTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, nonce uint64, to *common.Address, value *big.Int, gas uint64, data []byte) *types.Transaction {
+	t.Helper()
+	return mustSign(t, key, chainID, &types.AccessListTx{
+		ChainID:  chainID,
+		Nonce:    nonce,
+		To:       to,
+		Value:    value,
+		Gas:      gas,
+		GasPrice: big.NewInt(0),
+		Data:     data,
+	})
+}
+
+func mustSignDynamicFeeTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, nonce uint64, to *common.Address, value *big.Int, gas uint64, data []byte) *types.Transaction {
+	t.Helper()
+	return mustSign(t, key, chainID, &types.DynamicFeeTx{
+		ChainID:   chainID,
+		Nonce:     nonce,
+		To:        to,
+		Value:     value,
+		Gas:       gas,
+		GasTipCap: big.NewInt(0),
+		GasFeeCap: big.NewInt(0),
+		Data:      data,
+	})
+}
+
+func mustSign(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, inner types.TxData) *types.Transaction {
+	t.Helper()
 	signer := types.LatestSignerForChainID(chainID)
-	signed, err := types.SignTx(tx, signer, key)
+	signed, err := types.SignTx(types.NewTx(inner), signer, key)
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
 	return signed
+}
+
+// rawTxHex encodes a signed transaction the way eth_sendRawTransaction's
+// parameter is encoded: the canonical binary (RLP for legacy, typed envelope
+// otherwise), 0x-prefixed.
+func rawTxHex(t *testing.T, tx *types.Transaction) string {
+	t.Helper()
+	b, err := tx.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary: %v", err)
+	}
+	return hexutil.Encode(b)
 }
 
 // newTestMux builds the full HTTP handler (JSON-RPC + health, all

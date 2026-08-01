@@ -1,8 +1,7 @@
 # JSON-RPC method reference
 
 Living document, kept current from M04 on (MASTER §11). Reflects
-`internal/rpc` as of M04 — read methods only. M05 adds the write methods
-listed as "not yet implemented" below.
+`internal/rpc` as of **M05** — read methods (M04) plus the write path (M05).
 
 ## Server
 
@@ -37,6 +36,41 @@ listed as "not yet implemented" below.
 | `net_version` | Decimal string of `CHAIN_ID` (not hex — pre-dates the hex-quantity convention). |
 | `net_listening` | Always `true`. |
 | `web3_clientVersion` | `"zkchain/v2.0.0"`. Revisit only if some consumer's tooling is empirically found to special-case client identity (M07). |
+| `eth_sendRawTransaction` | Accepts legacy, EIP-2930 and EIP-1559 transactions. **Synchronous:** the transaction is validated, executed and sealed into its own block before the call returns. A transaction that reverts is *rejected here and never mined* — see "Write-path semantics" below. |
+| `eth_getTransactionByHash` | Unknown hash → JSON `null`. Never pending: every transaction this chain knows about is mined, so `blockHash`/`blockNumber`/`transactionIndex` are always populated. |
+| `eth_getTransactionReceipt` | Unknown hash → JSON `null` result (**not** an error — viem's `waitForTransactionReceipt` polls on exactly this). Carries every field in MASTER §10.5. |
+| `eth_getBlockTransactionCountByNumber` | Unresolvable block → JSON `null`, matching `eth_getBlockByNumber`. |
+| `eth_getBlockTransactionCountByHash` | Same null-on-unknown rule. |
+
+### Write-path semantics (M05)
+
+**Auto-mine, one transaction per block.** There is no mempool. A submitted
+transaction is validated, executed and sealed synchronously, so `latest` and
+`pending` are always the same state.
+
+**A reverting transaction is never mined.** The revert surfaces from
+`eth_sendRawTransaction` itself as `{code: 3, message: "execution
+reverted[: <reason>]", data: "0x<revert bytes>"}`, the chain head does not
+move, and no receipt is ever created for it. This is Hardhat's behavior and
+the app depends on it: mobile and web error handling matches on custom error
+names decoded from `data` (MASTER §10 pitfalls 1–2).
+
+**Validation errors** use code `-32000` and reproduce Hardhat's wording,
+because the clients substring-match it:
+
+| Condition | Message |
+|---|---|
+| Nonce below the account's | `Nonce too low. Expected nonce to be N but got M. Note that transactions can't be queued when automining.` |
+| Nonce above the account's | `Nonce too high. …` (same shape — there is no mempool to queue it in) |
+| Signature/chain-id mismatch | `Trying to send a raw transaction with an invalid chainId. The expected chainId is 9494` |
+| `tx.gas` over the block gas limit | `Transaction gas limit is X and exceeds block gas limit of Y` |
+| Insufficient funds / intrinsic gas | Hardhat's prefix plus go-ethereum's detail — see `internal/rpc/errors.go`'s `mapSubmitError` for why these two are not reproduced verbatim. Both are effectively unreachable under the free-gas policy. |
+| Undecodable transaction bytes | `Invalid transaction: <decode error>` |
+
+**Receipt fields.** `effectiveGasPrice` is always `0x0` (free gas).
+`contractAddress` is JSON `null` for a non-creation (not the zero address);
+`to` is `null` for a creation. `logs` is always an array, never `null`, and
+each log's `logIndex` is its position within the *block*.
 
 ### Block-tag handling (all of the above)
 
@@ -47,8 +81,6 @@ mempool and no reorgs on this chain (single sequencer, auto-mine), so
 
 ## Not yet implemented (by milestone)
 
-- `eth_sendRawTransaction`, `eth_getTransactionByHash`,
-  `eth_getTransactionReceipt` — **M05**.
 - `eth_getLogs` — **M06**.
 - `evm_increaseTime`, `evm_mine`, `evm_setNextBlockTimestamp`,
   `hardhat_setBalance` / `anvil_setBalance` — **M07**, gated behind
@@ -66,20 +98,22 @@ mempool and no reorgs on this chain (single sequencer, auto-mine), so
 - EIP-1898 `{blockHash}` / `{blockNumber}` object-form block parameters —
   every consumer in MASTER §2's table sends a plain tag or hex number.
 
-## Differential test harness
+## Test harnesses
 
-`e2e/diff/diff.mjs` (Node + viem) runs an identical set of calls against
-this node and a live `hardhat node`, normalizing fields expected to differ
-by design (chain id, genesis hash/timestamp, client version string) and
-diffing the rest exactly. Run via `make diff HARDHAT_URL=http://127.0.0.1:8545`
-(first `make diff-install` once, and `make run` / `yarn chain` must both
-already be running).
+Run `make diff-install` once to install the shared Node dependencies for the
+whole `e2e/` tree. All three harnesses below expect **freshly started** nodes
+(`make reset && make run`, and a restarted `yarn chain`).
 
-The harness's "deploy a contract" / `eth_call` / "revert shape" checks
-submit a transaction to this node first; until M05 lands
-`eth_sendRawTransaction`, those checks **SKIP** (not fail) with an
-explanatory message — the same script starts actually exercising them once
-M05 is in place, no script changes needed.
+| Command | Script | What it proves |
+|---|---|---|
+| `make shape-check` | `e2e/shape-check.mjs` | The JSON encoding, with **no node running**: viem's own formatters and ABI decoders are run over the exact objects `internal/rpc/convert.go` marshals. Catches MASTER §10 pitfall 5 (a missing receipt field fails silently) in a second rather than only under a live diff. |
+| `make diff HARDHAT_URL=…` | `e2e/diff/diff.mjs` | Read methods (M04): identical calls against both backends, normalizing fields that differ by design (chain id, genesis hash/timestamp, client version) and diffing the rest. |
+| `make diff-write HARDHAT_URL=…` | `e2e/diff/write.mjs` | Write path (M05): deploys the same compiled `Probe.sol` on both, then diffs receipts field-by-field, asserts viem decodes the **same custom error name** on both for a revert (on `sendRawTransaction`, `eth_call` and `estimateGas`), and compares nonce-too-low error text. |
+| `make smoke` | `e2e/smoke-deploy.mjs` | The real stack: deploys `PoseidonT3 → LeanIMT (linked) → HonkVerifier → Voting` from `packages/hardhat/artifacts` and drives `setCandidates → addVoters → startRegistration → register`, asserting a non-zero Merkle root. Point `RPC_URL` at hardhat to run the same script there as a control. |
+
+`e2e/diff/contracts/Probe.sol` is compiled once with solc-js and its artifact
+(`Probe.json`) is committed, so running the harnesses needs no Solidity
+toolchain. Regenerate with `make probe-build` after editing it.
 
 ## Response shape notes
 

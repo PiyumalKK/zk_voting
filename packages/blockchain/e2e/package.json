@@ -1,0 +1,19 @@
+{
+  "name": "zk-blockchain-e2e",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "End-to-end and differential test harnesses for the custom chain. Single dependency root for the whole e2e tree: Node resolves node_modules by walking up, so diff/*.mjs and smoke-deploy.mjs all share this install. Run `make diff-install` from packages/blockchain once.",
+  "scripts": {
+    "diff": "node diff/diff.mjs",
+    "diff:write": "node diff/write.mjs",
+    "smoke": "node smoke-deploy.mjs",
+    "probe:build": "node diff/contracts/build.mjs"
+  },
+  "dependencies": {
+    "viem": "2.39.0"
+  },
+  "devDependencies": {
+    "solc": "0.8.30"
+  }
+}

@@ -136,7 +136,15 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 	}
 
 	if tx.Type() != types.LegacyTxType {
+		// A typed tx with no access list must report `"accessList": []`, not
+		// `null`: types.AccessList is a slice, and a *pointer to a nil slice*
+		// marshals as null, which is not the shape Hardhat (or the spec)
+		// produces. Normalized here rather than at the marshaling site so the
+		// zero case is impossible to reach.
 		al := tx.AccessList()
+		if al == nil {
+			al = types.AccessList{}
+		}
 		rt.AccessList = &al
 		rt.ChainID = (*hexutil.Big)(tx.ChainId())
 	}
@@ -161,6 +169,122 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 func uint64Ptr(v uint64) *hexutil.Uint64 {
 	h := hexutil.Uint64(v)
 	return &h
+}
+
+// RPCLog is the JSON shape of a single event log, as it appears inside an
+// eth_getTransactionReceipt response (and, from M06 on, in eth_getLogs).
+// Removed is always false on this chain: a single sequencer produces no
+// reorgs (MASTER §3), so no log is ever un-emitted — but the field is
+// present because viem's Log type expects it.
+type RPCLog struct {
+	Address          common.Address `json:"address"`
+	Topics           []common.Hash  `json:"topics"`
+	Data             hexutil.Bytes  `json:"data"`
+	BlockNumber      hexutil.Uint64 `json:"blockNumber"`
+	BlockHash        common.Hash    `json:"blockHash"`
+	TransactionHash  common.Hash    `json:"transactionHash"`
+	TransactionIndex hexutil.Uint64 `json:"transactionIndex"`
+	LogIndex         hexutil.Uint64 `json:"logIndex"`
+	Removed          bool           `json:"removed"`
+}
+
+// newRPCLog converts one derived types.Log. Topics is normalized to a
+// non-nil slice so an anonymous-event log marshals as `[]`, never `null` —
+// viem iterates this field unconditionally.
+func newRPCLog(l *types.Log) *RPCLog {
+	topics := l.Topics
+	if topics == nil {
+		topics = []common.Hash{}
+	}
+	return &RPCLog{
+		Address:          l.Address,
+		Topics:           topics,
+		Data:             hexutil.Bytes(l.Data),
+		BlockNumber:      hexutil.Uint64(l.BlockNumber),
+		BlockHash:        l.BlockHash,
+		TransactionHash:  l.TxHash,
+		TransactionIndex: hexutil.Uint64(l.TxIndex),
+		LogIndex:         hexutil.Uint64(l.Index),
+		Removed:          l.Removed,
+	}
+}
+
+// RPCReceipt is the JSON shape returned by eth_getTransactionReceipt. Every
+// field MASTER §10 pitfall 5 lists as "awaited by viem" is present and
+// unconditionally populated — that pitfall exists precisely because a
+// missing receipt field does not raise an error, it makes viem hang or
+// mis-decode somewhere far away from the cause.
+//
+// ContractAddress is a *common.Address so a non-creation transaction reports
+// JSON `null` rather than the zero address (the spec's shape, and what
+// viem's `receipt.contractAddress` consumers branch on). To is likewise nil
+// for a creation.
+type RPCReceipt struct {
+	TransactionHash   common.Hash     `json:"transactionHash"`
+	TransactionIndex  hexutil.Uint64  `json:"transactionIndex"`
+	BlockHash         common.Hash     `json:"blockHash"`
+	BlockNumber       *hexutil.Big    `json:"blockNumber"`
+	From              common.Address  `json:"from"`
+	To                *common.Address `json:"to"`
+	CumulativeGasUsed hexutil.Uint64  `json:"cumulativeGasUsed"`
+	GasUsed           hexutil.Uint64  `json:"gasUsed"`
+	ContractAddress   *common.Address `json:"contractAddress"`
+	Logs              []*RPCLog       `json:"logs"`
+	LogsBloom         types.Bloom     `json:"logsBloom"`
+	Status            hexutil.Uint64  `json:"status"`
+	Type              hexutil.Uint64  `json:"type"`
+	EffectiveGasPrice *hexutil.Big    `json:"effectiveGasPrice"`
+}
+
+// newRPCReceipt converts a derived receipt plus its transaction into the
+// JSON-RPC shape. chainID is needed to recover `from` — the receipt itself
+// does not store it (it is not part of the EIP-658 encoding).
+func newRPCReceipt(receipt *types.Receipt, tx *types.Transaction, chainID *big.Int) (*RPCReceipt, error) {
+	signer := types.LatestSignerForChainID(chainID)
+	from, err := types.Sender(signer, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Non-nil empty slice, not nil: a receipt with no logs must marshal as
+	// `"logs": []`. viem treats a null here as a malformed receipt.
+	logs := make([]*RPCLog, 0, len(receipt.Logs))
+	for _, l := range receipt.Logs {
+		logs = append(logs, newRPCLog(l))
+	}
+
+	var contractAddress *common.Address
+	if tx.To() == nil {
+		addr := receipt.ContractAddress
+		contractAddress = &addr
+	}
+
+	effectiveGasPrice := receipt.EffectiveGasPrice
+	if effectiveGasPrice == nil {
+		effectiveGasPrice = big.NewInt(0)
+	}
+
+	blockNumber := receipt.BlockNumber
+	if blockNumber == nil {
+		blockNumber = big.NewInt(0)
+	}
+
+	return &RPCReceipt{
+		TransactionHash:   receipt.TxHash,
+		TransactionIndex:  hexutil.Uint64(receipt.TransactionIndex),
+		BlockHash:         receipt.BlockHash,
+		BlockNumber:       (*hexutil.Big)(blockNumber),
+		From:              from,
+		To:                tx.To(),
+		CumulativeGasUsed: hexutil.Uint64(receipt.CumulativeGasUsed),
+		GasUsed:           hexutil.Uint64(receipt.GasUsed),
+		ContractAddress:   contractAddress,
+		Logs:              logs,
+		LogsBloom:         receipt.Bloom,
+		Status:            hexutil.Uint64(receipt.Status),
+		Type:              hexutil.Uint64(receipt.Type),
+		EffectiveGasPrice: (*hexutil.Big)(effectiveGasPrice),
+	}, nil
 }
 
 // newRPCBlock builds an RPCBlock from block. fullTx selects whether

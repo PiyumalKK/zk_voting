@@ -66,6 +66,26 @@ func revertWithDataRuntime(data []byte) []byte {
 	return append(prologue, data...)
 }
 
+// logRuntime emits two LOG1 events (topics 1 and 2, no log data) and stops
+// — enough to assert that receipt logs carry sequential logIndex values and
+// correct block/tx annotations, without needing a compiled Solidity
+// contract in a unit test.
+func logRuntime() []byte {
+	log1 := func(topic byte) []byte {
+		return []byte{
+			byte(vm.PUSH1), topic, // topic1
+			byte(vm.PUSH1), 0x00, // length = 0
+			byte(vm.PUSH1), 0x00, // offset = 0
+			byte(vm.LOG1),
+		}
+	}
+	var out []byte
+	out = append(out, log1(1)...)
+	out = append(out, log1(2)...)
+	out = append(out, byte(vm.STOP))
+	return out
+}
+
 // encodeErrorString ABI-encodes reason exactly as Solidity's
 // `revert(reason)`/`require(cond, reason)` would: the 4-byte Error(string)
 // selector, a 32-byte offset word (always 0x20 for a single dynamic
