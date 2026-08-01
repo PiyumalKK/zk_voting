@@ -12,18 +12,30 @@ import (
 	"zk-blockchain/internal/chain"
 )
 
+// ServerConfig is the projection of internal/config.Config the JSON-RPC
+// services need. It exists (M06) instead of a growing positional parameter
+// list on NewJSONRPCServer: M05 needed only the chain id, M06 adds the log
+// range cap, and M07 will add the DEV_RPC flag — each of which would
+// otherwise be another unlabelled uint64/bool at a call site.
+type ServerConfig struct {
+	ChainID uint64
+	// LogRangeLimit caps how many blocks a single eth_getLogs query may
+	// span (config.LogRangeLimit). 0 disables the cap.
+	LogRangeLimit uint64
+}
+
 // NewJSONRPCServer builds a *gethrpc.Server with the eth/net/web3
-// namespaces registered (M04 read methods + M05 write methods, the latter
-// as a second receiver under the same "eth" name; M07 adds "evm"/"hardhat"/
-// "anvil").
+// namespaces registered (M04 read methods + M05 write methods + M06
+// eth_getLogs, the latter two as additional receivers under the same "eth"
+// name; M07 adds "evm"/"hardhat"/"anvil").
 // gethrpc.Server implements http.Handler directly (rpc/http.go) and
 // natively batches JSON-RPC array requests and returns -32601/-32602 for
 // unknown methods/malformed params — "geth server gives this free" per the
 // M04 spec, so none of that is reimplemented here.
-func NewJSONRPCServer(seq *chain.Sequencer, chainID uint64) (*gethrpc.Server, error) {
+func NewJSONRPCServer(seq *chain.Sequencer, cfg ServerConfig) (*gethrpc.Server, error) {
 	srv := gethrpc.NewServer()
 
-	if err := srv.RegisterName("eth", NewEthService(seq, chainID)); err != nil {
+	if err := srv.RegisterName("eth", NewEthService(seq, cfg.ChainID)); err != nil {
 		return nil, fmt.Errorf("register eth namespace: %w", err)
 	}
 	// Second receiver, same namespace: go-ethereum's serviceRegistry merges
@@ -39,10 +51,16 @@ func NewJSONRPCServer(seq *chain.Sequencer, chainID uint64) (*gethrpc.Server, er
 	// how it handles duplicate names. internal/rpc's tests exercise a read
 	// method and a write method against the same server, so a regression
 	// here fails loudly rather than silently dropping half the namespace.
-	if err := srv.RegisterName("eth", NewEthWriteService(seq, chainID)); err != nil {
+	if err := srv.RegisterName("eth", NewEthWriteService(seq, cfg.ChainID)); err != nil {
 		return nil, fmt.Errorf("register eth write namespace: %w", err)
 	}
-	if err := srv.RegisterName("net", NewNetService(chainID)); err != nil {
+	// Third receiver, same namespace (M06) — same merge behavior as the
+	// second, and covered by the same regression guard: internal/rpc's
+	// tests hit a read, a write and a logs method against one server.
+	if err := srv.RegisterName("eth", NewEthLogsService(seq, cfg.LogRangeLimit)); err != nil {
+		return nil, fmt.Errorf("register eth logs namespace: %w", err)
+	}
+	if err := srv.RegisterName("net", NewNetService(cfg.ChainID)); err != nil {
 		return nil, fmt.Errorf("register net namespace: %w", err)
 	}
 	if err := srv.RegisterName("web3", NewWeb3Service()); err != nil {

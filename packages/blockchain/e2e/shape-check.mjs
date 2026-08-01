@@ -29,6 +29,7 @@ import {
   formatTransaction,
   formatTransactionReceipt,
   parseAbi,
+  parseEventLogs,
 } from "viem";
 
 let failures = 0;
@@ -154,6 +155,63 @@ try {
   check("log: viem formats the encoded one", typeof formatLog(realLog).logIndex === "number");
 } catch (err) {
   check("log: decodeEventLog off our shape", false, err.message);
+}
+
+// --- eth_getLogs response (M06) -------------------------------------------
+//
+// eth_getLogs returns a *bare array* of the same RPCLog objects the receipt
+// embeds, so this section adds only what the array form introduces: that
+// viem's parseEventLogs (the decoder the audit page, /api/verify-vote and
+// /api/merkle-path all go through) works off it, that per-block logIndex
+// sequencing survives, and that the empty result is an array rather than
+// null. internal/rpc/eth_logs.go builds this result with make([]*RPCLog, 0),
+// specifically so the empty case marshals as [].
+
+try {
+  const encodedLog = (logIndex, value) => ({
+    ...rpcLog(logIndex),
+    topics: encodeEventTopics({ abi, eventName: "ValueSet", args: { setter: SENDER, value } }),
+    data: encodeAbiParameters([{ type: "string" }], ["many"]),
+  });
+
+  // Three logs from one block, as internal/chain's deriveReceiptFields
+  // numbers them: logIndex is block-scoped, so 0, 1, 2.
+  const getLogsResult = [encodedLog(0, 0n), encodedLog(1, 1n), encodedLog(2, 2n)];
+
+  const parsed = parseEventLogs({ abi, logs: getLogsResult.map(formatLog) });
+  check(
+    "eth_getLogs: parseEventLogs decodes every log",
+    parsed.length === 3 && parsed.every((l) => l.eventName === "ValueSet"),
+    `${parsed.length} of 3 decoded`,
+  );
+  check(
+    "eth_getLogs: indexed uint argument round-trips",
+    parsed.map((l) => l.args.value).every((v, i) => v === BigInt(i)),
+    parsed.map((l) => String(l.args.value)).join(","),
+  );
+  check(
+    "eth_getLogs: indexed address argument round-trips",
+    parsed.every((l) => l.args.setter.toLowerCase() === SENDER),
+    parsed[0]?.args?.setter,
+  );
+  check(
+    "eth_getLogs: logIndex is block-scoped 0,1,2",
+    parsed.map((l) => l.logIndex).join(",") === "0,1,2",
+    parsed.map((l) => l.logIndex).join(","),
+  );
+} catch (err) {
+  check("eth_getLogs: parseEventLogs over an array of our logs", false, err.message);
+}
+
+try {
+  // The empty case. `[]` must stay an array all the way through viem's
+  // formatter — a `null` here is what MASTER §10 pitfall 5's "fails silently
+  // in odd places" looks like for this method.
+  const empty = [];
+  const parsedEmpty = parseEventLogs({ abi, logs: empty.map(formatLog) });
+  check("eth_getLogs: empty result stays an array", Array.isArray(parsedEmpty) && parsedEmpty.length === 0);
+} catch (err) {
+  check("eth_getLogs: empty result stays an array", false, err.message);
 }
 
 // --- RPCTransaction, one per tx type this chain accepts -------------------

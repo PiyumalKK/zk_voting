@@ -130,3 +130,37 @@ func logRuntime() []byte {
 	out = append(out, byte(vm.STOP))
 	return out
 }
+
+// logThreeRuntime emits a single LOG3 carrying three topics and one 32-byte
+// data word, then stops — the shape a Solidity event with two indexed
+// arguments compiles to (topic0 = the event signature hash, topic1/topic2 =
+// the indexed args, data = the non-indexed ones). Built for M06's
+// eth_getLogs filter tests, which need logs whose topics differ per
+// position so that positional matching can actually be distinguished from
+// "matches anything".
+//
+// Each topic is a single PUSH1 byte, so the resulting 32-byte topic is that
+// byte right-aligned in a zero word (topic0=0x11 becomes
+// 0x0000…0011). That is not what a real event signature hash looks like,
+// but the filter logic is indifferent to a topic's provenance — and
+// e2e/diff/logs.mjs exercises the real keccak topics against a live Hardhat
+// node, which is where that fidelity belongs.
+//
+// Stack discipline: LOG3 pops offset, then size, then topics 1..3, so they
+// are pushed in the reverse of that order. MSTORE pops offset then value,
+// hence "push value, push offset".
+func logThreeRuntime(topic0, topic1, topic2, data byte) []byte {
+	return []byte{
+		byte(vm.PUSH1), data,
+		byte(vm.PUSH1), 0x00,
+		byte(vm.MSTORE), // memory[0:32] = data, right-aligned
+
+		byte(vm.PUSH1), topic2, // third topic
+		byte(vm.PUSH1), topic1, // second topic
+		byte(vm.PUSH1), topic0, // first topic
+		byte(vm.PUSH1), 0x20, // size = 32 bytes of data
+		byte(vm.PUSH1), 0x00, // offset = 0
+		byte(vm.LOG3),
+		byte(vm.STOP),
+	}
+}

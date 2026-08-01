@@ -55,6 +55,9 @@ func TestLoad(t *testing.T) {
 				if cfg.RPCRateLimitBurst != DefaultRPCRateLimitBurst {
 					t.Errorf("RPCRateLimitBurst = %d, want %d", cfg.RPCRateLimitBurst, DefaultRPCRateLimitBurst)
 				}
+				if cfg.LogRangeLimit != DefaultLogRangeLimit {
+					t.Errorf("LogRangeLimit = %d, want %d", cfg.LogRangeLimit, DefaultLogRangeLimit)
+				}
 			},
 		},
 		{
@@ -72,6 +75,7 @@ func TestLoad(t *testing.T) {
 				"PEERS":                "https://node2:9546, https://node3:9546",
 				"RPC_RATE_LIMIT_RPS":   "50.5",
 				"RPC_RATE_LIMIT_BURST": "150",
+				"LOG_RANGE_LIMIT":      "5000",
 			},
 			check: func(t *testing.T, cfg *Config) {
 				if cfg.ChainID != 1337 {
@@ -110,6 +114,9 @@ func TestLoad(t *testing.T) {
 				if cfg.RPCRateLimitBurst != 150 {
 					t.Errorf("RPCRateLimitBurst = %d, want 150", cfg.RPCRateLimitBurst)
 				}
+				if cfg.LogRangeLimit != 5000 {
+					t.Errorf("LogRangeLimit = %d, want 5000", cfg.LogRangeLimit)
+				}
 			},
 		},
 		{
@@ -131,6 +138,16 @@ func TestLoad(t *testing.T) {
 			name:    "RPC_RATE_LIMIT_BURST negative is rejected",
 			env:     map[string]string{"RPC_RATE_LIMIT_BURST": "-1"},
 			wantErr: "RPC_RATE_LIMIT_BURST must be greater than 0",
+		},
+		{
+			name:    "invalid LOG_RANGE_LIMIT not an integer",
+			env:     map[string]string{"LOG_RANGE_LIMIT": "many"},
+			wantErr: "LOG_RANGE_LIMIT must be a non-negative integer",
+		},
+		{
+			name:    "LOG_RANGE_LIMIT zero is rejected",
+			env:     map[string]string{"LOG_RANGE_LIMIT": "0"},
+			wantErr: "LOG_RANGE_LIMIT must be greater than 0",
 		},
 		{
 			name:    "invalid RPC_PORT out of range",
@@ -280,6 +297,7 @@ func TestValidateJoinsAllErrors(t *testing.T) {
 		"CORS_ORIGINS must not resolve",
 		"RPC_RATE_LIMIT_RPS must be greater than 0",
 		"RPC_RATE_LIMIT_BURST must be greater than 0",
+		"LOG_RANGE_LIMIT must be greater than 0",
 		"TLS_CERT must not be blank",
 		"TLS_KEY must not be blank",
 		"TLS_CA must not be blank",

@@ -1,7 +1,8 @@
 # JSON-RPC method reference
 
 Living document, kept current from M04 on (MASTER §11). Reflects
-`internal/rpc` as of **M05** — read methods (M04) plus the write path (M05).
+`internal/rpc` as of **M06** — read methods (M04), the write path (M05) and
+`eth_getLogs` (M06).
 
 ## Server
 
@@ -41,6 +42,59 @@ Living document, kept current from M04 on (MASTER §11). Reflects
 | `eth_getTransactionReceipt` | Unknown hash → JSON `null` result (**not** an error — viem's `waitForTransactionReceipt` polls on exactly this). Carries every field in MASTER §10.5. |
 | `eth_getBlockTransactionCountByNumber` | Unresolvable block → JSON `null`, matching `eth_getBlockByNumber`. |
 | `eth_getBlockTransactionCountByHash` | Same null-on-unknown rule. |
+| `eth_getLogs` | Full filter-object support (address single-or-array, positional topics with `null` wildcards and inner OR-arrays, `fromBlock`/`toBlock` tags or numbers, `blockHash` mode). Empty result is `[]`, never `null`. Range capped by `LOG_RANGE_LIMIT`. See "Log filter semantics" below. |
+
+### Log filter semantics (M06)
+
+**Filter object.**
+
+| Field | Accepted | Meaning |
+|---|---|---|
+| `fromBlock` | omitted, `null`, a tag, or a hex number | Defaults to `latest`. `earliest` → 0. |
+| `toBlock` | omitted, `null`, a tag, or a hex number | Defaults to `latest`. A number beyond the head is **clamped to the head**, so the common "give me everything" idiom (`toBlock: 0x3b9aca00`) works instead of erroring. |
+| `blockHash` | a 32-byte hash | Pins the query to exactly that block. **Mutually exclusive** with `fromBlock`/`toBlock` — sending both is `-32602`. An unknown hash is an *error*, not an empty result. |
+| `address` | omitted, `null`, `"0x…"`, or `["0x…", …]` | OR-list. Omitted/null matches any address. |
+| `topics` | omitted, `null`, or an array whose elements are `null`, `"0x…"`, or `["0x…", …]` | Positional. `topics[i]` constrains the log's *i*-th topic. `null` (or `[]`, or an array containing `null`) at a position is a wildcard. A log with fewer topics than `topics.length` never matches — see below. |
+
+**The `topics` length rule.** A filter with more positions than the log has
+topics never matches, **even when the surplus positions are wildcards**. The
+length check runs before any rule is consulted, which is go-ethereum's
+`eth/filters` ordering and therefore Hardhat's. The alternative reading —
+skip wildcards first, reject only on a real constraint past the end — differs
+on exactly one input, and `make diff-logs` check (n) puts that input to a live
+Hardhat node and **fails the gate** if the two backends disagree, rather than
+leaving the choice to documentation.
+
+Padding to *exactly* the log's topic count does match, and must: viem pads a
+`topics` array out to the event's full indexed-argument count with trailing
+nulls, which is precisely what `/api/verify-vote` sends for `VoteCast`
+(`[signature, nullifierHash, null, null]` against a 4-topic log). Check (n)
+carries that as a control case.
+
+**Ordering.** Ascending by `(blockNumber, logIndex)`. `logIndex` is the log's
+position within its **block**, not within its transaction.
+
+**Every returned log carries** `address`, `topics`, `data`, `blockNumber`,
+`transactionHash`, `transactionIndex`, `blockHash`, `logIndex` and
+`removed` — exactly nine fields. `removed` is always `false`: a single
+sequencer produces no reorgs, so no log is ever un-emitted.
+
+**`fromBlock > toBlock`** (including a `fromBlock` past the head) returns the
+empty array rather than an error — that is a normal polling step ("anything
+since the last block I saw"), not a malformed request.
+
+**Range cap.** A query spanning more than `LOG_RANGE_LIMIT` blocks (default
+100,000) is rejected with `-32000` and a message naming the limit. The cap is
+applied *after* clamping `toBlock` to the head, so it can only be reached by
+a chain that is genuinely that long — an election's chain is orders of
+magnitude smaller. Set `LOG_RANGE_LIMIT=0` to disable it.
+
+**Implementation.** `internal/chain/logs.go` walks the resolved block range
+and uses each header's bloom filter to skip blocks that cannot contain a
+match before paying to read their receipts. A bloom match is necessary but
+not sufficient, so every admitted block is still matched exactly — the bloom
+is only ever an optimisation, a property asserted directly by
+`TestFilterLogsBloomSkipIsOnlyAnOptimisation`.
 
 ### Write-path semantics (M05)
 
@@ -81,7 +135,6 @@ mempool and no reorgs on this chain (single sequencer, auto-mine), so
 
 ## Not yet implemented (by milestone)
 
-- `eth_getLogs` — **M06**.
 - `evm_increaseTime`, `evm_mine`, `evm_setNextBlockTimestamp`,
   `hardhat_setBalance` / `anvil_setBalance` — **M07**, gated behind
   `DEV_RPC=true`.
@@ -101,14 +154,15 @@ mempool and no reorgs on this chain (single sequencer, auto-mine), so
 ## Test harnesses
 
 Run `make diff-install` once to install the shared Node dependencies for the
-whole `e2e/` tree. All three harnesses below expect **freshly started** nodes
-(`make reset && make run`, and a restarted `yarn chain`).
+whole `e2e/` tree. Every harness below except `shape-check` expects **freshly
+started** nodes (`make reset && make run`, and a restarted `yarn chain`).
 
 | Command | Script | What it proves |
 |---|---|---|
 | `make shape-check` | `e2e/shape-check.mjs` | The JSON encoding, with **no node running**: viem's own formatters and ABI decoders are run over the exact objects `internal/rpc/convert.go` marshals. Catches MASTER §10 pitfall 5 (a missing receipt field fails silently) in a second rather than only under a live diff. |
 | `make diff HARDHAT_URL=…` | `e2e/diff/diff.mjs` | Read methods (M04): identical calls against both backends, normalizing fields that differ by design (chain id, genesis hash/timestamp, client version) and diffing the rest. |
 | `make diff-write HARDHAT_URL=…` | `e2e/diff/write.mjs` | Write path (M05): deploys the same compiled `Probe.sol` on both, then diffs receipts field-by-field, asserts viem decodes the **same custom error name** on both for a revert (on `sendRawTransaction`, `eth_call` and `estimateGas`), and compares nonce-too-low error text. |
+| `make diff-logs HARDHAT_URL=…` | `e2e/diff/logs.mjs` | `eth_getLogs` (M06): builds an identical `Probe.ValueSet` event sequence on both backends (including one block carrying three logs), then diffs the raw responses field-by-field across address filters, topic filters (signature, indexed address, indexed uint OR-lists, wildcard positions), block-range subsets, `blockHash` mode and the empty result — and asserts viem's `parseEventLogs` output is identical on both. |
 | `make smoke` | `e2e/smoke-deploy.mjs` | The real stack: deploys `PoseidonT3 → LeanIMT (linked) → HonkVerifier → Voting` from `packages/hardhat/artifacts` and drives `setCandidates → addVoters → startRegistration → register`, asserting a non-zero Merkle root. Point `RPC_URL` at hardhat to run the same script there as a control. |
 
 `e2e/diff/contracts/Probe.sol` is compiled once with solc-js and its artifact

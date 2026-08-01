@@ -52,6 +52,15 @@ const (
 	DefaultRPCRateLimitRPS   float64 = 100
 	DefaultRPCRateLimitBurst int     = 200
 
+	// DefaultLogRangeLimit caps how many blocks a single eth_getLogs query
+	// may span (M06 deliverable 2). Not in MASTER §7's original table —
+	// added in M06 and documented there and in .env.example per Agent Rule
+	// 8. Purely DoS protection: a whole election's chain is orders of
+	// magnitude smaller than this, so no legitimate query from this app
+	// (the audit page and /api/merkle-path both scan fromBlock: 0) can ever
+	// hit it.
+	DefaultLogRangeLimit uint64 = 100_000
+
 	// MinBlockGasLimit: the mobile app submits vote() with a fixed
 	// 15,000,000 gas limit (MASTER §2, "Facts the plan depends on"), so
 	// BLOCK_GAS_LIMIT must stay strictly greater than this.
@@ -98,6 +107,11 @@ type Config struct {
 	// can fire instantly before it starts being throttled to RPS).
 	RPCRateLimitRPS   float64
 	RPCRateLimitBurst int
+
+	// LogRangeLimit is the maximum number of blocks one eth_getLogs query
+	// may cover, inclusive of both endpoints (M06). Must be at least 1 —
+	// a limit of 0 would reject even a single-block query.
+	LogRangeLimit uint64
 
 	TLSCert string
 	TLSKey  string
@@ -199,6 +213,12 @@ func load(lookup lookupFunc) (*Config, error) {
 		cfg.RPCRateLimitBurst = v
 	}
 
+	if v, err := strconv.ParseUint(get("LOG_RANGE_LIMIT", strconv.FormatUint(DefaultLogRangeLimit, 10)), 10, 64); err != nil {
+		addf("LOG_RANGE_LIMIT must be a non-negative integer: %w", err)
+	} else {
+		cfg.LogRangeLimit = v
+	}
+
 	cfg.TLSCert = get("TLS_CERT", DefaultTLSCert)
 	cfg.TLSKey = get("TLS_KEY", DefaultTLSKey)
 	cfg.TLSCA = get("TLS_CA", DefaultTLSCA)
@@ -279,6 +299,10 @@ func (c *Config) Validate() error {
 	}
 	if c.RPCRateLimitBurst <= 0 {
 		addf("RPC_RATE_LIMIT_BURST must be greater than 0, got %d", c.RPCRateLimitBurst)
+	}
+
+	if c.LogRangeLimit == 0 {
+		addf("LOG_RANGE_LIMIT must be greater than 0 (a limit of 0 rejects even single-block queries)")
 	}
 
 	if strings.TrimSpace(c.TLSCert) == "" {

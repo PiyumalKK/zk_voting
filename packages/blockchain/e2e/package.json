@@ -7,6 +7,7 @@
   "scripts": {
     "diff": "node diff/diff.mjs",
     "diff:write": "node diff/write.mjs",
+    "diff:logs": "node diff/logs.mjs",
     "smoke": "node smoke-deploy.mjs",
     "probe:build": "node diff/contracts/build.mjs"
   },

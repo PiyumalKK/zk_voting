@@ -86,6 +86,32 @@ func logRuntime() []byte {
 	return out
 }
 
+// logThreeRuntime emits a single LOG3 with three topics and one 32-byte
+// data word — the shape a Solidity event with two indexed arguments
+// compiles to. Added for M06's eth_getLogs tests, which need a log with
+// distinct topics per position so positional filter decoding can be
+// verified end-to-end over real JSON. Mirrors the identically-named helper
+// in internal/chain/testcontracts_test.go (same duplication rationale as
+// the rest of this file).
+//
+// LOG3 pops offset, size, then topics 1..3, so topics are pushed in reverse;
+// MSTORE pops offset then value, hence "push value, push offset".
+func logThreeRuntime(topic0, topic1, topic2, data byte) []byte {
+	return []byte{
+		byte(vm.PUSH1), data,
+		byte(vm.PUSH1), 0x00,
+		byte(vm.MSTORE),
+
+		byte(vm.PUSH1), topic2,
+		byte(vm.PUSH1), topic1,
+		byte(vm.PUSH1), topic0,
+		byte(vm.PUSH1), 0x20,
+		byte(vm.PUSH1), 0x00,
+		byte(vm.LOG3),
+		byte(vm.STOP),
+	}
+}
+
 // encodeErrorString ABI-encodes reason exactly as Solidity's
 // `revert(reason)`/`require(cond, reason)` would: the 4-byte Error(string)
 // selector, a 32-byte offset word (always 0x20 for a single dynamic

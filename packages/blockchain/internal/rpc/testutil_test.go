@@ -146,18 +146,37 @@ func rawTxHex(t *testing.T, tx *types.Transaction) string {
 	return hexutil.Encode(b)
 }
 
+// testLogRangeLimit is deliberately small so a test can exercise the
+// eth_getLogs range cap by mining a handful of blocks rather than 100,000.
+// Tests that must not hit the cap pass an explicit larger limit via
+// newTestMuxWithConfig.
+const testLogRangeLimit = 8
+
 // newTestMux builds the full HTTP handler (JSON-RPC + health, all
 // middleware included) over a fresh Sequencer, wide-open CORS and a
 // generous rate limit so most tests don't need to think about either.
 func newTestMux(t *testing.T, seq *chain.Sequencer) http.Handler {
 	t.Helper()
-	rpcServer, err := NewJSONRPCServer(seq, testChainID)
+	return newTestMuxWithConfig(t, seq, ServerConfig{
+		ChainID: testChainID,
+		// 0 = cap disabled: the default handler must never fail a test for a
+		// reason the test isn't about. The one test that is about the cap,
+		// TestGetLogsRangeCapIsEnforcedAndNamesTheLimit, opts in explicitly.
+		LogRangeLimit: 0,
+	})
+}
+
+// newTestMuxWithConfig is newTestMux with the JSON-RPC ServerConfig spelled
+// out — used by the tests that care about a specific range cap.
+func newTestMuxWithConfig(t *testing.T, seq *chain.Sequencer, cfg ServerConfig) http.Handler {
+	t.Helper()
+	rpcServer, err := NewJSONRPCServer(seq, cfg)
 	if err != nil {
 		t.Fatalf("NewJSONRPCServer: %v", err)
 	}
 	t.Cleanup(rpcServer.Stop)
 
-	health := NewHealthHandler(testChainID, "primary", nil)
+	health := NewHealthHandler(cfg.ChainID, "primary", nil)
 	return NewMux(health, rpcServer, MuxConfig{
 		CORSOrigins:    []string{"*"},
 		RateLimitRPS:   1000,

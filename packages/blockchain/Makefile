@@ -1,4 +1,4 @@
-.PHONY: build run test vet fmt reset tidy diff diff-write diff-install shape-check smoke probe-build
+.PHONY: build run test vet fmt reset tidy diff diff-write diff-logs diff-install shape-check smoke probe-build
 
 BINARY  := bin/zk-blockchain-node
 DATA_DIR ?= data
@@ -71,6 +71,15 @@ diff:
 #   make diff-write HARDHAT_URL=http://127.0.0.1:8545
 diff-write:
 	cd e2e/diff && node write.mjs
+
+# Differential JSON-RPC harness — eth_getLogs (M06). Same prerequisites as
+# `diff` and `diff-write`: both nodes running and freshly started (Probe
+# must deploy to the same address on both, which only holds while account
+# #0's nonce matches).
+#
+#   make diff-logs HARDHAT_URL=http://127.0.0.1:8545
+diff-logs:
+	cd e2e/diff && node logs.mjs
 
 # JSON-shape contract test (M05). Needs no node and no chain: it runs viem's
 # own formatters and ABI decoders over the exact JSON internal/rpc's receipt,

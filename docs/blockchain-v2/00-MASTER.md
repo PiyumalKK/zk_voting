@@ -134,23 +134,22 @@ packages/blockchain/
 
 Execute strictly in order; each has its own file with spec + acceptance gates.
 
-| # | File | Title | Depends |
-|---|---|---|---|
-| M01 | `M01-skeleton.md` | Teardown, module layout, config, logging, health | — |
-| M02 | `M02-state-genesis.md` | Pebble/rawdb storage, chain config, genesis + prefunds | M01 |
-| M03 | `M03-execution.md` | Tx validation, EVM execution, block sealing, receipts | M02 |
-| M04 | `M04-rpc-read.md` | JSON-RPC server + read methods | M03 |
-| M05 | `M05-rpc-write.md` | `eth_sendRawTransaction` + tx/receipt queries + revert errors | M04 |
-| M06 | `M06-logs.md` | `eth_getLogs` (address/topics/range filters) | M05 |
-| M07 | `M07-dev-methods.md` | `evm_increaseTime/mine`, `*_setBalance`, clientVersion compat | M05 |
-| M08 | `M08-deploy-integration.md` | `yarn deploy --network custom`; hardhat test suite green on node | M06, M07 |
-| M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 |
-| M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 |
-| M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 |
-| M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 |
-| M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) |
-| M14 | `M14-e2e-swap.md` | Full e2e suite, swap drill, docs, final dual-mode gate | M09–M13 |
-
+| # | File | Title | Depends | Status |
+|---|---|---|---|---|
+| M01 | `M01-skeleton.md` | Teardown, module layout, config, logging, health | — | **done** |
+| M02 | `M02-state-genesis.md` | Pebble/rawdb storage, chain config, genesis + prefunds | M01 | **done** |
+| M03 | `M03-execution.md` | Tx validation, EVM execution, block sealing, receipts | M02 | **done** |
+| M04 | `M04-rpc-read.md` | JSON-RPC server + read methods | M03 | **done** |
+| M05 | `M05-rpc-write.md` | `eth_sendRawTransaction` + tx/receipt queries + revert errors | M04 | code complete, gates pending |
+| M06 | `M06-logs.md` | `eth_getLogs` (address/topics/range filters) | M05 | code complete, gates pending |
+| M07 | `M07-dev-methods.md` | `evm_increaseTime/mine`, `*_setBalance`, clientVersion compat | M05 | pending |
+| M08 | `M08-deploy-integration.md` | `yarn deploy --network custom`; hardhat test suite green on node | M06, M07 | pending |
+| M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 | pending |
+| M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | pending |
+| M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 | pending |
+| M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | pending |
+| M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) | pending |
+| M14 | `M14-e2e-swap.md` | Full e2e suite, swap drill, docs, final dual-mode gate | M09–M13 | pending |
 M10 can run in parallel with M11–M13 (different packages).
 
 ---
@@ -200,6 +199,7 @@ M10 can run in parallel with M11–M13 (different packages).
 | `CORS_ORIGINS` | `*` | RPC CORS allowlist |
 | `RPC_RATE_LIMIT_RPS` | `100` | Per-IP token-bucket steady-state rate (req/s). Added in M04, not in the original table. |
 | `RPC_RATE_LIMIT_BURST` | `200` | Per-IP token-bucket burst capacity. Added in M04, not in the original table. |
+| `LOG_RANGE_LIMIT` | `100000` | Max blocks one `eth_getLogs` query may span (inclusive). DoS protection. Added in M06, not in the original table. |
 | `TLS_CERT` / `TLS_KEY` / `TLS_CA` | `./certs/…` | P2P mTLS material (M10; `make gen-certs`) |
 | `LOG_LEVEL` | `info` | zerolog level |
 | `LOG_FORMAT` | `console` | `console` (human-readable, dev) \| `json` (prod/replica log aggregation). Added in M01, not in the original table. |
@@ -303,6 +303,10 @@ usage; tracing/debug namespaces.
 
 - `01-AUTH-DESIGN.md` — roles, login, relay, key custody, voter identity & verification
   chain, threat model. **Read before M12; summarize in the FYP report.**
+- `RUNNING-GATES.md` — how to run each milestone's acceptance gates locally
+  (Go toolchain setup, terminals, expected output, troubleshooting). Every
+  milestone agent so far has lacked a Go toolchain in-sandbox, so the gates
+  are run by the human.
 - `packages/blockchain/RPC.md` — living method reference (created in M04).
 - Historical (do not follow): `packages/blockchain/{PLAN,API,BLOCKCHAIN_OVERVIEW}.md`,
   `docs/CUSTOM_CHAIN_SWAP_PLAN.md`, `MIGRATION.md` (pre-dates this plan).

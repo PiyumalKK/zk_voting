@@ -116,6 +116,12 @@ func mapCallError(err error) error {
 // branches on the code behaving identically across both backends.
 const invalidInputCode = -32000
 
+// invalidParamsCode is JSON-RPC 2.0's standard "invalid params" code. Used
+// (M06) for a filter object that is self-contradictory rather than merely
+// unsatisfiable — i.e. the request was malformed, not the chain's state
+// uncooperative.
+const invalidParamsCode = -32602
+
 // codedError is a JSON-RPC error with an explicit code and no `data` field —
 // the shape every non-revert failure below uses. (Reverts use revertError
 // instead, which additionally carries `data`.)
