@@ -146,7 +146,7 @@ Execute strictly in order; each has its own file with spec + acceptance gates.
 | M07 | `M07-dev-methods.md` | `evm_increaseTime/mine`, `*_setBalance`, clientVersion compat | M05 | **done** |
 | M08 | `M08-deploy-integration.md` | `yarn deploy --network custom`; hardhat test suite green on node | M06, M07 | **done** |
 | M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 | **done** |
-| M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | pending |
+| M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | **done** |
 | M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 | pending |
 | M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | pending |
 | M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) | pending |
@@ -202,7 +202,7 @@ M10 can run in parallel with M11–M13 (different packages).
 | `RPC_RATE_LIMIT_BURST` | `200` | Per-IP token-bucket burst capacity. Added in M04, not in the original table. |
 | `LOG_RANGE_LIMIT` | `100000` | Max blocks one `eth_getLogs` query may span (inclusive). DoS protection. Added in M06, not in the original table. |
 | `CLIENT_VERSION_MODE` | `zkchain` | `zkchain` → `web3_clientVersion` reports `zkchain/v2.0.0`; `anvil` → `anvil/v1.0.0-zkchain`. Escape hatch for tooling that special-cases client identity (§10 pitfall 6). Added in M07, not in the original table. |
-| `TLS_CERT` / `TLS_KEY` / `TLS_CA` | `./certs/…` | P2P mTLS material (M10; `make gen-certs`) |
+| `TLS_CERT` / `TLS_KEY` / `TLS_CA` | `./certs/…` | P2P mTLS material (M10; `make gen-certs`). Only read when the node actually joins a cluster — a standalone node (`ROLE=primary` with no `PEERS`) opens no P2P port and needs no certificates. |
 | `LOG_LEVEL` | `info` | zerolog level |
 | `LOG_FORMAT` | `console` | `console` (human-readable, dev) \| `json` (prod/replica log aggregation). Added in M01, not in the original table. |
 

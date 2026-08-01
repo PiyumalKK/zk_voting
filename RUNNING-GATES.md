@@ -6,7 +6,8 @@
 > run on your machine. This file is the missing "how".
 >
 > Applies to M05 (write path), M06 (`eth_getLogs`), M07 (dev/compat methods),
-> M08 (deploy + contract suite) and M09 (restart recovery + audit replay).
+> M08 (deploy + contract suite), M09 (restart recovery + audit replay) and
+> M10 (replication — §7).
 > Later milestones add their own gate commands; the setup in §1 does not change.
 
 ---
@@ -90,12 +91,20 @@ yarn install          # if you haven't already
 yarn compile
 ```
 
-### 1.6 A note on `packages/blockchain/.env`
+### 1.6 `packages/blockchain/.env` — delete it
 
 That file is a **leftover from the v1 node** — it sets `NODE_ID`, `PEERS` and
-`ALLOWED_ORIGIN`, none of which v2's `internal/config` reads. It is harmless (v2 falls
-back to its defaults) but misleading. `.env.example` is the current reference. Safe to
-delete or replace with a copy of `.env.example`.
+`ALLOWED_ORIGIN`. Through M09 it was merely misleading: v2's `internal/config`
+ignored all three.
+
+**From M10 it is actively harmful.** `PEERS` is now what makes a node a
+sequencer *with replicas*, so a stale value makes `make run` try to open the
+mTLS P2P port, fail to find certificates, and exit. Delete the file, or
+replace it with a copy of `.env.example` (which is the current reference):
+
+```
+del packages\blockchain\.env
+```
 
 ---
 
@@ -657,7 +666,167 @@ which redeploys and passes only if the recovered chain is fully functional
 
 ---
 
-## 7. What to send me if a gate fails
+## 7. M10 gate — replication (primary + 2 replicas over mTLS)
+
+Three phases: offline checks, then a one-time cluster setup, then the
+cluster gate itself. Phase B needs no Hardhat node and no `yarn compile` —
+it drives a committed contract artifact, so the only prerequisites are the
+Go toolchain and `npm install` in `e2e/` (§1.4).
+
+### Before you start: delete `packages/blockchain/.env` if it still exists
+
+§1.6 called this optional. **It is now required.** That leftover v1 file
+sets `PEERS`, and from M10 on `PEERS` is what turns a standalone node into a
+sequencer with replicas — so `make run` would try to open the mTLS P2P port,
+fail to find certificates, and exit with a configuration error. Delete it,
+or replace it with a copy of `.env.example`:
+
+```
+del packages\blockchain\.env
+```
+
+The error, if you hit it, names the fix: *"p2p client TLS (run `make
+gen-certs`, or unset PEERS to run standalone)"*.
+
+### Phase A — offline checks
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+
+make vet            # raw: go vet ./...
+make fmt            # raw: gofmt -l .          -> must print NOTHING
+make test           # raw: go test ./... -v
+make block-rlp-test # raw: cd e2e && node lib/block-rlp.test.mjs
+```
+
+`make fmt` listing files is expected on this milestone — I hand-aligned the
+new struct fields without a formatter. Run `gofmt -w .` and re-run; it is
+cosmetic.
+
+New in M10, worth watching for by name in `make test` output:
+
+| Test | What it proves |
+|---|---|
+| `TestReplicaReproducesThePrimaryChainBlockByBlock` | A replica fed M09's whole audit fixture chain (deploys, storage writes, logs, refund calls, empty blocks, system-op blocks) ends up at the *same head hash* — so every block was re-executed and every re-execution agreed. |
+| `TestAReplicaChainPassesTheAuditor` | The state a replica derived by following passes `cmd/audit` on its own. This is the join between M09 and M10: a replica is not merely consistent with the primary, it is independently verifiable. |
+| `TestReplicaRejectsATamperedStateRoot` / `...ASwappedTransaction` / `...ATamperedTimestamp` | The tamper-evidence property, from three directions. Each must be refused at that block, naming the field, leaving the replica's height unchanged. |
+| `TestReplicaDetectsAForkAtAnAlreadyAppliedHeight` | A second, different block at an applied height is refused and the local one *kept* — overwriting would destroy the evidence. |
+| `TestReplicaRefusesAPushedGenesisBlock` | Genesis comes from local config, never from the wire. |
+| `TestMutualTLSRejectsAForeignCertificate` / `...AnAnonymousClient` | Membership of the cluster is possession of a certificate signed by its CA — nothing else. |
+| `TestSealingIsNeverBlockedByAnUnresponsivePeer` | 30 blocks sealed against a peer that answers nothing, in under a second. Fire-and-forget pushing, not a synchronous one. |
+| `TestPusherRetriesATransientFailure` / `TestPusherDoesNotRetryARefusal` | A 5xx is retried (3 times); a 409 verdict is not. |
+| `TestAGapInAPushTriggersCatchUp` / `TestPollingCatchesMissedPushes` | The replica repairs itself, both when a push tells it that it is behind and when no push ever arrives. |
+| `TestWritesAreForwardedVerbatim` / `TestDevMethodsAreForwarded` | A replica hands writes to the sequencer without re-encoding them, and never seals a block of its own. |
+
+`make block-rlp-test` is a Node-only unit test of the block encoder the
+cluster gate uses to forge a block. Expect `27 checks` and `PASS`. It is
+cheap and worth running first: a fault there shows up in phase C as the
+replica rejecting a block, which looks exactly like the tamper detection
+that scenario is trying to observe.
+
+### Phase B — one-time cluster setup
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make gen-certs
+```
+
+**Expected:** a `certs/` directory holding `ca.crt`, `ca.key`, and
+`primary`/`replica1`/`replica2` `.crt`/`.key` pairs, and a summary listing
+them. `certs/` is gitignored; regenerate freely.
+
+Optionally bring the cluster up by hand and look at it:
+
+```
+make run-cluster
+```
+
+Three nodes start in one terminal with their logs prefixed by node name.
+Then, in another:
+
+```
+curl.exe -s http://127.0.0.1:9545/health
+curl.exe -s http://127.0.0.1:9555/health
+```
+
+The primary reports `{"status":"ok","role":"primary",...}`; each replica adds
+`"primaryHeight"` and `"synced":true`. Ctrl+C stops all three.
+
+### Phase C — the gate
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make cluster-test
+```
+
+This starts a **fresh** 3-node cluster (the cluster's data directories are
+wiped first), runs all five scenarios, and stops the cluster on the way out
+whether it passes or fails. Set `VERBOSE=1` to see the nodes' own logs
+interleaved with the checks.
+
+**Expected:** every line `[PASS]`, then a count and `PASS`. The scenarios:
+
+| # | Scenario | What it proves |
+|---|---|---|
+| 1 | Deploy a contract to the sequencer | All three nodes converge on the same head *hash*, and each replica's `/health` reports itself synced. |
+| 2 | Write through **replica1's** RPC | `eth_sendRawTransaction` is forwarded, the transaction is mined by the sequencer, the receipt comes back through the replica, and `evm_mine` sent to a replica advances the *sequencer's* height. |
+| 3 | Stop replica2, seal 20 blocks, restart it | The surviving replica stays current throughout (one node down does not stall the cluster), and the restarted one catches up to the exact same head hash. |
+| 4 | Read the same seven calls from all three nodes | `eth_getBalance`, `eth_getCode`, `eth_call`, `eth_getLogs`, `eth_getTransactionReceipt`, `eth_getBlockByNumber` and `eth_getTransactionCount` are byte-identical, and viem's decoded event stream matches. |
+| 5 | Push a hand-crafted block with a wrong state root | The replica re-executes, refuses it with HTTP 409 `state-mismatch`, keeps its own head, and stays synced. Its node log carries `CRITICAL state root mismatch`. |
+
+Scenario 5 checks its own tooling first: it re-encodes a block the replica
+already has and expects the replica to answer `duplicate`, which can only
+happen if this script's RLP reproduces the node's bytes exactly. If that
+check fails, the tamper result is reported as unproven rather than as a pass.
+
+### Observed on the first gate run (2026-08-01)
+
+All five scenarios passed first time — `26 checks: 26 passed, 0 failed.`
+Worth recording, because these are the numbers to quote in the FYP report:
+
+| Observation | Value |
+|---|---|
+| Nodes converged on head | `0x697f4f4102…`, heights `3 / 3 / 3` |
+| Write submitted through replica1 | mined by the sequencer, receipt readable from the replica; `value()` returned 77 |
+| `evm_mine` sent to a replica | advanced the *sequencer's* height 4 → 5 |
+| Blocks sealed while replica2 was down | 20 (height 5 → 25); replica1 stayed current throughout |
+| Restarted replica2 | caught up to the sequencer's exact head `0x48c21a3fdb…`, `synced: true` |
+| Reads compared across all 3 nodes | 7 JSON-RPC methods byte-identical; 25 decoded events identical |
+| Tampered block | refused with `409 {"code":"state-mismatch"}`: *block 26: stateRoot mismatch: got 0xebb1193b…, want 0xbadbad…* — the replica's own re-execution produced the real root and rejected the forged one |
+| Self-check before tampering | this script's header encoding reproduced the node's block hash exactly |
+
+The tamper line is the milestone's headline result: a replica was handed a
+correctly-linked, correctly-numbered, correctly-signed block whose only fault
+was a state root that does not follow from its contents, and it re-derived
+the real root itself and refused. That is the tamper-evidence property MASTER
+§3 claims, demonstrated rather than asserted.
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| `node binary not found` | `make build` first (`make cluster-test` does this for you; running `node cluster-test.mjs` by hand does not). |
+| `missing certificates in …/certs` | `make gen-certs`. |
+| A node exits during startup with a TLS error | The certificate names must match the node names in `e2e/cluster.mjs` (`primary`, `replica1`, `replica2`). Regenerate with plain `make gen-certs`. |
+| `listen tcp :9545: bind: address already in use` | A node from an earlier run (or `make run`) is still up. Stop it; the cluster uses 9545/9546, 9555/9556, 9565/9566. |
+| Scenario 1 times out waiting for convergence | Look at a replica's log (`VERBOSE=1`). A `CRITICAL state root mismatch` there means sealing and replay disagree — the same class of failure as an `AUDIT FAILED`, and the serious one. Send me the block number and the two roots. |
+| Scenario 2 fails with `cannot reach the sequencer` | The replica's `PRIMARY_RPC_URL` is wrong or the primary died. The launcher sets it; check the primary's log first. |
+| Scenario 3's restarted replica never catches up | Send me the replica's log from restart onward — the interesting lines are `chain head recovered`, then `replica caught up`. |
+| Scenario 5 reports "this script encodes a block header exactly as the node does" as `[FAIL]` | The JS header encoder and the node disagree — most likely a go-ethereum bump changed the header's field set. The tamper check is then skipped deliberately. Send me the two hashes; the fix is in `e2e/lib/block-rlp.mjs`. |
+| Scenario 5's push is refused with `400 malformed` instead of `409 state-mismatch` | Same cause as above, one step further along: the header encodes but the block wrapper does not. Also `e2e/lib/block-rlp.mjs`. |
+| Windows Defender/firewall prompt on first run | The nodes bind loopback ports; allow it once. |
+
+### Re-running
+
+`make cluster-test` always starts from a fresh genesis, so it is safe to run
+repeatedly. `make reset-cluster` removes the data directories by hand if you
+want the disk back. Note that the cluster's data lives in `data-cluster/`,
+which is *separate* from the `data/` directory M08 and M09 use — running the
+cluster does not disturb the chain those gates left behind.
+
+---
+
+## 8. What to send me if a gate fails
 
 Paste the **full terminal output** of the failing command, plus the command you ran.
 For Go build failures, the compiler error with its file:line is enough. For harness

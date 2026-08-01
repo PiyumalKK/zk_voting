@@ -129,8 +129,33 @@ func finalizeBlock(db ethdb.Database, header *types.Header, root common.Hash, tx
 	// withdrawals in this block" — the latter is what this chain always is.
 	body := &types.Body{Transactions: txs, Withdrawals: []*types.Withdrawal{}}
 	block := types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
-	blockHash := block.Hash()
+	annotateReceipts(block, receipts)
 
+	if err := persist(db, block, receipts); err != nil {
+		return nil, err
+	}
+	return block, nil
+}
+
+// annotateReceipts fills in the receipt and log fields that only become
+// knowable once the block's identity is final: which block each receipt
+// belongs to, and where in it.
+//
+// None of these fields are part of the receipt trie's RLP encoding (EIP-658
+// stores status, cumulative gas and logs, nothing else), so setting them
+// after the header has been hashed cannot change Root or ReceiptHash — which
+// is what makes it safe to do here rather than before. They matter to the
+// RPC layer instead: MASTER §10 pitfall 5 lists blockHash/blockNumber/
+// transactionIndex among the receipt fields viem waits on, and a log without
+// a blockHash fails silently in odd places rather than loudly.
+//
+// It is shared by the two paths that produce a durable block — the sequencer
+// sealing one (finalizeBlock, above) and a replica accepting one
+// (ApplyExternalBlock in follow.go) — because a receipt served by a replica
+// and the same receipt served by the primary must be indistinguishable to
+// the app.
+func annotateReceipts(block *types.Block, receipts types.Receipts) {
+	blockHash := block.Hash()
 	for i, r := range receipts {
 		r.BlockHash = blockHash
 		r.BlockNumber = block.Number()
@@ -139,11 +164,6 @@ func finalizeBlock(db ethdb.Database, header *types.Header, root common.Hash, tx
 			l.BlockHash = blockHash
 		}
 	}
-
-	if err := persist(db, block, receipts); err != nil {
-		return nil, err
-	}
-	return block, nil
 }
 
 // persist writes block + receipts + the canonical/head pointers that make

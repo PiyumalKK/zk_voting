@@ -27,6 +27,81 @@ make reset        # delete ./data and start from a fresh genesis
 Configuration is environment-only; every variable, its default and its
 meaning are in `.env.example`.
 
+A single node needs no certificates and opens no P2P port. Replication is
+opt-in: a node becomes part of a cluster only when `PEERS` (sequencer) or
+`ROLE=replica` is set.
+
+## Topology
+
+```
+                       writes (eth_sendRawTransaction, evm_*)
+   web / mobile ─────────────────┐
+        │  reads                 │        ┌──────────────────────────┐
+        │                        └───────▶│  PRIMARY (sequencer)     │
+        │                                 │  RPC :9545  P2P :9546    │
+        │                                 │  validates → executes →  │
+        │                                 │  seals 1-tx blocks       │
+        │                                 └───────────┬──────────────┘
+        │                        push (mTLS, POST /p2p/block)        │
+        │                    ┌───────────────────────┴───────────┐   │
+        ▼                    ▼                                   ▼   │ pull
+   ┌─────────────────────────────────┐        ┌──────────────────────┴──────┐
+   │ REPLICA 1  RPC :9555 P2P :9556  │        │ REPLICA 2  RPC :9565 :9566  │
+   │ re-executes every block,        │        │ same                        │
+   │ verifies its state root,        │        │                             │
+   │ serves reads, forwards writes ──┼────────┼──▶ to the primary's RPC     │
+   └─────────────────────────────────┘        └─────────────────────────────┘
+```
+
+- **One writer.** Only the sequencer seals blocks, so there are no forks and
+  no consensus protocol. A replica that is sent a block it did not ask for
+  still verifies it; a primary refuses pushed blocks outright.
+- **Trust-but-verify.** A replica re-executes every block it receives with the
+  same code `cmd/audit` uses, and refuses any block whose state root, receipts
+  root, bloom or gas does not follow from its own execution. mTLS decides
+  *who may connect*; re-execution decides *what is true*. A compromised
+  sequencer holds a valid certificate and still cannot make a replica accept
+  a rewritten history.
+- **Self-healing.** Pushes are best-effort. Each replica also polls the
+  primary's head every 5 s and pulls whatever it is missing, so a node that
+  was down, or whose push was dropped, converges on its own.
+- **Replica count is configuration.** Nothing in the code assumes two.
+
+### Running the cluster
+
+```
+make gen-certs      # once: a local CA + one certificate per node, into ./certs
+make run-cluster    # primary :9545, replicas :9555 and :9565 — Ctrl+C stops all
+make cluster-test   # the M10 gate: 5 scenarios against a fresh cluster
+make reset-cluster  # delete all three nodes' data directories
+```
+
+`make run-cluster` keeps existing chain data; `cd e2e && node cluster.mjs --reset`
+starts from a fresh genesis. Point writes at the primary or at any replica —
+a replica forwards them — and reads at whichever node is closest.
+
+### Certificates and rotation
+
+`make gen-certs` writes `certs/ca.{crt,key}` plus `<node>.{crt,key}` for
+`primary`, `replica1` and `replica2`. Each node certificate is valid for both
+server and client authentication, because every node is both: the primary
+serves catch-up pulls and dials replicas to push.
+
+- The CA **is** the cluster's membership credential. There is no other
+  authentication on the P2P port.
+- `certs/` is gitignored. For a real deployment, keep `ca.key` off the nodes
+  entirely — a node needs only its own key pair and `ca.crt`.
+- Rotation is all-or-nothing: regenerate everything and restart all three
+  nodes. A half-rotated cluster fails with handshake errors that look like
+  network faults.
+- Certificates default to one year (`-days` to change). Add a node later with
+  `go run ./cmd/gencerts -nodes replica3` against the *same* directory — but
+  note this creates a new CA, so prefer regenerating the whole set.
+
+A cluster's nodes must share `CHAIN_ID` and `BLOCK_GAS_LIMIT`: both feed the
+genesis block, so a mismatch changes the genesis hash and the replica refuses
+block 1 with a `parentHash` mismatch rather than drifting silently.
+
 ## Operations
 
 ### Restart

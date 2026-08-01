@@ -1,8 +1,9 @@
 # JSON-RPC method reference
 
 Living document, kept current from M04 on (MASTER §11). Reflects
-`internal/rpc` as of **M07** — read methods (M04), the write path (M05),
-`eth_getLogs` (M06) and the dev/compat namespaces (M07).
+`internal/rpc` as of **M10** — read methods (M04), the write path (M05),
+`eth_getLogs` (M06), the dev/compat namespaces (M07), and replica write
+forwarding (M10).
 
 ## Server
 
@@ -208,6 +209,42 @@ because the clients substring-match it:
 `contractAddress` is JSON `null` for a non-creation (not the zero address);
 `to` is `null` for a creation. `logs` is always an array, never `null`, and
 each log's `logIndex` is its position within the *block*.
+
+### Replica behavior (M10)
+
+A node started with `ROLE=replica` exposes the **same** JSON-RPC surface as
+the sequencer. The difference is where each call is answered:
+
+| Calls | Where | Why |
+|---|---|---|
+| Everything read-only (`eth_call`, `eth_getLogs`, `eth_getBalance`, receipts, blocks, …) | locally, from state the replica re-executed itself | this is the point of having replicas |
+| `eth_sendRawTransaction`, `eth_sendTransaction` | forwarded to `PRIMARY_RPC_URL` | only the sequencer extends the chain |
+| `evm_*`, `hardhat_*`, `anvil_*` | forwarded to `PRIMARY_RPC_URL` | these mutate state outside a transaction (M07); a replica serving `evm_mine` locally would fork the cluster |
+
+Forwarding is byte-for-byte: the request body is passed through unaltered and
+the sequencer's response — including a revert's `{code: 3, data}` object — is
+copied back verbatim. Nothing is re-encoded, so a client cannot tell which
+node it reached. A batch containing at least one forwarded method is sent
+whole, so ordering within a batch is preserved.
+
+If the sequencer cannot be reached, the replica answers with JSON-RPC
+`-32603` and a message naming it, rather than an HTTP error page that clients
+cannot parse.
+
+`GET /health` on a replica reports replication state as well as liveness:
+
+```json
+{"status":"ok","role":"replica","chainId":9494,"height":787,
+ "primaryHeight":787,"synced":true}
+```
+
+`synced` stays false until the primary has actually been reached, so a fresh
+replica that has never contacted the sequencer is distinguishable from one
+that is level with it. The two fields are absent entirely on a primary.
+
+The P2P port (`P2P_PORT`, default 9546) is a separate, mTLS-only surface and
+is **not** JSON-RPC — see README's topology section. It carries
+`POST /p2p/block`, `GET /p2p/blocks?from=&limit=` and `GET /p2p/head`.
 
 ### Block-tag handling (all of the above)
 

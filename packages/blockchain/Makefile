@@ -1,6 +1,13 @@
-.PHONY: build build-audit run run-dev audit test vet fmt reset tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build
+.PHONY: build build-audit build-gencerts run run-dev audit test vet fmt reset reset-cluster tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build gen-certs run-cluster cluster-test block-rlp-test
 
 DATA_DIR ?= data
+
+# Where `make gen-certs` writes the cluster's mTLS material, and where
+# e2e/cluster.mjs expects to find it (M10).
+CERTS_DIR ?= certs
+
+# The 3-node cluster's data directories live under here, one per node.
+CLUSTER_DATA_DIR ?= data-cluster
 
 # Extra flags passed through to cmd/audit, e.g.
 #   make audit AUDIT_ARGS="-from 1200"
@@ -18,11 +25,15 @@ BINARY := bin/zk-blockchain-node.exe
 RUN_BINARY := bin\zk-blockchain-node.exe
 AUDIT_BINARY := bin/zk-blockchain-audit.exe
 RUN_AUDIT_BINARY := bin\zk-blockchain-audit.exe
+GENCERTS_BINARY := bin/zk-blockchain-gencerts.exe
+RUN_GENCERTS_BINARY := bin\zk-blockchain-gencerts.exe
 else
 BINARY := bin/zk-blockchain-node
 RUN_BINARY := ./bin/zk-blockchain-node
 AUDIT_BINARY := bin/zk-blockchain-audit
 RUN_AUDIT_BINARY := ./bin/zk-blockchain-audit
+GENCERTS_BINARY := bin/zk-blockchain-gencerts
+RUN_GENCERTS_BINARY := ./bin/zk-blockchain-gencerts
 endif
 
 # Build the node binary.
@@ -32,6 +43,10 @@ build:
 # Build the audit binary (M09).
 build-audit:
 	go build -o $(AUDIT_BINARY) ./cmd/audit
+
+# Build the certificate generator (M10).
+build-gencerts:
+	go build -o $(GENCERTS_BINARY) ./cmd/gencerts
 
 # Build and run the node (reads config from the environment / .env; see
 # .env.example).
@@ -183,6 +198,53 @@ shape-check:
 #   make smoke
 smoke:
 	cd e2e && node smoke-deploy.mjs
+
+# ── M10: replication ──────────────────────────────────────────────────────
+
+# Generate the cluster's mTLS material: a fresh local CA plus one certificate
+# per node, into $(CERTS_DIR). Every run creates a NEW authority and
+# overwrites what is there — a half-rotated cluster fails with handshake
+# errors that look like network faults, so rotation is all-or-nothing.
+#
+# Nothing here is a secret worth protecting (a dev CA for a loopback
+# cluster), but certs/ is gitignored regardless: committing a CA key teaches
+# the wrong habit, and the file is one command to recreate.
+gen-certs: build-gencerts
+	$(RUN_GENCERTS_BINARY) -dir $(CERTS_DIR)
+
+# Start the 3-node cluster — sequencer on :9545, replicas on :9555 and :9565,
+# each with its own data directory under $(CLUSTER_DATA_DIR). Runs in the
+# foreground; Ctrl+C stops all three.
+#
+#   make gen-certs      # once
+#   make run-cluster
+#
+# Add --reset by calling the script directly if you want a fresh chain:
+#   cd e2e && node cluster.mjs --reset
+run-cluster: build
+	cd e2e && node cluster.mjs
+
+# Offline unit tests for the JS block encoder the tamper scenario uses. Needs
+# no node, no cluster and no network, so it is worth running before the gate:
+# a wrong field order there produces the same symptom as a caught tamper.
+block-rlp-test:
+	cd e2e && node lib/block-rlp.test.mjs
+
+# The M10 acceptance gate: starts a fresh 3-node cluster and runs all five
+# scenarios (convergence, write-forwarding through a replica, kill/restart
+# catch-up, read equality across nodes, and a tampered block being refused).
+# Stops the cluster on the way out, pass or fail.
+cluster-test: build block-rlp-test
+	cd e2e && node cluster-test.mjs
+
+# Delete the cluster's data directories (all three nodes).
+ifeq ($(OS),Windows_NT)
+reset-cluster:
+	if exist $(CLUSTER_DATA_DIR) rmdir /s /q $(CLUSTER_DATA_DIR)
+else
+reset-cluster:
+	rm -rf $(CLUSTER_DATA_DIR)
+endif
 
 # Recompile e2e/diff/contracts/Probe.sol into its committed artifact. Only
 # needed after editing Probe.sol; the artifact is checked in so running the

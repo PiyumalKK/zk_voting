@@ -10,7 +10,10 @@
     "diff:logs": "node diff/logs.mjs",
     "diff:dev": "node diff/dev.mjs",
     "smoke": "node smoke-deploy.mjs",
-    "probe:build": "node diff/contracts/build.mjs"
+    "probe:build": "node diff/contracts/build.mjs",
+    "cluster": "node cluster.mjs",
+    "cluster:test": "node cluster-test.mjs",
+    "block-rlp:test": "node lib/block-rlp.test.mjs"
   },
   "dependencies": {
     "viem": "2.39.0"

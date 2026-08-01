@@ -110,6 +110,11 @@ type MuxConfig struct {
 	CORSOrigins    []string
 	RateLimitRPS   float64
 	RateLimitBurst int
+	// Forwarder, when non-nil, sends state-changing JSON-RPC calls to the
+	// primary instead of answering them locally (M10 deliverable 3). It is
+	// nil on a primary and on a standalone node, which leaves the RPC
+	// surface exactly as it was through M09.
+	Forwarder *Forwarder
 }
 
 // NewMux builds the node's full HTTP surface: /health plus the JSON-RPC
@@ -121,7 +126,9 @@ type MuxConfig struct {
 func NewMux(healthHandler http.Handler, rpcServer *gethrpc.Server, cfg MuxConfig) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/health", healthHandler)
-	mux.Handle("/", rpcServer)
+	// NewForwardingHandler is the identity function when cfg.Forwarder is
+	// nil, so this line is a no-op for every node that is not a replica.
+	mux.Handle("/", NewForwardingHandler(rpcServer, cfg.Forwarder))
 
 	limiter := NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
 

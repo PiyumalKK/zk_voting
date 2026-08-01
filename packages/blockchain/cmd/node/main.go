@@ -114,11 +114,22 @@ func main() {
 	}
 	defer rpcServer.Stop()
 
-	healthHandler := rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return state.Height(db) })
+	// Replication (M10) starts before the RPC server so that a primary's
+	// block subscription is in place before the first transaction can be
+	// accepted, and a replica is already following before it serves its
+	// first read. On a standalone node this does nothing at all.
+	repl, err := startReplication(cfg, seq)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to start replication")
+	}
+
+	healthHandler := rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return state.Height(db) }).
+		WithReplicaStatus(repl.ReplicaStatus())
 	handler := rpc.NewMux(healthHandler, rpcServer, rpc.MuxConfig{
 		CORSOrigins:    cfg.CORSOrigins,
 		RateLimitRPS:   cfg.RPCRateLimitRPS,
 		RateLimitBurst: cfg.RPCRateLimitBurst,
+		Forwarder:      repl.Forwarder(),
 	})
 
 	server := &http.Server{
@@ -148,10 +159,19 @@ func main() {
 			log.Fatal().Err(err).Msg("server failed to start")
 		}
 		return
+	case err := <-repl.Errors():
+		// A replica that cannot be pushed to, or a primary whose replicas
+		// cannot pull from it, is not doing its job — better to fail at
+		// startup than to serve a chain that quietly stops advancing.
+		log.Fatal().Err(err).Msg("p2p server failed")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+
+	p2pCtx, cancelP2P := context.WithTimeout(context.Background(), p2pShutdownTimeout)
+	defer cancelP2P()
+	repl.shutdown(p2pCtx)
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("graceful shutdown failed; forcing close")
