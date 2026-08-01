@@ -14,14 +14,24 @@ import (
 
 // ServerConfig is the projection of internal/config.Config the JSON-RPC
 // services need. It exists (M06) instead of a growing positional parameter
-// list on NewJSONRPCServer: M05 needed only the chain id, M06 adds the log
-// range cap, and M07 will add the DEV_RPC flag — each of which would
-// otherwise be another unlabelled uint64/bool at a call site.
+// list on NewJSONRPCServer: M05 needed only the chain id, M06 added the log
+// range cap, and M07 adds the DEV_RPC flag and client-version mode — each of
+// which would otherwise be another unlabelled uint64/bool/string at a call
+// site.
 type ServerConfig struct {
 	ChainID uint64
 	// LogRangeLimit caps how many blocks a single eth_getLogs query may
 	// span (config.LogRangeLimit). 0 disables the cap.
 	LogRangeLimit uint64
+	// DevRPC enables the evm_/hardhat_/anvil_ namespaces (config.DevRPC,
+	// MASTER §7's DEV_RPC). When false those namespaces are never
+	// registered at all, so every method in them answers -32601 — see the
+	// gating note in dev.go.
+	DevRPC bool
+	// ClientVersionMode selects what web3_clientVersion reports
+	// (config.ClientVersionMode: "zkchain" or "anvil"). Empty means the
+	// default, "zkchain".
+	ClientVersionMode string
 }
 
 // NewJSONRPCServer builds a *gethrpc.Server with the eth/net/web3
@@ -63,8 +73,31 @@ func NewJSONRPCServer(seq *chain.Sequencer, cfg ServerConfig) (*gethrpc.Server, 
 	if err := srv.RegisterName("net", NewNetService(cfg.ChainID)); err != nil {
 		return nil, fmt.Errorf("register net namespace: %w", err)
 	}
-	if err := srv.RegisterName("web3", NewWeb3Service()); err != nil {
+	if err := srv.RegisterName("web3", NewWeb3Service(cfg.ClientVersionMode)); err != nil {
 		return nil, fmt.Errorf("register web3 namespace: %w", err)
+	}
+
+	// M07's dev namespaces are gated *by not existing*: when DEV_RPC is
+	// false nothing below runs, so go-ethereum's dispatcher answers -32601
+	// for evm_*/hardhat_*/anvil_* exactly as it does for a method that was
+	// never written. That is stronger than a per-method flag check — there
+	// is no code path on a production node that can reach a state mutation
+	// outside a transaction.
+	if cfg.DevRPC {
+		if err := srv.RegisterName("evm", NewEvmService(seq)); err != nil {
+			return nil, fmt.Errorf("register evm namespace: %w", err)
+		}
+		if err := srv.RegisterName("hardhat", NewHardhatService(seq)); err != nil {
+			return nil, fmt.Errorf("register hardhat namespace: %w", err)
+		}
+		// Alias namespace, same underlying service (MASTER §9 lists both
+		// spellings). Registered separately rather than as a fourth receiver
+		// on "hardhat" because these are genuinely different namespaces, not
+		// two halves of one.
+		if err := srv.RegisterName("anvil", NewAnvilService(seq)); err != nil {
+			return nil, fmt.Errorf("register anvil namespace: %w", err)
+		}
+		log.Warn().Msg("DEV_RPC is enabled: evm_*, hardhat_setBalance and anvil_setBalance can mutate chain state — never enable this on a production node")
 	}
 
 	return srv, nil

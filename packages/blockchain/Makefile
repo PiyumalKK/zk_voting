@@ -1,7 +1,20 @@
-.PHONY: build run test vet fmt reset tidy diff diff-write diff-logs diff-install shape-check smoke probe-build
+.PHONY: build run run-dev test vet fmt reset tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build
 
-BINARY  := bin/zk-blockchain-node
 DATA_DIR ?= data
+
+# On Windows, GNU Make runs recipes through cmd.exe unless a POSIX shell is
+# on PATH. cmd.exe cannot execute a "./bin/x" path at all — it reads the
+# forward slashes as switches and fails with "'.' is not recognized as an
+# internal or external command" — and it needs the .exe suffix to resolve
+# the program. So the binary name and the way it is invoked both differ per
+# platform. (`reset` below branches on $(OS) for the same reason.)
+ifeq ($(OS),Windows_NT)
+BINARY := bin/zk-blockchain-node.exe
+RUN_BINARY := bin\zk-blockchain-node.exe
+else
+BINARY := bin/zk-blockchain-node
+RUN_BINARY := ./bin/zk-blockchain-node
+endif
 
 # Build the node binary.
 build:
@@ -10,7 +23,27 @@ build:
 # Build and run the node (reads config from the environment / .env; see
 # .env.example).
 run: build
-	./$(BINARY)
+	$(RUN_BINARY)
+
+# Build and run with the M07 dev namespaces enabled (evm_*,
+# hardhat_setBalance, anvil_setBalance). Required by `make diff-dev` and by
+# M08's `npx hardhat test --network custom` run; never use this for anything
+# resembling a production node.
+#
+# `make run DEV_RPC=true` would not work: make variables are not exported to
+# recipe environments by default, and the node reads configuration from the
+# environment only (internal/config).
+#
+# The cmd.exe form uses `set "VAR=value"` — the quotes keep the trailing
+# space before && out of the value, which would otherwise make
+# strconv.ParseBool reject "true ".
+ifeq ($(OS),Windows_NT)
+run-dev: build
+	set "DEV_RPC=true" && $(RUN_BINARY)
+else
+run-dev: build
+	DEV_RPC=true $(RUN_BINARY)
+endif
 
 # Run the full unit test suite.
 test:
@@ -80,6 +113,20 @@ diff-write:
 #   make diff-logs HARDHAT_URL=http://127.0.0.1:8545
 diff-logs:
 	cd e2e/diff && node logs.mjs
+
+# Differential JSON-RPC harness — dev/compat methods (M07). Diffs
+# evm_increaseTime / evm_setNextBlockTimestamp / evm_mine /
+# hardhat_setBalance / anvil_setBalance against a live `hardhat node`.
+#
+# Unlike the harnesses above this one does NOT need freshly-started chains —
+# every check is a delta or a value it writes itself — but our node must be
+# running with DEV_RPC=true (use `make run-dev`), or every method answers
+# -32601 and the harness exits early saying so.
+#
+#   make run-dev &
+#   make diff-dev HARDHAT_URL=http://127.0.0.1:8545
+diff-dev:
+	cd e2e/diff && node dev.mjs
 
 # JSON-shape contract test (M05). Needs no node and no chain: it runs viem's
 # own formatters and ABI decoders over the exact JSON internal/rpc's receipt,

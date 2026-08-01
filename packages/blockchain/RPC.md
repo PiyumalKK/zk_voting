@@ -1,8 +1,8 @@
 # JSON-RPC method reference
 
 Living document, kept current from M04 on (MASTER §11). Reflects
-`internal/rpc` as of **M06** — read methods (M04), the write path (M05) and
-`eth_getLogs` (M06).
+`internal/rpc` as of **M07** — read methods (M04), the write path (M05),
+`eth_getLogs` (M06) and the dev/compat namespaces (M07).
 
 ## Server
 
@@ -30,19 +30,102 @@ Living document, kept current from M04 on (MASTER §11). Reflects
 | `eth_getBlockByNumber` | `fullTx` supported. Unresolvable number → JSON `null` result (not an error), per spec. |
 | `eth_getBlockByHash` | Same null-on-unknown rule as above. |
 | `eth_call` | Reverts return JSON-RPC error `{code: 3, message: "execution reverted[: <reason>]", data: "0x<revert bytes>"}` — the reason is decoded only when the revert payload is a standard `Error(string)`; a custom Solidity error keeps the bare message and relies on `data`. |
-| `eth_estimateGas` | Always estimates against the current head (a `blockNumber` param, if sent, is accepted and ignored — nothing in this app needs a historical estimate). Returns `usedGas * 1.1` (simple padding, not geth's binary-search estimator — see `internal/chain/sequencer.go`'s `EstimateGas` doc comment). Same revert-error shape as `eth_call`. |
+| `eth_estimateGas` | Always estimates against the current head (a `blockNumber` param, if sent, is accepted and ignored — nothing in this app needs a historical estimate). Binary-searches for the smallest sufficient gas limit, as geth and Hardhat do. **Not** `usedGas * 1.1`, which it was through M07: `ExecutionResult.UsedGas` is reported *net of gas refunds* while a transaction must be funded with the gross amount, and EIP-3529 lets the refund reach `gross/5` — so any flat pad below 1.25x under-funds storage-clearing calls. That gap broke seven M08 contract tests on `Voting.resetElection()`. Same revert-error shape as `eth_call`. |
 | `eth_gasPrice` | Always `0x0` — free-gas policy. |
 | `eth_maxPriorityFeePerGas` | Always `0x0`. |
 | `eth_feeHistory` | Real array shapes (`oldestBlock`, `baseFeePerGas[]`, `gasUsedRatio[]`, `reward[][]` when percentiles requested); every value is `0`. |
 | `net_version` | Decimal string of `CHAIN_ID` (not hex — pre-dates the hex-quantity convention). |
 | `net_listening` | Always `true`. |
-| `web3_clientVersion` | `"zkchain/v2.0.0"`. Revisit only if some consumer's tooling is empirically found to special-case client identity (M07). |
+| `web3_clientVersion` | `"zkchain/v2.0.0"` by default. Set `CLIENT_VERSION_MODE=anvil` to report `"anvil/v1.0.0-zkchain"` instead — an escape hatch for tooling that special-cases client identity, to be used only if something is empirically found to need it (M07). |
 | `eth_sendRawTransaction` | Accepts legacy, EIP-2930 and EIP-1559 transactions. **Synchronous:** the transaction is validated, executed and sealed into its own block before the call returns. A transaction that reverts is *rejected here and never mined* — see "Write-path semantics" below. |
 | `eth_getTransactionByHash` | Unknown hash → JSON `null`. Never pending: every transaction this chain knows about is mined, so `blockHash`/`blockNumber`/`transactionIndex` are always populated. |
 | `eth_getTransactionReceipt` | Unknown hash → JSON `null` result (**not** an error — viem's `waitForTransactionReceipt` polls on exactly this). Carries every field in MASTER §10.5. |
 | `eth_getBlockTransactionCountByNumber` | Unresolvable block → JSON `null`, matching `eth_getBlockByNumber`. |
 | `eth_getBlockTransactionCountByHash` | Same null-on-unknown rule. |
 | `eth_getLogs` | Full filter-object support (address single-or-array, positional topics with `null` wildcards and inner OR-arrays, `fromBlock`/`toBlock` tags or numbers, `blockHash` mode). Empty result is `[]`, never `null`. Range capped by `LOG_RANGE_LIMIT`. See "Log filter semantics" below. |
+
+### Dev / compatibility methods (M07) — `DEV_RPC=true` only
+
+These are **not registered at all** unless `DEV_RPC=true`, so on a default
+node every one of them answers `-32601` exactly like a method that was never
+implemented. There is deliberately no per-method flag check: a production
+node has no code path that can mutate state outside a transaction.
+
+| Method | Params | Returns | Notes |
+|---|---|---|---|
+| `evm_increaseTime` | `[seconds]` | **decimal** string of the new *total* offset, e.g. `"5400"` | Accumulates across calls. Affects every block sealed afterward. The total is **signed** — it is negative whenever a block has been pinned below wall clock, which is legal on a fresh chain since genesis is timestamped 0. |
+| `evm_setNextBlockTimestamp` | `[timestamp]` | **decimal** string of that timestamp | Pins the next block exactly. A value at or before the current head is `-32000` — see "Timestamp rules" below. |
+| `evm_mine` | `[]` or `[timestamp]` | **decimal** string `"0"` | Seals one empty block. The optional timestamp pins it, as `evm_setNextBlockTimestamp` would. |
+| `hardhat_setBalance` | `[address, wei]` | `true` | Overwrites (does not add to) the balance. Sealed as a system-op block — see below. |
+| `anvil_setBalance` | `[address, wei]` | `true` | Alias for the above; the same service is registered under both namespace names. **Ours only** — Hardhat does not implement it (`-32004 Method anvil_setBalance is not supported`), so there is no parity requirement here. Kept because MASTER §9 lists both spellings for Anvil-flavoured tooling. |
+
+**All three `evm_` methods return decimal strings, and `*_setBalance`
+returns a boolean.** None of them use the hex-quantity convention that
+governs the rest of the RPC surface. This was established by running
+`make diff-dev` against a live `hardhat node`, not by reading Hardhat's
+docs — which describe only `evm_increaseTime` as the exception, while
+`evm_mine` in fact returns `"0"` too. That harness remains the authority if
+this table and the code ever disagree.
+
+**Absolute offset values differ from Hardhat by a second or so**, because
+Hardhat seeds its offset from the last block's timestamp while this chain
+seeds from wall clock. Only the *deltas* are required to match, and
+`diff-dev` asserts them that way. Nothing in the app reads these values.
+
+**Numeric parameters accept three forms:** a bare JSON number (`3601`), a
+decimal string (`"3601"`) and a hex quantity string (`"0xe11"`, any letter
+case). This matters concretely: `packages/hardhat/test/Voting.ts` calls
+`ethers.provider.send("evm_increaseTime", [REG_DURATION + 1])` with a bare
+number, which geth's own `hexutil.Uint64` would reject.
+
+**`evm_increaseTime` is measured against the chain head, not wall clock.**
+The offset is *stored* relative to wall clock, but the guarantee is that the
+next block lands at least `seconds` past the current head. The two differ
+whenever the head is already ahead of wall clock — routine on a persistent
+chain, since a run that jumped a day forward leaves the head a day ahead and
+a restart resets the in-memory offset while those blocks stay on disk.
+Without this, the `parent+1` monotonicity floor silently absorbs the entire
+jump. Hardhat has no equivalent because its chain is in-memory and always
+starts fresh; `make diff-dev` caught the difference as
+`our delta=1s hardhat delta=86400s`.
+
+> **Known limitation (M09 will revisit).** The fix above covers
+> `evm_increaseTime`. *Ordinary* blocks sealed after a restart onto a head
+> that is ahead of wall clock still advance one second at a time until wall
+> clock catches up, because `nextTimestamp` takes `max(now + offset,
+> parent + 1)`. Nothing in M07 or M08 depends on this, but restart recovery
+> is M09's subject, and the natural fix belongs there: seed `devOffset` from
+> the head's timestamp at startup, the way Hardhat seeds from `initialDate`.
+
+**Timestamp rules.** Block timestamps on this chain are strictly increasing
+(MASTER §10 pitfall 7 — `Voting.sol`'s phase deadlines depend on it), so a
+requested next-block timestamp at or before the current head is rejected
+rather than clamped. A pin set by `evm_setNextBlockTimestamp` is consumed by
+the next block that is *actually sealed* — a transaction that reverts mines
+nothing and therefore leaves the pin in place. Once the pinned block is
+sealed, the dev clock continues forward from the pinned time rather than
+snapping back to wall clock, matching Hardhat.
+
+**System-op blocks.** `hardhat_setBalance` changes state without a
+transaction, which MASTER §10 pitfall 10 forbids doing outside a block: M09's
+audit tool replays the block list and verifies every state root, and M10's
+replicas re-execute each block and reject any whose root doesn't match.
+Neither can see a mutation that isn't in a block. So the write is sealed as a
+zero-transaction block whose header `extraData` carries a deterministic
+ASCII encoding of the operation and whose state root already reflects it:
+
+```
+sysop:setBalance:0x000000000000000000000000000000000000dEaD:0xde0b6b3a7640000
+```
+
+Address is EIP-55 checksummed, value is a canonical minimal-width lowercase
+hex quantity. Ordinary and empty blocks carry no `extraData` (`"0x"` in JSON);
+genesis carries `zkchain-genesis`. `internal/chain.ParseSysOp` /
+`ApplySysOp` are the shared decoder and applier — the sequencer, the audit
+replay and the replica verifier all use the same pair, which is what makes
+their state roots agree. The sequencer refuses to seal a system op whose
+encoding does not parse back, so "every sysop block on this chain is
+replayable" holds by construction rather than by convention.
 
 ### Log filter semantics (M06)
 
@@ -135,9 +218,8 @@ mempool and no reorgs on this chain (single sequencer, auto-mine), so
 
 ## Not yet implemented (by milestone)
 
-- `evm_increaseTime`, `evm_mine`, `evm_setNextBlockTimestamp`,
-  `hardhat_setBalance` / `anvil_setBalance` — **M07**, gated behind
-  `DEV_RPC=true`.
+Nothing outstanding: MASTER §9's compatibility matrix is fully covered as of
+M07.
 
 ## Explicitly out of scope (MASTER §9 — not planned at all)
 
@@ -145,8 +227,11 @@ mempool and no reorgs on this chain (single sequencer, auto-mine), so
   over HTTP.
 - Filter methods (`eth_newFilter` family) — viem's `getLogs` path doesn't
   need them.
-- `eth_snapshot` / `evm_snapshot` — no `loadFixture` usage in this repo's
-  hardhat tests.
+- `eth_snapshot` / `evm_snapshot` / `evm_revert` — no `loadFixture` usage in
+  this repo's hardhat tests (grep-verified: `test/Voting.ts` drives time with
+  `evm_increaseTime` + `evm_mine` directly).
+- `hardhat_impersonateAccount` — nothing in the app needs to send as an
+  account it has no key for; the relay (M12) holds real keys.
 - Tracing/debug namespaces.
 - EIP-1898 `{blockHash}` / `{blockNumber}` object-form block parameters —
   every consumer in MASTER §2's table sends a plain tag or hex number.
@@ -163,6 +248,7 @@ started** nodes (`make reset && make run`, and a restarted `yarn chain`).
 | `make diff HARDHAT_URL=…` | `e2e/diff/diff.mjs` | Read methods (M04): identical calls against both backends, normalizing fields that differ by design (chain id, genesis hash/timestamp, client version) and diffing the rest. |
 | `make diff-write HARDHAT_URL=…` | `e2e/diff/write.mjs` | Write path (M05): deploys the same compiled `Probe.sol` on both, then diffs receipts field-by-field, asserts viem decodes the **same custom error name** on both for a revert (on `sendRawTransaction`, `eth_call` and `estimateGas`), and compares nonce-too-low error text. |
 | `make diff-logs HARDHAT_URL=…` | `e2e/diff/logs.mjs` | `eth_getLogs` (M06): builds an identical `Probe.ValueSet` event sequence on both backends (including one block carrying three logs), then diffs the raw responses field-by-field across address filters, topic filters (signature, indexed address, indexed uint OR-lists, wildcard positions), block-range subsets, `blockHash` mode and the empty result — and asserts viem's `parseEventLogs` output is identical on both. |
+| `make diff-dev HARDHAT_URL=…` | `e2e/diff/dev.mjs` | Dev methods (M07): drives `evm_increaseTime` / `evm_setNextBlockTimestamp` / `evm_mine` / `hardhat_setBalance` / `anvil_setBalance` through the identical call sequence on both backends and diffs the **return encodings** (decimal vs hex vs boolean) and observable effects — timestamp deltas, height advance, empty-block shape, balance readback. Requires our node started with `DEV_RPC=true` (`make run-dev`); unlike the other harnesses it does *not* need freshly-reset chains. |
 | `make smoke` | `e2e/smoke-deploy.mjs` | The real stack: deploys `PoseidonT3 → LeanIMT (linked) → HonkVerifier → Voting` from `packages/hardhat/artifacts` and drives `setCandidates → addVoters → startRegistration → register`, asserting a non-zero Merkle root. Point `RPC_URL` at hardhat to run the same script there as a control. |
 
 `e2e/diff/contracts/Probe.sol` is compiled once with solc-js and its artifact

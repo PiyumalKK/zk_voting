@@ -444,7 +444,7 @@ func TestMineEmptyBlockAdvancesHeightWithSameRoot(t *testing.T) {
 	}
 }
 
-func TestEstimateGasReturnsPaddedUsedGas(t *testing.T) {
+func TestEstimateGasFindsTheExactMinimumForASimpleTransfer(t *testing.T) {
 	seq, _ := newTestSequencer(t)
 	key := mustHardhatAccount0(t)
 	from := crypto.PubkeyToAddress(key.PublicKey)
@@ -454,11 +454,14 @@ func TestEstimateGasReturnsPaddedUsedGas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateGas: %v", err)
 	}
-	// A bare value-less call to a plain (non-contract) address costs
-	// exactly the 21,000 intrinsic minimum; EstimateGas pads by 10%.
-	want := uint64(21_000) + uint64(21_000)/10
-	if estimate != want {
-		t.Errorf("EstimateGas = %d, want %d", estimate, want)
+	// A bare value-less call to a plain (non-contract) address costs exactly
+	// the 21,000 intrinsic minimum, and the binary search finds it exactly —
+	// no padding. Through M07 this returned 23,100 (a flat 10% pad), which
+	// was both loose here and, more importantly, *insufficient* for any
+	// transaction earning gas refunds; see EstimateGas's doc comment and
+	// TestEstimateGasCoversStorageRefunds.
+	if want := uint64(21_000); estimate != want {
+		t.Errorf("EstimateGas = %d, want exactly %d", estimate, want)
 	}
 }
 

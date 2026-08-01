@@ -61,6 +61,21 @@ const (
 	// hit it.
 	DefaultLogRangeLimit uint64 = 100_000
 
+	// ClientVersionModeZkchain and ClientVersionModeAnvil are the accepted
+	// CLIENT_VERSION_MODE values (M07 deliverable 5). The default reports
+	// this node honestly as "zkchain/v2.0.0"; the anvil mode exists purely
+	// as an escape hatch for Ethereum tooling that special-cases client
+	// identity and might otherwise refuse to drive an unfamiliar node. It is
+	// an env var rather than a code constant so that, if M08's
+	// `npx hardhat test --network custom` run turns out to need it, the fix
+	// is one line of .env rather than a rebuild.
+	ClientVersionModeZkchain string = "zkchain"
+	ClientVersionModeAnvil   string = "anvil"
+
+	// DefaultClientVersionMode is not in MASTER §7's original table — added
+	// in M07 and documented there and in .env.example per Agent Rule 8.
+	DefaultClientVersionMode = ClientVersionModeZkchain
+
 	// MinBlockGasLimit: the mobile app submits vote() with a fixed
 	// 15,000,000 gas limit (MASTER §2, "Facts the plan depends on"), so
 	// BLOCK_GAS_LIMIT must stay strictly greater than this.
@@ -75,7 +90,8 @@ var (
 		"trace": true, "debug": true, "info": true, "warn": true,
 		"error": true, "fatal": true, "panic": true, "disabled": true,
 	}
-	validLogFormats = map[string]bool{"console": true, "json": true}
+	validLogFormats         = map[string]bool{"console": true, "json": true}
+	validClientVersionModes = map[string]bool{ClientVersionModeZkchain: true, ClientVersionModeAnvil: true}
 )
 
 // Config is the fully parsed runtime configuration for one node. Values
@@ -96,7 +112,14 @@ type Config struct {
 	Peers []string
 
 	BlockGasLimit uint64
-	DevRPC        bool
+	// DevRPC enables the evm_*/hardhat_setBalance/anvil_setBalance
+	// namespaces (M07). Off by default; these methods can mutate chain state
+	// outside a transaction and must never be reachable on a production
+	// node.
+	DevRPC bool
+	// ClientVersionMode selects what web3_clientVersion reports —
+	// ClientVersionModeZkchain (default) or ClientVersionModeAnvil (M07).
+	ClientVersionMode string
 	// CORSOrigins is either exactly []string{"*"} or a list of explicit
 	// origins; never empty.
 	CORSOrigins []string
@@ -198,6 +221,8 @@ func load(lookup lookupFunc) (*Config, error) {
 	} else {
 		cfg.DevRPC = v
 	}
+
+	cfg.ClientVersionMode = strings.ToLower(get("CLIENT_VERSION_MODE", DefaultClientVersionMode))
 
 	cfg.CORSOrigins = parseCORSOrigins(get("CORS_ORIGINS", DefaultCORSOrigins))
 
@@ -320,6 +345,11 @@ func (c *Config) Validate() error {
 	}
 	if !validLogFormats[c.LogFormat] {
 		addf("LOG_FORMAT must be %q or %q, got %q", "console", "json", c.LogFormat)
+	}
+
+	if !validClientVersionModes[c.ClientVersionMode] {
+		addf("CLIENT_VERSION_MODE must be %q or %q, got %q",
+			ClientVersionModeZkchain, ClientVersionModeAnvil, c.ClientVersionMode)
 	}
 
 	if len(errs) == 0 {

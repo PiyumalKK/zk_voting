@@ -297,13 +297,38 @@ func (n *NetService) Version() string { return strconv.FormatUint(n.chainID, 10)
 // Listening implements net_listening. Always true while the process is up.
 func (n *NetService) Listening() bool { return true }
 
+// Client version strings web3_clientVersion can report. Some Ethereum
+// tooling special-cases client identity — a plugin that recognises only
+// Hardhat/Anvil may refuse to drive an unfamiliar node — so M07 §5 makes
+// this switchable by environment (CLIENT_VERSION_MODE) instead of by code
+// change. DefaultClientVersion is the honest answer and stays the default;
+// AnvilClientVersion is the escape hatch, to be flipped only if M08's
+// `npx hardhat test --network custom` run empirically needs it.
+const (
+	DefaultClientVersion = "zkchain/v2.0.0"
+	AnvilClientVersion   = "anvil/v1.0.0-zkchain"
+)
+
+// ClientVersionModeAnvil is the CLIENT_VERSION_MODE value that selects
+// AnvilClientVersion. Any other value (including empty) selects the
+// default; internal/config validates the spelling up front, so an
+// unrecognised mode never reaches this package.
+const ClientVersionModeAnvil = "anvil"
+
 // Web3Service implements the JSON-RPC "web3" namespace.
-type Web3Service struct{}
+type Web3Service struct {
+	clientVersion string
+}
 
-// NewWeb3Service builds the web3_* method set.
-func NewWeb3Service() *Web3Service { return &Web3Service{} }
+// NewWeb3Service builds the web3_* method set. mode is
+// config.ClientVersionMode.
+func NewWeb3Service(mode string) *Web3Service {
+	version := DefaultClientVersion
+	if mode == ClientVersionModeAnvil {
+		version = AnvilClientVersion
+	}
+	return &Web3Service{clientVersion: version}
+}
 
-// ClientVersion implements web3_clientVersion. "zkchain/v2.0.0" per MASTER
-// §9; revisit (e.g. an "anvil/..." string) only if some consumer's tooling
-// is empirically found to special-case client identity (M07).
-func (w *Web3Service) ClientVersion() string { return "zkchain/v2.0.0" }
+// ClientVersion implements web3_clientVersion.
+func (w *Web3Service) ClientVersion() string { return w.clientVersion }

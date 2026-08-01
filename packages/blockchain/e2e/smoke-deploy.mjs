@@ -150,7 +150,20 @@ async function main() {
     }
     const code = await publicClient.getCode({ address: receipt.contractAddress });
     const size = code ? code.length / 2 - 1 : 0;
-    ok(`deploy ${label}`, `${receipt.contractAddress}, ${size} bytes of code, gasUsed ${receipt.gasUsed}`);
+
+    // EIP-170 caps deployed runtime code at 24,576 bytes (MASTER §10.8).
+    // Asserted for *every* contract (M08 deliverable 5), not just
+    // HonkVerifier: the verifier is the one at risk today, but a future
+    // Voting.sol that grows past the limit should fail here — named, with a
+    // byte count — rather than as an opaque failed deployment later.
+    if (size > EIP170_LIMIT) {
+      bad(`${label} fits under EIP-170`, `${size} bytes > ${EIP170_LIMIT}`);
+    }
+
+    ok(
+      `deploy ${label}`,
+      `${receipt.contractAddress}, ${size} bytes of code (EIP-170 headroom ${EIP170_LIMIT - size}), gasUsed ${receipt.gasUsed}`,
+    );
     return { address: receipt.contractAddress, size };
   };
 

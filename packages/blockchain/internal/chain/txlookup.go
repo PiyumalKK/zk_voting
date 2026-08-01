@@ -57,12 +57,50 @@ type TxLocation struct {
 // TransactionByHash resolves hash through the tx-lookup index finalizeBlock
 // wrote (rawdb.WriteTxLookupEntriesByBlock), returning the transaction and
 // where it was mined.
+//
+// This is spelled out over the index primitive rather than calling a
+// composite `rawdb.ReadTransaction` helper because go-ethereum removed that
+// helper: resolving a hash all the way to a transaction requires knowing
+// which chain is canonical, which the rawdb layer deliberately stopped
+// assuming. The three calls below are the same steps that helper used to
+// perform internally, and each is already proven against this exact
+// go-ethereum version elsewhere in the package (ReadCanonicalHash and
+// ReadBlock in read.go, the matching WriteTxLookupEntriesByBlock in
+// seal.go) — the same "prefer stable primitives over composite helpers"
+// reasoning this file's header comment gives for ReadRawReceipts.
+//
+// The three failure modes are deliberately distinguished. A missing index
+// entry is an ordinary "unknown hash" (ErrTxNotFound → JSON null, which is
+// what viem's waitForTransactionReceipt polls on). A hash that *is* indexed
+// but whose block or body cannot be read is database corruption and is
+// reported as a real error, never as null.
 func (s *Sequencer) TransactionByHash(hash common.Hash) (*TxLocation, error) {
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(s.db, hash)
-	if tx == nil {
+	number := rawdb.ReadTxLookupEntry(s.db, hash)
+	if number == nil {
 		return nil, fmt.Errorf("%w: %s", ErrTxNotFound, hash)
 	}
-	return &TxLocation{Tx: tx, BlockHash: blockHash, BlockNumber: blockNumber, Index: index}, nil
+
+	blockHash := rawdb.ReadCanonicalHash(s.db, *number)
+	if blockHash == (common.Hash{}) {
+		return nil, fmt.Errorf("tx %s is indexed at block %d, which has no canonical hash", hash, *number)
+	}
+
+	block := rawdb.ReadBlock(s.db, blockHash, *number)
+	if block == nil {
+		return nil, fmt.Errorf("tx %s is indexed at block %d (%s), whose block could not be read", hash, *number, blockHash)
+	}
+
+	// Single-tx blocks make this loop trivially short (MASTER §3), but it is
+	// written as a scan rather than assuming index 0 so that system-op and
+	// empty blocks — which carry no transactions at all (M07) — and any
+	// future multi-tx block cannot silently return the wrong transaction.
+	for i, tx := range block.Transactions() {
+		if tx.Hash() == hash {
+			return &TxLocation{Tx: tx, BlockHash: blockHash, BlockNumber: *number, Index: uint64(i)}, nil
+		}
+	}
+	return nil, fmt.Errorf("tx %s is indexed at block %d (%s) but is not present in that block's body",
+		hash, *number, blockHash)
 }
 
 // ReceiptByTxHash returns the fully-derived receipt for the mined

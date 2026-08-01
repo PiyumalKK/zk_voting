@@ -111,6 +111,49 @@ func revertRuntime() []byte {
 	}
 }
 
+// storageChurnRuntime writes ten storage slots when called with any
+// calldata, and clears those same ten slots when called with none.
+//
+// Clearing non-zero slots is what earns EIP-3529 gas refunds, and refunds
+// are the reason gas estimation cannot simply pad the reported UsedGas:
+// core.ExecutionResult.UsedGas is *net* of the refund, while the
+// transaction must be funded with the gross amount. Ten cleared slots put
+// the refund at the EIP-3529 cap (gross/5), reproducing in one call the
+// shape of Voting.resetElection() — the method whose underestimated gas
+// limit broke seven M08 tests with an opaque "execution reverted".
+func storageChurnRuntime() []byte {
+	const slots = 10
+
+	// store emits `slots` SSTOREs of the given value into slots 0..9.
+	store := func(value byte) []byte {
+		var out []byte
+		for slot := byte(0); slot < slots; slot++ {
+			out = append(out,
+				byte(vm.PUSH1), value,
+				byte(vm.PUSH1), slot,
+				byte(vm.SSTORE),
+			)
+		}
+		return out
+	}
+
+	fillPath := append(store(1), byte(vm.STOP))
+	clearPath := append([]byte{byte(vm.JUMPDEST)}, store(0)...)
+	clearPath = append(clearPath, byte(vm.STOP))
+
+	dispatch := []byte{
+		byte(vm.CALLDATASIZE),
+		byte(vm.ISZERO),
+		byte(vm.PUSH1), 0, // placeholder, patched below: clearPath's JUMPDEST offset
+		byte(vm.JUMPI),
+	}
+	const clearOffsetIndex = 3
+	dispatch[clearOffsetIndex] = byte(len(dispatch) + len(fillPath))
+
+	out := append(append([]byte{}, dispatch...), fillPath...)
+	return append(out, clearPath...)
+}
+
 // logRuntime emits three LOG1 events (topics 1, 2, 3; no log data) and
 // stops — for asserting sequential log indices and a bloom filter that
 // contains the emitting contract's address.

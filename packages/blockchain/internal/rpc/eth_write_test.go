@@ -50,18 +50,24 @@ func TestSendRawTransactionMinesEachTxType(t *testing.T) {
 		wantType uint64
 	}{
 		{
-			name:     "legacy",
-			build:    func() *types.Transaction { return mustSignLegacyTx(t, key, chainID, 0, &testRecipient, big.NewInt(7), 21_000, nil) },
+			name: "legacy",
+			build: func() *types.Transaction {
+				return mustSignLegacyTx(t, key, chainID, 0, &testRecipient, big.NewInt(7), 21_000, nil)
+			},
 			wantType: uint64(types.LegacyTxType),
 		},
 		{
-			name:     "eip-2930 access list",
-			build:    func() *types.Transaction { return mustSignAccessListTx(t, key, chainID, 0, &testRecipient, big.NewInt(7), 21_000, nil) },
+			name: "eip-2930 access list",
+			build: func() *types.Transaction {
+				return mustSignAccessListTx(t, key, chainID, 0, &testRecipient, big.NewInt(7), 21_000, nil)
+			},
 			wantType: uint64(types.AccessListTxType),
 		},
 		{
-			name:     "eip-1559 dynamic fee",
-			build:    func() *types.Transaction { return mustSignDynamicFeeTx(t, key, chainID, 0, &testRecipient, big.NewInt(7), 21_000, nil) },
+			name: "eip-1559 dynamic fee",
+			build: func() *types.Transaction {
+				return mustSignDynamicFeeTx(t, key, chainID, 0, &testRecipient, big.NewInt(7), 21_000, nil)
+			},
 			wantType: uint64(types.DynamicFeeTxType),
 		},
 	}
@@ -232,7 +238,12 @@ func TestGetTransactionByHashShape(t *testing.T) {
 	key := mustTestKey(t)
 	chainID := big.NewInt(testChainID)
 
-	tx := mustSignLegacyTx(t, key, chainID, 0, &testRecipient, big.NewInt(3), 21_000, []byte{0xca, 0xfe})
+	// 30,000 gas, not the bare 21,000 floor: this transaction carries two
+	// bytes of calldata (the `input` field asserted below), and intrinsic gas
+	// charges 16 per non-zero calldata byte on top of the 21,000 base — so
+	// 21,000 is 32 gas short and the transaction can never be included.
+	// Caught by this test failing with "have 21000, want 21032".
+	tx := mustSignLegacyTx(t, key, chainID, 0, &testRecipient, big.NewInt(3), 30_000, []byte{0xca, 0xfe})
 	_, resp := callRPC(t, handler, nonLoopback, "eth_sendRawTransaction", rawTxHex(t, tx))
 	decodeResult[string](t, resp)
 

@@ -75,8 +75,10 @@ func main() {
 	seq := chain.New(db, chainCfg, cfg.BlockGasLimit)
 
 	rpcServer, err := rpc.NewJSONRPCServer(seq, rpc.ServerConfig{
-		ChainID:       cfg.ChainID,
-		LogRangeLimit: cfg.LogRangeLimit,
+		ChainID:           cfg.ChainID,
+		LogRangeLimit:     cfg.LogRangeLimit,
+		DevRPC:            cfg.DevRPC,
+		ClientVersionMode: cfg.ClientVersionMode,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to build JSON-RPC server")

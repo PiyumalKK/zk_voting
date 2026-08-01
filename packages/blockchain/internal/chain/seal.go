@@ -40,6 +40,14 @@ func nextTimestamp(parentTime uint64, devOffset time.Duration) uint64 {
 // require are populated unconditionally too — no per-block fork-activation
 // check is needed the way a general-purpose chain builder would need one.
 //
+// timestamp is passed in already resolved rather than computed here (it was
+// computed here through M06) because M07's evm_setNextBlockTimestamp makes
+// the choice stateful: the pin it sets must be consumed exactly once, and
+// only when a block is really sealed — see Sequencer.peekTimestamp /
+// commitTimestamp. extra becomes the header's ExtraData: nil for every
+// ordinary block, and a SysOp encoding for the system-op blocks
+// hardhat_setBalance produces (sysop.go).
+//
 // *** If `go build` fails on RequestsHash: *** EIP-7685 (Prague) is the
 // newest fork this chain activates, and `types.EmptyRequestsHash` is this
 // file's least-certain identifier. Check
@@ -47,7 +55,7 @@ func nextTimestamp(parentTime uint64, devOffset time.Duration) uint64 {
 // actual exported name (or compute it via whatever helper that version
 // exports, e.g. types.CalcRequestsHash(nil)) and fix just this one line —
 // nothing else in this file depends on it.
-func buildHeader(parent *types.Header, gasLimit uint64, devOffset time.Duration) *types.Header {
+func buildHeader(parent *types.Header, gasLimit uint64, timestamp uint64, extra []byte) *types.Header {
 	withdrawalsHash := types.EmptyWithdrawalsHash
 	parentBeaconRoot := common.Hash{}
 	excessBlobGas := uint64(0)
@@ -60,7 +68,8 @@ func buildHeader(parent *types.Header, gasLimit uint64, devOffset time.Duration)
 		Coinbase:         common.Address{},
 		Number:           new(big.Int).Add(parent.Number, big.NewInt(1)),
 		GasLimit:         gasLimit,
-		Time:             nextTimestamp(parent.Time, devOffset),
+		Time:             timestamp,
+		Extra:            extra,
 		MixDigest:        common.Hash{},
 		Nonce:            types.BlockNonce{},
 		Difficulty:       big.NewInt(0),

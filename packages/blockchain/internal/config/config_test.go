@@ -281,6 +281,10 @@ func TestValidateJoinsAllErrors(t *testing.T) {
 		LogLevel:      "bogus",
 		LogFormat:     "bogus",
 	}
+	// ClientVersionMode is deliberately left at its zero value: "" is not
+	// one of the two accepted spellings, so Validate must report it too
+	// (M07). Load never produces one — it defaults the value before
+	// validating.
 
 	err := cfg.Validate()
 	if err == nil {
@@ -303,6 +307,7 @@ func TestValidateJoinsAllErrors(t *testing.T) {
 		"TLS_CA must not be blank",
 		"LOG_LEVEL must be one of",
 		"LOG_FORMAT must be",
+		"CLIENT_VERSION_MODE must be",
 	}
 	for _, s := range wantSubstrings {
 		if !strings.Contains(err.Error(), s) {

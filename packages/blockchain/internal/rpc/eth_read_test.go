@@ -80,9 +80,13 @@ func TestChainMetadataMethods(t *testing.T) {
 		t.Errorf("net_listening = %v, want true", got)
 	}
 
+	// The default mode, asserted against the constant so that M07's
+	// CLIENT_VERSION_MODE switch (covered separately by
+	// TestClientVersionModeSwitchesTheReportedString) can't drift this test
+	// into a confusing failure.
 	_, resp = callRPC(t, handler, nonLoopback, "web3_clientVersion")
-	if got := decodeResult[string](t, resp); got != "zkchain/v2.0.0" {
-		t.Errorf("web3_clientVersion = %q, want zkchain/v2.0.0", got)
+	if got := decodeResult[string](t, resp); got != DefaultClientVersion {
+		t.Errorf("web3_clientVersion = %q, want %q", got, DefaultClientVersion)
 	}
 
 	_, resp = callRPC(t, handler, nonLoopback, "eth_gasPrice")
@@ -351,7 +355,11 @@ func TestEstimateGas(t *testing.T) {
 
 	_, resp := callRPC(t, handler, nonLoopback, "eth_estimateGas", map[string]any{"from": from.Hex(), "to": to.Hex()})
 	got := decodeResult[string](t, resp)
-	want := fmt.Sprintf("0x%x", uint64(21_000)+uint64(21_000)/10)
+	// The exact intrinsic minimum for a bare transfer. Through M07 this was
+	// padded by 10%; the estimator now binary-searches for the true minimum,
+	// because a flat pad cannot fund a transaction earning gas refunds — see
+	// Sequencer.EstimateGas and TestEstimateGasCoversStorageRefunds.
+	want := fmt.Sprintf("0x%x", uint64(21_000))
 	if got != want {
 		t.Errorf("eth_estimateGas = %s, want %s", got, want)
 	}

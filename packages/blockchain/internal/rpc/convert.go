@@ -295,11 +295,11 @@ func newRPCReceipt(receipt *types.Receipt, tx *types.Transaction, chainID *big.I
 // field this function reads (MixDigest, Nonce, WithdrawalsHash,
 // ParentBeaconRoot, ExcessBlobGas, BlobGasUsed, RequestsHash, …) is already
 // proven to compile — internal/chain/seal.go's buildHeader (M03) uses the
-// exact same field names. header.Extra ("extraData" in JSON) is the one
-// field this file reads that seal.go never touches (buildHeader never sets
-// it, leaving it nil for every sealed block), so it's this function's
-// least-verified identifier; check core/types.Header in $GOMODCACHE for
-// v1.16.8 if this line doesn't compile.
+// exact same field names — including header.Extra ("extraData" in JSON),
+// which M07 started writing: it is nil for ordinary and empty blocks, and
+// carries a system-op encoding (internal/chain/sysop.go) on the blocks
+// hardhat_setBalance seals. hexutil.Bytes(nil) marshals to "0x", so an
+// ordinary block's extraData is "0x" rather than JSON null.
 func newRPCBlock(block *types.Block, fullTx bool, chainID *big.Int) (*RPCBlock, error) {
 	header := block.Header()
 	hash := block.Hash()
