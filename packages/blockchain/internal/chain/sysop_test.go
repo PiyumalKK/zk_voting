@@ -7,17 +7,8 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/params"
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
-
-	"zk-blockchain/internal/state"
-	"zk-blockchain/internal/storage"
 )
 
 var testSysOpAddr = common.HexToAddress("0x000000000000000000000000000000000000dEaD")
@@ -217,16 +208,20 @@ func TestSetBalanceRejectsNegative(t *testing.T) {
 	}
 }
 
-// TestChainWithSysOpBlocksReplaysToIdenticalRoot is M07's determinism gate
-// and the precursor to M09's `cmd/audit`: it builds a chain mixing ordinary
-// transaction blocks, empty blocks and system-op blocks, then rebuilds the
-// entire state from genesis using nothing but the stored block list — no
-// sequencer, no in-memory dev offset, no wall clock — and asserts every
-// intermediate state root matches.
+// TestChainWithSysOpBlocksReplaysToIdenticalRoot is M07's determinism gate:
+// it builds a chain mixing ordinary transaction blocks, empty blocks and
+// system-op blocks, then rebuilds the entire state from genesis using
+// nothing but the stored block list — no sequencer, no in-memory dev offset,
+// no wall clock — and asserts the result matches.
+//
+// It carried its own replay loop through M07, as the prototype for M09's
+// audit tool. That loop is now replay.go, so this test drives the real
+// implementation: a second copy would only be able to drift away from the
+// one that ships.
 //
 // If this test fails, replicas (M10) will reject the primary's blocks and
-// the audit tool (M09) will report the chain as unverifiable, so it is worth
-// far more than its size suggests.
+// the audit tool will report the chain as unverifiable, so it is worth far
+// more than its size suggests.
 func TestChainWithSysOpBlocksReplaysToIdenticalRoot(t *testing.T) {
 	seq, db := newTestSequencer(t)
 	key := mustHardhatAccount0(t)
@@ -268,107 +263,19 @@ func TestChainWithSysOpBlocksReplaysToIdenticalRoot(t *testing.T) {
 		t.Fatalf("built %d blocks, want 6 — the test's own setup drifted", head)
 	}
 
-	replayFinalRoot := replayChain(t, db, seq.chainCfg, head)
+	result, err := newTestReplayer(t, seq, db).Replay(1, head)
+	if err != nil {
+		t.Fatalf("replaying the chain: %v", err)
+	}
+	if result.Blocks != head {
+		t.Errorf("replayed %d blocks, want %d", result.Blocks, head)
+	}
 
 	headHeader, err := seq.HeaderByNumber(head)
 	if err != nil {
 		t.Fatalf("HeaderByNumber(%d): %v", head, err)
 	}
-	if replayFinalRoot != headHeader.Root {
-		t.Errorf("replayed final state root = %s, sealed chain's head root = %s", replayFinalRoot, headHeader.Root)
+	if result.StateRoot != headHeader.Root {
+		t.Errorf("replayed final state root = %s, sealed chain's head root = %s", result.StateRoot, headHeader.Root)
 	}
-}
-
-// replayChain rebuilds state from genesis over a *fresh* database by
-// re-executing every block 1..head from src, and fails the test at the first
-// block whose recomputed root differs from the one stored in its header. It
-// returns the final root.
-//
-// This is deliberately written the way M09's audit tool will have to be
-// written — driven only by what is durably stored in the block (its
-// transactions, its ExtraData, its header timestamp/gas limit) — so that if
-// anything in the sealing path ever starts depending on sequencer-local
-// state that isn't in the header, this test is what catches it.
-func replayChain(t *testing.T, src ethdb.Database, chainCfg *params.ChainConfig, head uint64) common.Hash {
-	t.Helper()
-
-	dst, err := storage.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("storage.Open(replay): %v", err)
-	}
-	t.Cleanup(func() { _ = dst.Close() })
-
-	genesis, err := state.EnsureGenesis(dst, testConfig(testChainID, 60_000_000))
-	if err != nil {
-		t.Fatalf("EnsureGenesis(replay): %v", err)
-	}
-	parentRoot := genesis.Root()
-
-	for n := uint64(1); n <= head; n++ {
-		hash := rawdb.ReadCanonicalHash(src, n)
-		if hash == (common.Hash{}) {
-			t.Fatalf("block %d has no canonical hash in the source chain", n)
-		}
-		block := rawdb.ReadBlock(src, hash, n)
-		if block == nil {
-			t.Fatalf("block %d (%s) could not be read back", n, hash)
-		}
-		header := block.Header()
-
-		ws, err := state.Writable(dst, parentRoot)
-		if err != nil {
-			t.Fatalf("block %d: state.Writable at %s: %v", n, parentRoot, err)
-		}
-
-		// The sysop-or-transactions fork is the entire replay rule. Note the
-		// deliberate use of src for the applyMessage db argument: it is only
-		// consulted for the BLOCKHASH opcode's canonical-hash lookups, and
-		// the replay database has no blocks written into it. A real M09
-		// audit tool, which walks its own copy of the chain, would pass its
-		// own handle here.
-		op, parseErr := ParseSysOp(header.Extra)
-		switch {
-		case parseErr == nil:
-			if err := ApplySysOp(ws.StateDB, op); err != nil {
-				_ = ws.TrieDB.Close()
-				t.Fatalf("block %d: ApplySysOp: %v", n, err)
-			}
-		case errors.Is(parseErr, ErrNotSysOp):
-			for i, tx := range block.Transactions() {
-				msg, err := core.TransactionToMessage(tx, types.LatestSignerForChainID(chainCfg.ChainID), header.BaseFee)
-				if err != nil {
-					_ = ws.TrieDB.Close()
-					t.Fatalf("block %d tx %d: TransactionToMessage: %v", n, i, err)
-				}
-				ws.StateDB.SetTxContext(tx.Hash(), i)
-				if _, err := applyMessage(vm.Config{}, src, chainCfg, ws.StateDB, header, msg); err != nil {
-					_ = ws.TrieDB.Close()
-					t.Fatalf("block %d tx %d: applyMessage: %v", n, i, err)
-				}
-			}
-		default:
-			_ = ws.TrieDB.Close()
-			t.Fatalf("block %d: undecodable extra data %q: %v", n, header.Extra, parseErr)
-		}
-
-		root, err := ws.Commit(n, true, false)
-		if err != nil {
-			_ = ws.TrieDB.Close()
-			t.Fatalf("block %d: commit state: %v", n, err)
-		}
-		if err := ws.TrieDB.Commit(root, false); err != nil {
-			_ = ws.TrieDB.Close()
-			t.Fatalf("block %d: commit trie: %v", n, err)
-		}
-		if err := ws.TrieDB.Close(); err != nil {
-			t.Fatalf("block %d: close trie db: %v", n, err)
-		}
-
-		if root != header.Root {
-			t.Fatalf("block %d: replayed state root %s != stored root %s", n, root, header.Root)
-		}
-		parentRoot = root
-	}
-
-	return parentRoot
 }

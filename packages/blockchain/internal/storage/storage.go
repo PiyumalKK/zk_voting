@@ -42,7 +42,27 @@ const (
 // already has it open, the underlying error is wrapped with a clearer
 // explanation than Pebble's raw lock message.
 func Open(dataDir string) (ethdb.Database, error) {
-	kv, err := pebble.New(dataDir, cacheSizeMB, fileHandles, dbNamespace, false)
+	return open(dataDir, false)
+}
+
+// OpenReadOnly opens an *existing* chain database without taking a write
+// lock on it — what cmd/audit (M09) wants: an auditor must never be able to
+// mutate the history it is checking, and a tool that could write to
+// DATA_DIR would undermine the "anyone can independently recheck the
+// election" property the audit exists to demonstrate.
+//
+// It does not create anything: pointing this at a directory with no chain
+// in it is an error, not an empty chain. Note that Pebble's read-only mode
+// still refuses to open a data directory another process currently holds
+// the write lock on, so the node must be stopped first (or the directory
+// copied) — the returned error explains that, and RUNNING-GATES §6
+// documents it as the expected workflow.
+func OpenReadOnly(dataDir string) (ethdb.Database, error) {
+	return open(dataDir, true)
+}
+
+func open(dataDir string, readOnly bool) (ethdb.Database, error) {
+	kv, err := pebble.New(dataDir, cacheSizeMB, fileHandles, dbNamespace, readOnly)
 	if err != nil {
 		return nil, lockErr(dataDir, err)
 	}
@@ -50,7 +70,7 @@ func Open(dataDir string) (ethdb.Database, error) {
 	db, err := rawdb.Open(kv, rawdb.OpenOptions{
 		Ancient:          filepath.Join(dataDir, "ancient"),
 		MetricsNamespace: dbNamespace,
-		ReadOnly:         false,
+		ReadOnly:         readOnly,
 	})
 	if err != nil {
 		kv.Close()

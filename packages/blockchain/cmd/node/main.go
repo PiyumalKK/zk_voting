@@ -71,8 +71,37 @@ func main() {
 		Uint64("height", state.Height(db)).
 		Msg("genesis ready")
 
+	// Fail fast on a data directory whose head cannot be served (M09
+	// deliverable 1). Without this the node would start, accept
+	// transactions, and only fail on the first state read — by which point
+	// the operator is debugging an RPC error rather than a storage problem,
+	// and the sequencer may have sealed blocks on top of a root it cannot
+	// read. VerifyHead's error names cmd/audit, which turns "the state is
+	// broken" into "the state is broken at block N".
+	head, err := state.VerifyHead(db)
+	if err != nil {
+		log.Fatal().Err(err).Msg("chain head failed its startup integrity check")
+	}
+	log.Info().
+		Uint64("height", head.Number.Uint64()).
+		Str("headHash", head.Hash().Hex()).
+		Str("stateRoot", head.Root.Hex()).
+		Uint64("headTimestamp", head.Time).
+		Msg("chain head recovered")
+
 	chainCfg := state.ChainConfig(cfg.ChainID)
 	seq := chain.New(db, chainCfg, cfg.BlockGasLimit)
+
+	// chain.New seeds the dev clock from the head when that head is ahead of
+	// wall clock (a chain that used evm_increaseTime, e.g. the data
+	// directory M08's contract-test gate leaves behind). Logged because a
+	// non-zero value here explains block timestamps that would otherwise
+	// look wrong, and because a large one is worth an operator's attention.
+	if offset := seq.DevOffsetSeconds(); offset != 0 {
+		log.Warn().
+			Int64("devOffsetSeconds", offset).
+			Msg("chain head is ahead of wall clock; dev clock seeded from it so block timestamps continue from the head")
+	}
 
 	rpcServer, err := rpc.NewJSONRPCServer(seq, rpc.ServerConfig{
 		ChainID:           cfg.ChainID,

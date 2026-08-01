@@ -60,8 +60,66 @@ type Sequencer struct {
 // New builds a Sequencer over an already-open database that already has a
 // genesis block — cmd/node calls internal/state.EnsureGenesis before
 // constructing a Sequencer, same ordering M02 already established.
+//
+// The dev clock is seeded from the stored head (see seedDevClockFromHead)
+// rather than left at zero, so restarting a node cannot make the chain
+// appear to stall. Doing it here, instead of asking cmd/node to call a
+// separate setup method, means every construction site — the node, the
+// tests, M10's replicas — gets the behaviour without having to remember it.
 func New(db ethdb.Database, chainCfg *params.ChainConfig, blockGasLimit uint64) *Sequencer {
-	return &Sequencer{db: db, chainCfg: chainCfg, gasLimit: blockGasLimit}
+	s := &Sequencer{db: db, chainCfg: chainCfg, gasLimit: blockGasLimit}
+	s.seedDevClockFromHead()
+	return s
+}
+
+// seedDevClockFromHead sets devOffset so the next block continues from
+// where the stored head left off, when that head is ahead of wall clock
+// (M09 deliverable 1).
+//
+// Why this is needed: devOffset lives only in memory, so a restart resets it
+// to zero, while the blocks a previous run's evm_increaseTime jumped forward
+// remain on disk. nextTimestamp then takes max(wall clock, parent+1) — and
+// with the head hours or days in the future, wall clock always loses, so
+// every block after the restart advances by exactly one second. A chain that
+// had jumped a week ahead would need 604,800 blocks to catch up.
+//
+// That is not a hypothetical for this app. `yarn test:custom` (M08) pushes
+// the chain days forward to cross Voting.sol's phase deadlines, and the M08
+// gate deliberately leaves that data directory in place for M09's audit and
+// for the frontend to use. Without seeding, the first restart afterwards
+// would leave every subsequent election operating in one-second-per-block
+// time — deadlines set relative to `block.timestamp` would then take
+// thousands of blocks to expire rather than the seconds an operator expects.
+//
+// Hardhat does the same thing from the other direction: it seeds its clock
+// from `initialDate` so a restarted in-memory chain resumes at a chosen
+// time rather than snapping to now.
+//
+// A head *behind* wall clock needs no seeding — that is the ordinary case
+// (nextTimestamp already picks wall clock) and forcing a negative offset
+// would freeze the chain in the past. Failure to read a head is not an
+// error: a database with no head yet has no time to seed from.
+func (s *Sequencer) seedDevClockFromHead() {
+	head, err := s.currentHeader()
+	if err != nil {
+		return
+	}
+
+	now := time.Now().Unix()
+	if head.Time > uint64(maxDevOffsetSeconds)+uint64(now) {
+		// Beyond what the offset can represent; SetDevOffset would clamp
+		// anyway, and a head that far out is a corrupt timestamp rather than
+		// a time jump worth honouring.
+		return
+	}
+	ahead := int64(head.Time) - now
+	if ahead <= 0 {
+		return
+	}
+	// SetDevOffset applies the ±maxDevOffsetSeconds clamp, keeping the
+	// "stored offset is always in range" invariant IncreaseTime's overflow
+	// argument depends on.
+	s.SetDevOffset(time.Duration(ahead) * time.Second)
 }
 
 // Subscribe registers for NewBlockEvents (M10 consumes this). buf sizes the

@@ -1,6 +1,11 @@
-.PHONY: build run run-dev test vet fmt reset tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build
+.PHONY: build build-audit run run-dev audit test vet fmt reset tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build
 
 DATA_DIR ?= data
+
+# Extra flags passed through to cmd/audit, e.g.
+#   make audit AUDIT_ARGS="-from 1200"
+#   make audit AUDIT_ARGS="-json"
+AUDIT_ARGS ?=
 
 # On Windows, GNU Make runs recipes through cmd.exe unless a POSIX shell is
 # on PATH. cmd.exe cannot execute a "./bin/x" path at all — it reads the
@@ -11,14 +16,22 @@ DATA_DIR ?= data
 ifeq ($(OS),Windows_NT)
 BINARY := bin/zk-blockchain-node.exe
 RUN_BINARY := bin\zk-blockchain-node.exe
+AUDIT_BINARY := bin/zk-blockchain-audit.exe
+RUN_AUDIT_BINARY := bin\zk-blockchain-audit.exe
 else
 BINARY := bin/zk-blockchain-node
 RUN_BINARY := ./bin/zk-blockchain-node
+AUDIT_BINARY := bin/zk-blockchain-audit
+RUN_AUDIT_BINARY := ./bin/zk-blockchain-audit
 endif
 
 # Build the node binary.
 build:
 	go build -o $(BINARY) ./cmd/node
+
+# Build the audit binary (M09).
+build-audit:
+	go build -o $(AUDIT_BINARY) ./cmd/audit
 
 # Build and run the node (reads config from the environment / .env; see
 # .env.example).
@@ -44,6 +57,32 @@ else
 run-dev: build
 	DEV_RPC=true $(RUN_BINARY)
 endif
+
+# Replay-verify the chain in DATA_DIR from genesis (M09): re-execute every
+# block, and check the state root, receipt root, transaction root, bloom, gas
+# and linkage of each one against what the chain stored. Prints
+# `AUDIT OK height=N stateRoot=0x…` and exits 0, or names the first block
+# that failed and exits 1.
+#
+# The node must be STOPPED first — Pebble holds an exclusive lock on the data
+# directory, and the audit deliberately opens it read-only rather than
+# fighting for it. Audit a copy if the node has to stay up.
+#
+#   make audit
+#   make audit DATA_DIR=./data_replica1
+#   make audit AUDIT_ARGS="-from 1200"     # incremental
+#   make audit AUDIT_ARGS="-json"          # machine-readable summary
+#
+# The AUDIT_ARGS forms need a shell that strips quotes, so they work from
+# Git Bash / a POSIX shell but not reliably from cmd.exe, where make
+# receives the quote characters themselves and splits on the space. From
+# cmd.exe, run `make build-audit` once and then call the binary directly:
+#
+#   make build-audit
+#   bin\zk-blockchain-audit.exe -data-dir data -from 1200
+#   bin\zk-blockchain-audit.exe -data-dir data -json
+audit: build-audit
+	$(RUN_AUDIT_BINARY) -data-dir $(DATA_DIR) $(AUDIT_ARGS)
 
 # Run the full unit test suite.
 test:

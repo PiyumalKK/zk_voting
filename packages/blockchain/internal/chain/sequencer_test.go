@@ -91,6 +91,56 @@ func mustSignTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, nonce uin
 	return signed
 }
 
+// mustSignDynamicFeeTx builds and signs an EIP-1559 transaction — the type
+// ethers v6 (and therefore hardhat-deploy) sends by default, with both fee
+// caps at zero under this chain's free-gas policy.
+//
+// It exists because a test suite that only ever signs legacy transactions
+// cannot tell a *stored* receipt field from a *derived* one: every derived
+// field happens to equal its zero value for a legacy transaction. That gap
+// let M09's audit ship comparing receipt.Type, which is derived, and the
+// first audit of a real chain failed at block 1 — a hardhat-deploy 1559
+// deployment — reporting a recomputed type 2 against a stored 0.
+func mustSignDynamicFeeTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, nonce uint64, to *common.Address, value *big.Int, gas uint64, data []byte) *types.Transaction {
+	t.Helper()
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   chainID,
+		Nonce:     nonce,
+		To:        to,
+		Value:     value,
+		Gas:       gas,
+		GasTipCap: big.NewInt(0),
+		GasFeeCap: big.NewInt(0),
+		Data:      data,
+	})
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(chainID), key)
+	if err != nil {
+		t.Fatalf("SignTx(dynamic fee): %v", err)
+	}
+	return signed
+}
+
+// mustSignAccessListTx builds and signs an EIP-2930 transaction — the third
+// type this node accepts, included for the same reason as the 1559 helper
+// above.
+func mustSignAccessListTx(t *testing.T, key *ecdsa.PrivateKey, chainID *big.Int, nonce uint64, to *common.Address, value *big.Int, gas uint64, data []byte) *types.Transaction {
+	t.Helper()
+	tx := types.NewTx(&types.AccessListTx{
+		ChainID:  chainID,
+		Nonce:    nonce,
+		To:       to,
+		Value:    value,
+		Gas:      gas,
+		GasPrice: big.NewInt(0),
+		Data:     data,
+	})
+	signed, err := types.SignTx(tx, types.LatestSignerForChainID(chainID), key)
+	if err != nil {
+		t.Fatalf("SignTx(access list): %v", err)
+	}
+	return signed
+}
+
 // deploy submits a contract-creation tx for runtime and fails the test if
 // it doesn't succeed, returning the receipt and the deployed address.
 func deploy(t *testing.T, seq *Sequencer, key *ecdsa.PrivateKey, chainID *big.Int, nonce uint64, runtime []byte) (*types.Receipt, common.Address) {

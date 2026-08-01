@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -119,35 +120,63 @@ func (e *GenesisMismatchError) Error() string {
 	)
 }
 
+// ErrNoGenesis means db holds no genesis block at all — an empty or
+// non-chain data directory. EnsureGenesis treats that as "write one";
+// VerifyGenesis, which must never write, reports it.
+var ErrNoGenesis = errors.New("no genesis block in this data directory")
+
+// VerifyGenesis checks that the genesis already stored in db is the one
+// this build and cfg produce, without writing anything. It returns the
+// computed genesis block on success.
+//
+// Read-only is the point: M09's audit tool opens the chain read-only and
+// starts its replay from the stored genesis, so it needs this check — a
+// chain whose genesis does not match the configured CHAIN_ID/prefunds is
+// not the chain the auditor thinks it is auditing, and every state root
+// after block 0 would be verified against the wrong baseline.
+func VerifyGenesis(db ethdb.Database, cfg *config.Config) (*types.Block, error) {
+	genesis := buildGenesis(cfg)
+	computed := genesis.ToBlock()
+
+	existing := rawdb.ReadCanonicalHash(db, 0)
+	if existing == (common.Hash{}) {
+		return nil, ErrNoGenesis
+	}
+	if existing != computed.Hash() {
+		return nil, &GenesisMismatchError{Stored: existing, Computed: computed.Hash(), Reason: "genesis hash differs"}
+	}
+	// The genesis header (and therefore its hash) does not encode ChainID —
+	// EIP-155's replay-protection id is a transaction-signing parameter, not
+	// a block header field — so a CHAIN_ID change against an
+	// otherwise-identical genesis (same alloc/gas limit) produces the *same*
+	// hash and would slip past the check above. go-ethereum's own
+	// Genesis.Commit persists the full ChainConfig alongside the block
+	// (rawdb.WriteChainConfig) for exactly this reason; read it back and
+	// compare ChainID explicitly.
+	if stored := rawdb.ReadChainConfig(db, existing); stored != nil && stored.ChainID.Cmp(genesis.Config.ChainID) != 0 {
+		return nil, &GenesisMismatchError{
+			Stored:   existing,
+			Computed: computed.Hash(),
+			Reason:   fmt.Sprintf("stored CHAIN_ID=%s, configured CHAIN_ID=%s", stored.ChainID, genesis.Config.ChainID),
+		}
+	}
+	return computed, nil
+}
+
 // EnsureGenesis writes the genesis block if db has none yet, or verifies
 // the existing genesis matches cfg if it does. It returns the canonical
 // genesis block either way, so callers (cmd/node) always have the genesis
 // hash and height-0 block on hand to log.
 func EnsureGenesis(db ethdb.Database, cfg *config.Config) (*types.Block, error) {
-	genesis := buildGenesis(cfg)
-	computed := genesis.ToBlock()
-
-	if existing := rawdb.ReadCanonicalHash(db, 0); existing != (common.Hash{}) {
-		if existing != computed.Hash() {
-			return nil, &GenesisMismatchError{Stored: existing, Computed: computed.Hash(), Reason: "genesis hash differs"}
-		}
-		// The genesis header (and therefore its hash) does not encode
-		// ChainID — EIP-155's replay-protection id is a transaction-signing
-		// parameter, not a block header field — so a CHAIN_ID change against
-		// an otherwise-identical genesis (same alloc/gas limit) produces the
-		// *same* hash and would slip past the check above. go-ethereum's own
-		// Genesis.Commit persists the full ChainConfig alongside the block
-		// (rawdb.WriteChainConfig) for exactly this reason; read it back and
-		// compare ChainID explicitly.
-		if stored := rawdb.ReadChainConfig(db, existing); stored != nil && stored.ChainID.Cmp(genesis.Config.ChainID) != 0 {
-			return nil, &GenesisMismatchError{
-				Stored:   existing,
-				Computed: computed.Hash(),
-				Reason:   fmt.Sprintf("stored CHAIN_ID=%s, configured CHAIN_ID=%s", stored.ChainID, genesis.Config.ChainID),
-			}
-		}
-		return computed, nil
+	block, err := VerifyGenesis(db, cfg)
+	if err == nil {
+		return block, nil
 	}
+	if !errors.Is(err, ErrNoGenesis) {
+		return nil, err
+	}
+
+	genesis := buildGenesis(cfg)
 
 	// Hash-scheme trie database: this chain has no need for the newer
 	// path-based scheme's pruning tradeoffs at this scale, and audit
@@ -155,9 +184,9 @@ func EnsureGenesis(db ethdb.Database, cfg *config.Config) (*types.Block, error) 
 	tdb := triedb.NewDatabase(db, triedb.HashDefaults)
 	defer tdb.Close()
 
-	block, err := genesis.Commit(db, tdb)
+	committed, err := genesis.Commit(db, tdb)
 	if err != nil {
 		return nil, fmt.Errorf("commit genesis: %w", err)
 	}
-	return block, nil
+	return committed, nil
 }

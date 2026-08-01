@@ -117,7 +117,8 @@ packages/blockchain/
 ├── cmd/node/main.go            # wiring: config → storage → chain → rpc → p2p
 ├── cmd/audit/main.go           # replay-verify CLI (M09)
 ├── internal/config/            # env parsing, validation (M01)
-├── internal/storage/           # pebble + geth rawdb open/close (M02)
+├── internal/storage/           # pebble + geth rawdb open/close (M02); read-only open
+│                               #   + copy-on-write replay overlay for the auditor (M09)
 ├── internal/state/             # genesis, StateDB lifecycle, chain config (M02)
 ├── internal/chain/             # sequencer: tx validation, execution, sealing, reorg-free head mgmt (M03)
 ├── internal/rpc/               # JSON-RPC services + HTTP server + CORS (M04–M07)
@@ -144,7 +145,7 @@ Execute strictly in order; each has its own file with spec + acceptance gates.
 | M06 | `M06-logs.md` | `eth_getLogs` (address/topics/range filters) | M05 | code complete, gates pending |
 | M07 | `M07-dev-methods.md` | `evm_increaseTime/mine`, `*_setBalance`, clientVersion compat | M05 | **done** |
 | M08 | `M08-deploy-integration.md` | `yarn deploy --network custom`; hardhat test suite green on node | M06, M07 | **done** |
-| M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 | pending |
+| M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 | **done** |
 | M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | pending |
 | M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 | pending |
 | M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | pending |
@@ -309,5 +310,7 @@ usage; tracing/debug namespaces.
   milestone agent so far has lacked a Go toolchain in-sandbox, so the gates
   are run by the human.
 - `packages/blockchain/RPC.md` — living method reference (created in M04).
+- `packages/blockchain/README.md` — ops runbook: restart recovery, the audit
+  tool, measured audit throughput (started in M09, expanded in M14).
 - Historical (do not follow): `packages/blockchain/{PLAN,API,BLOCKCHAIN_OVERVIEW}.md`,
   `docs/CUSTOM_CHAIN_SWAP_PLAN.md`, `MIGRATION.md` (pre-dates this plan).

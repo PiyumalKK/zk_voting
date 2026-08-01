@@ -5,7 +5,8 @@
 > (`go vet` / `gofmt` / `go test`) and every check that needs two live nodes has to be
 > run on your machine. This file is the missing "how".
 >
-> Applies to M05 (write path), M06 (`eth_getLogs`) and M07 (dev/compat methods).
+> Applies to M05 (write path), M06 (`eth_getLogs`), M07 (dev/compat methods),
+> M08 (deploy + contract suite) and M09 (restart recovery + audit replay).
 > Later milestones add their own gate commands; the setup in §1 does not change.
 
 ---
@@ -530,7 +531,133 @@ this proves it for the ethers/chai stack the contract tests use.
 
 ---
 
-## 6. What to send me if a gate fails
+## 6. M09 gate — restart recovery + audit replay
+
+Two phases. Phase A is offline. Phase B **reuses the data directory M08's
+gate left behind** — that is the point of the gate: it audits a real chain
+containing the whole Voting stack, three runtime-deployed division
+contracts, and the 220-odd blocks `yarn test:custom` produced, rather than a
+synthetic fixture. So do **not** `make reset` before this.
+
+### Phase A — offline checks
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+
+make vet            # raw: go vet ./...
+make fmt            # raw: gofmt -l .          -> must print NOTHING
+make test           # raw: go test ./... -v
+```
+
+New in M09, worth watching for by name in the `make test` output:
+
+| Test | What it proves |
+|---|---|
+| `TestReplayVerifiesAnHonestChain` | A 60-odd-block chain mixing deploys, storage writes, log emissions, EIP-3529 refund calls, empty blocks, system-op blocks and rejected reverting transactions replays to the sealed head's exact state root. This is the audit's core claim. |
+| `TestAuditFixtureCoversEveryTransactionType` | The fixture contains legacy, EIP-2930 and EIP-1559 transactions. Added after the first real audit run failed at block 1: on a legacy transaction every *derived* receipt field equals its zero value, so a legacy-only fixture cannot tell a stored field from a derived one — and the audit had shipped comparing `receipt.Type`, which is derived. |
+| `TestReplayIsIncrementalFromAMidChainBlock` | `audit -from N` reads historical trie nodes back through the overlay instead of recomputing them, and still lands on the same final root. |
+| `TestReplayReportsATamperedReceipt` / `TestReplayReportsMissingReceipts` | Altering one stored receipt (by a single gas unit) or truncating it is reported **at that block**, not later and not as a vague failure. Receipts live outside the header, so every root still verifies — this is the check that catches them. |
+| `TestVerifyBlockNamesTheFieldThatDisagrees` / `TestVerifyLinkageEnforcesTheChainShape` | Each comparison rule names the right field: stateRoot, gasUsed, receiptsRoot, logsBloom, parentHash, number, timestamp. |
+| `TestChainRecoversFromAPartialWrite` | A block whose data reached disk while the head pointer did not is left orphaned; the node reopens at the previous head and the next transaction takes the lost block's height. |
+| `TestRestartSeedsTheDevClockFromAFarFutureHead` | After a restart, a chain whose head is a week ahead of wall clock keeps tracking real elapsed time instead of crawling forward one second per block. |
+| `TestVerifyHeadRejectsAHeadWhoseStateIsMissing` | The node refuses to start on a data directory whose head references unreadable state, and says so in a message that points at `cmd/audit`. |
+| `TestOverlay*` (internal/storage) | The audit's copy-on-write layer reads through to the audited database, keeps every write out of it, and refuses deletes and iteration rather than answering them incompletely. |
+
+### Phase B — audit the real chain
+
+**Stop the node first.** Pebble holds an exclusive lock on the data
+directory and the audit opens it read-only rather than fighting for it; with
+the node still running you will get a lock error, not a wrong answer.
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make audit
+```
+
+**Expected:** a single line and exit code 0.
+
+```
+AUDIT OK height=<N> stateRoot=0x… blocks=<N> txs=… gas=… elapsed=… (… blocks/s)
+```
+
+`height` should equal the height the node last reported.
+
+Observed on the first gate run (2026-08-01), against the data directory M08
+left behind:
+
+```
+AUDIT OK height=787 stateRoot=0x8ce1fd46… blocks=787 txs=774 gas=1410021337 elapsed=419ms (1878.5 blocks/s)
+```
+
+That figure is recorded in `packages/blockchain/README.md` and is the number
+to quote in the FYP report for "how long does independently re-verifying an
+election take".
+
+Then check the incremental and JSON paths (both fast — the first is a short
+range, the second is the same code with a different printer). Call the
+binary directly rather than going through `make`: passing quoted arguments
+through a make command line does not survive cmd.exe (§0).
+
+```
+make build-audit
+bin\zk-blockchain-audit.exe -data-dir data -from 400
+bin\zk-blockchain-audit.exe -data-dir data -json
+```
+
+The incremental run is the interesting one: it starts from block 399's
+stored state root and reads historical trie nodes back out of the audited
+database through the overlay, instead of recomputing them from genesis.
+Expect `AUDIT OK height=787 blocks=388 …`.
+
+### Phase C — restart recovery
+
+```
+make run-dev
+```
+
+**Expected in the startup log, in this order:**
+
+| Line | Meaning |
+|---|---|
+| `genesis ready` | unchanged from M02 |
+| `chain head recovered` with `height`, `headHash`, `stateRoot` | new in M09 — the head's state was opened successfully before the RPC server started |
+| `chain head is ahead of wall clock…` (warning, only if applicable) | the dev clock was seeded from the head. **Expect this** on the M08 data directory, since `yarn test:custom` jumps time forward. The `devOffsetSeconds` value should be roughly how far ahead the last test run pushed the chain |
+| `listening addr=:9545` | as before |
+
+Then confirm the chain really resumed rather than restarted:
+
+```
+curl.exe -s -X POST localhost:9545 -H "content-type: application/json" ^
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}"
+```
+
+The height must match the `height=` the audit reported. A read against a
+contract deployed in M08 should also still work — the quickest check is the
+frontend or:
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\hardhat
+yarn test:custom
+```
+
+which redeploys and passes only if the recovered chain is fully functional
+(55 passing, as in §5.5).
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| `make audit` reports a lock error | The node is still running against that data directory. Stop it, or copy the directory and audit the copy with `make audit DATA_DIR=<copy>`. |
+| `AUDIT FAILED block=N field=stateRoot` | Re-execution no longer reproduces the stored state at block N. This is the serious one: it means the sealing path and the replay path disagree, which would also make M10's replicas reject the primary. Send me N and the two roots. |
+| `AUDIT FAILED block=N field=receipt[0].…` or `field=storedReceipts` | The header still verifies; only the separately stored receipt record is wrong. Send me the line — this points at the receipt write path, not at execution. |
+| `AUDIT FAILED: genesis mismatch …` | The audit is configured for a different chain than the data directory holds — usually a `CHAIN_ID` or `BLOCK_GAS_LIMIT` difference between `.env` and how the chain was created. |
+| `AUDIT FAILED: no genesis block in this data directory` | Wrong `DATA_DIR`, or the directory was reset. |
+| Node refuses to start with `chain head failed its startup integrity check` | Exactly what M09 added, doing its job. Run `make audit` to find the first bad block before doing anything else — in particular before `make reset`, which destroys the evidence. |
+| `chain head is ahead of wall clock` with an implausible `devOffsetSeconds` (years) | A timestamp was pinned absurdly far ahead at some point. Not fatal, but tell me the value and the height. |
+
+---
+
+## 7. What to send me if a gate fails
 
 Paste the **full terminal output** of the failing command, plus the command you ran.
 For Go build failures, the compiler error with its file:line is enough. For harness

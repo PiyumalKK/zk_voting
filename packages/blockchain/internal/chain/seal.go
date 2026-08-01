@@ -150,6 +150,29 @@ func finalizeBlock(db ethdb.Database, header *types.Header, root common.Hash, tx
 // block the new chain head, all through one rawdb batch so a crash between
 // writes can never leave the chain pointing at a block whose receipts (or
 // vice versa) were never written.
+//
+// *** Crash consistency (M09 deliverable 1) ***
+//
+// M09 asks for the head pointers to be "written last, so a crash mid-write
+// leaves the previous head valid". This code satisfies that requirement more
+// strongly than by ordering: the batch is atomic, so after a crash the
+// database holds either all six writes or none of them. Ordering only
+// guarantees a safe *prefix*; atomicity removes the concept of a partial
+// write from this step entirely.
+//
+// The ordering that does matter is the one between callers and this
+// function. State is durable before the head moves:
+//
+//	StateDB.Commit → TrieDB.Commit → TrieDB.Close   (trie nodes hit disk)
+//	persist(...)                                    (block + head pointers)
+//
+// A crash between those two leaves orphaned trie nodes — content-addressed,
+// unreferenced, harmless, and overwritten byte-identically when the block is
+// re-sealed — while the head still points at the previous block, whose state
+// is complete. A crash during persist leaves both untouched. So there is no
+// crash point at which the head references state that was never written,
+// which is the property internal/state.VerifyHead asserts at every boot and
+// TestChainRecoversFromAPartialWrite exercises directly.
 func persist(db ethdb.Database, block *types.Block, receipts types.Receipts) error {
 	batch := db.NewBatch()
 
