@@ -1,6 +1,6 @@
 # M12 — No-wallet admin/GN auth + signing relay (custom mode only)
 
-Status: **pass 1 (server) code complete · pass 2 (UI) pending** · Depends: M11 · Package: `packages/nextjs`
+Status: **pass 1 + pass 2 code complete · click-through gate pending** · Depends: M11 · Package: `packages/nextjs`
 **Read `01-AUTH-DESIGN.md` first — it is the spec. This file adds only sequencing + gates.**
 
 ## Split into two passes
@@ -10,11 +10,86 @@ be reviewed before the UI churn:
 
 - **Pass 1 (done):** build-order items 1–3 and the server half of 6 — the auth
   services, auth routes, middleware, `POST /api/relay` and `/api/gn-accounts`.
-- **Pass 2 (next):** items 4–5 and the admin panel UI — `useElectionWriter`,
-  `useElectionAuth`, `app/login/page.tsx`, and the mechanical page refactors.
-  **Until pass 2 lands, the middleware redirects to `/login`, which does not
-  exist yet**, and the admin/GN pages still call `walletClient.writeContract`
-  directly — so custom mode is not yet operable end-to-end by hand.
+- **Pass 2 (done):** items 4–6 — `useElectionWriter`, `useElectionAuth`,
+  `app/login/page.tsx`, the page refactors, and the GN Accounts panel. Custom
+  mode is now operable end-to-end with no wallet extension installed.
+
+### Pass 2 inventory
+
+| File | Role |
+|---|---|
+| `utils/chainMode.ts` | The swap switch in one place: `resolveChainMode` / `getChainMode` / `isCustomMode` / `homePathForRole`. `services/auth/session.ts` now delegates to it, so client, server and Edge answer the question identically |
+| `utils/navigation.ts` | `safeNextPath` — the open-redirect guard on the middleware's `?next=` |
+| `utils/gnDivision.ts` | Pure division lookups, moved out of `useDivisions` so they are testable without the wagmi read stack |
+| `hooks/useElectionAuth.ts` | Shared session store (`useSyncExternalStore`). **Issues no request in hardhat mode** |
+| `hooks/useElectionWriter.ts` | The write seam: hardhat → wagmi `walletClient.writeContract`; custom → `POST /api/relay`. Owns bigint→string arg serialisation and `errorName`-preserving failures |
+| `hooks/useGnDivision.ts` | "Which division am I the GN for?" — wallet on hardhat, session on custom |
+| `app/login/page.tsx` | Credential form; hardhat mode shows a wallet notice instead |
+| `components/ElectionIdentity.tsx` | Header identity + sign out, replacing RainbowKit in custom mode |
+| `app/voting/admin/_components/GnAccountsSection.tsx` | Build-order item 6: create officer → one-time password → auto `setGNOfficer`; suspend / restore / delete |
+| `app/voting/admin/_components/Section.tsx` | The admin card, extracted so the new panel matches the numbered sections |
+
+Refactored onto the seam: `app/voting/admin/page.tsx` (all five write sites),
+`app/gn/page.tsx`, `app/gn/register/page.tsx`, `components/Header.tsx`.
+
+**One deliberate asymmetry between the modes.** The admin panel's section 3
+("Allowlist voters") calls `addVoters`, which the relay whitelist gives to the
+`gn` role only (`01-AUTH-DESIGN.md` §4). Rather than widen the whitelist — which
+would let the admin key allowlist an address without the paired
+`reserveNicHash`, skipping the duplicate-NIC check — the section renders in
+custom mode as a pointer to the GN portal. Hardhat mode keeps the form, because
+the contract's `onlyOwnerOrGN` allows it and the regression rule forbids
+changing hardhat behaviour. Decision taken by the user, 2026-08-02.
+
+**One gap pass 1 left, fixed here:** `POST /api/nic/hash` authenticated GN
+officers by *wallet signature*, so a custom-mode GN — who has no wallet — got a
+401 and voter enrolment was impossible. It now accepts the session cookie in
+custom mode and re-checks, on every call, that the account is not suspended and
+is still the division's on-chain `s_gnOfficer` (`services/auth/nicHashAuth.ts`).
+The hardhat signature path is untouched.
+
+Also extracted while refactoring: `utils/electionPhase.ts` (`PHASE_LABELS`,
+previously defined three times — in `useDivisions`, the admin page and
+`/api/election`).
+
+Tests: **135 new cases**, split across two vitest projects — `node` (185 total)
+and a new `jsdom` one (111). The component tests exist because the mode branch
+is security-relevant, not cosmetic. They pin down that:
+
+- hardhat mode never reaches `/api/relay` and never calls `/api/auth/session`;
+- custom mode never asks for a wallet signature, in either the writer or the
+  NIC-hash request;
+- the ABI does not travel to the server;
+- a Solidity custom-error name survives the relay round trip as the error
+  `message`, so the pages' substring matching still works;
+- a hostile `?next=` cannot redirect an admin off-site right after they type a
+  password;
+- each of the admin panel's five write sites targets the right contract with the
+  right arguments (durations as `bigint` seconds, `createDivision` on the
+  registry rather than a division, an ALL-divisions run skipping reverts rather
+  than aborting).
+
+Each of the four refactored pages has a render test that drives its real
+buttons in both modes, so the mechanical parts of the refactor — a handler still
+reaching for a wallet, a gate reading the wrong identity — fail loudly rather
+than at the click-through gate.
+
+### What the verification pass caught
+
+Three things, none of which the unit tests alone would have found:
+
+1. **`addVoters` was unreachable in custom mode** — found by auditing every
+   `write()` call site against `RELAY_WHITELIST`. See the asymmetry note above.
+2. **`/api/nic/hash` demanded a wallet signature** — found by tracing the GN
+   enrolment flow end to end rather than testing its pieces. Voter enrolment
+   would have been impossible in custom mode, and the pass-2 gate could not have
+   passed.
+3. **A type error in `nicHashAuth.test.ts`** — plain `string` address constants
+   where `DivisionSummary.gnOfficer` requires `` `0x${string}` ``. `yarn test`
+   is happy with it (vitest strips types rather than checking them); `yarn build`
+   would not have been. Found by type-checking against a locally staged copy of
+   the declarations, which is the only way `tsc` completes in the agent sandbox
+   (`RUNNING-GATES.md` §10 phase A).
 
 ### Pass 1 inventory
 
@@ -90,8 +165,8 @@ verification pass, all of which would have surfaced as opaque 500s:
 
 Pass 1's runnable gate — offline checks, the auth/relay API driven by `curl`,
 the on-disk key and audit-log inspection, and the hardhat regression — is
-`RUNNING-GATES.md` §9. The click-through gate below is **pass 2's**, because it
-needs the login page and the refactored admin/GN pages.
+`RUNNING-GATES.md` §9. Pass 2's is `RUNNING-GATES.md` §10, which expands the
+click-through below into numbered steps with expected results.
 
 ```
 # Custom mode, node running, contracts deployed. MetaMask NOT installed / disconnected.

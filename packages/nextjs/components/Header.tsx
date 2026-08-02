@@ -5,8 +5,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bars3Icon, BugAntIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
+import { ElectionIdentity } from "~~/components/ElectionIdentity";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
+import { useElectionAuth } from "~~/hooks/useElectionAuth";
+import { isCustomMode } from "~~/utils/chainMode";
 
 type HeaderMenuLink = {
   label: string;
@@ -51,11 +54,15 @@ const adminLink: HeaderMenuLink = {
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
   const isOwner = useIsVotingOwner();
+  const { isAdmin } = useElectionAuth();
   // Both backends are plain EVM chains reached over JSON-RPC, so the menu is
   // identical in either mode: /debug and /blockexplorer work against our node
-  // just as they do against Hardhat. The Admin link stays wallet-gated until
-  // M12 replaces MetaMask with credential login on the custom chain.
-  const links = isOwner ? [...baseMenuLinks, adminLink] : baseMenuLinks;
+  // just as they do against Hardhat. Only the Admin link differs, because
+  // "is this person the admin?" is a wallet question on Hardhat and a session
+  // question on the custom chain — `useIsVotingOwner` can never be true there,
+  // so without the second check the link would simply never appear.
+  const showAdminLink = isCustomMode() ? isAdmin : isOwner;
+  const links = showAdminLink ? [...baseMenuLinks, adminLink] : baseMenuLinks;
 
   return (
     <>
@@ -119,10 +126,10 @@ export const Header = () => {
         </ul>
       </div>
       <div className="navbar-end grow mr-4">
-        {/* Admin and GN officers still sign with MetaMask in both modes; M12
-            replaces this with credential login + a server relay on the custom
-            chain, at which point this becomes mode-dependent again. */}
-        <RainbowKitCustomConnectButton />
+        {/* Custom chain: the signing keys live on the server, so there is no
+            wallet to connect and the header shows the credential identity
+            instead. Hardhat: unchanged MetaMask flow (MASTER §1). */}
+        {isCustomMode() ? <ElectionIdentity /> : <RainbowKitCustomConnectButton />}
       </div>
     </div>
   );

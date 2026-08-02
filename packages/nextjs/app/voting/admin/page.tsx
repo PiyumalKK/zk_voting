@@ -1,19 +1,38 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AddressInput } from "@scaffold-ui/components";
 import { createPublicClient, http } from "viem";
 import { useAccount } from "wagmi";
-import { getWalletClient } from "wagmi/actions";
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { GnAccountsSection } from "~~/app/voting/admin/_components/GnAccountsSection";
+import { Section } from "~~/app/voting/admin/_components/Section";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
-import { wagmiConfig } from "~~/services/web3/wagmiConfig";
+import { useElectionAuth } from "~~/hooks/useElectionAuth";
+import { useElectionWriter } from "~~/hooks/useElectionWriter";
+import { PHASE_LABELS } from "~~/utils/electionPhase";
 import { notification } from "~~/utils/scaffold-eth";
 
-const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
+/**
+ * Minimal ABI for the one function the GN management panel calls.
+ *
+ * Kept narrow deliberately: the hardhat path encodes calldata from whatever ABI
+ * it is handed, so a smaller surface is a smaller mistake. The custom path
+ * ignores it entirely and uses the deployed ABI server-side.
+ */
+const SET_GN_OFFICER_ABI = [
+  {
+    name: "setGNOfficer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_gnOfficer", type: "address" }],
+    outputs: [],
+  },
+] as const;
 
 type VoterEntry = { address: string; status: boolean };
 
@@ -39,6 +58,9 @@ function parseDurationToSeconds(raw: string): bigint | null {
 const AdminPage = () => {
   const router = useRouter();
   const { address: connected } = useAccount();
+  const { mode, isAdmin, isLoading: authLoading } = useElectionAuth();
+  const { write } = useElectionWriter();
+  const isCustom = mode === "custom";
   const { targetNetwork } = useTargetNetwork();
   const { divisions, isLoading: divisionsLoading } = useDivisions();
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -97,33 +119,33 @@ const AdminPage = () => {
     refetchDivision();
   }, [refetchDivision]);
 
-  // Every division contract is owned by the Election Authority (deployer). Treat the
-  // page as accessible while ownership is still loading; block only if confirmed not-owner.
-  const isOwner = ownerAddr ? connected?.toLowerCase() === ownerAddr.toLowerCase() : true;
+  // Who may use this page.
+  //
+  // Hardhat: every division contract is owned by the Election Authority
+  // (deployer), so the connected wallet must be that owner. The page stays
+  // accessible while ownership is still loading and blocks only on a confirmed
+  // mismatch.
+  //
+  // Custom chain: the admin session is the credential. `ADMIN_RELAY_PRIVATE_KEY`
+  // is defined to be the owner's key and the relay whitelist is the real
+  // boundary, so a comparison against a wallet address that does not exist here
+  // would only ever produce a false negative.
+  const isOwner = isCustom ? isAdmin : ownerAddr ? connected?.toLowerCase() === ownerAddr.toLowerCase() : true;
 
   // Division-targeting write: routes every admin action to the SELECTED division contract.
   const writeContractAsync = useCallback(
-    async ({ functionName, args }: { functionName: string; args?: unknown[] }) => {
+    ({ functionName, args }: { functionName: string; args?: unknown[] }) => {
       if (!selectedDiv) throw new Error("No division selected");
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) throw new Error("No wallet connected");
-      const hash = await walletClient.writeContract({
-        address: selectedDiv.votingContract,
-        abi: VOTING_ABI,
-        functionName,
-        args: args ?? [],
-      });
-      await publicClient.waitForTransactionReceipt({ hash });
-      return hash;
+      return write({ address: selectedDiv.votingContract, abi: VOTING_ABI, functionName, args });
     },
-    [selectedDiv, publicClient, VOTING_ABI],
+    [selectedDiv, write, VOTING_ABI],
   );
 
   const question = (votingData?.[0] as string | undefined) ?? "";
   const phase = Number(votingData?.[2] ?? 0);
   const registrationEnd = Number(votingData?.[3] ?? 0);
   const votingEnd = Number(votingData?.[4] ?? 0);
-  const candList = (candidates as readonly string[] | undefined) ?? [];
+  const candList = useMemo(() => (candidates as readonly string[] | undefined) ?? [], [candidates]);
 
   const phaseLabel = PHASE_LABELS[phase] ?? "Unknown";
   const inSetup = phase === 0;
@@ -157,10 +179,28 @@ const AdminPage = () => {
   }, []);
 
   // Access gate.
-  if (!connected) {
+  if (isCustom && authLoading) {
     return (
       <Wrapper>
-        <p className="text-center opacity-70">Connect a wallet to view this page.</p>
+        <div className="flex justify-center py-8">
+          <span className="loading loading-spinner" />
+        </div>
+      </Wrapper>
+    );
+  }
+  if (isCustom ? !isAdmin : !connected) {
+    return (
+      <Wrapper>
+        {isCustom ? (
+          <div className="text-center space-y-4">
+            <p className="opacity-70">Sign in as the Election Authority to use this page.</p>
+            <Link href="/login?next=%2Fvoting%2Fadmin" className="btn btn-primary btn-sm">
+              Sign in
+            </Link>
+          </div>
+        ) : (
+          <p className="text-center opacity-70">Connect a wallet to view this page.</p>
+        )}
       </Wrapper>
     );
   }
@@ -244,17 +284,12 @@ const AdminPage = () => {
   const handleEndElection = () => run("endElection", () => writeContractAsync({ functionName: "endElection" }));
 
   // --- Apply a phase change to EVERY division at once (national control) ---
-  const writeToDivision = async (contract: `0x${string}`, functionName: string, args?: unknown[]) => {
-    const walletClient = await getWalletClient(wagmiConfig);
-    if (!walletClient) throw new Error("No wallet connected");
-    const hash = await walletClient.writeContract({
-      address: contract,
-      abi: VOTING_ABI,
-      functionName,
-      args: args ?? [],
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-  };
+  //
+  // One transaction per division, sequentially. On the custom chain that means
+  // one relay call each, which the relay's 30/minute budget comfortably covers
+  // for a realistic division count.
+  const writeToDivision = (contract: `0x${string}`, functionName: string, args?: unknown[]) =>
+    write({ address: contract, abi: VOTING_ABI, functionName, args });
 
   const runAll = async (label: string, functionName: string, argsFor: () => unknown[] | null, verb: string) => {
     const args = argsFor();
@@ -441,79 +476,106 @@ const AdminPage = () => {
 
       <Section
         title="3. Allowlist voters"
-        disabled={!inSetup && !inRegistration}
-        hint="Editable during Setup and Registration phases."
+        disabled={isCustom || (!inSetup && !inRegistration)}
+        hint={
+          isCustom
+            ? "Voter enrolment happens in the GN portal on the custom chain."
+            : "Editable during Setup and Registration phases."
+        }
       >
-        <div className="space-y-2">
-          {voterDrafts.map((v, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
-              <div className="flex-1 min-w-[260px]">
-                <AddressInput
-                  placeholder="0x..."
-                  value={v.address}
-                  onChange={val => {
-                    const next = voterDrafts.slice();
-                    next[i] = { ...next[i], address: val as string };
-                    setVoterDrafts(next);
-                  }}
-                />
-              </div>
-              <label className="label cursor-pointer gap-2">
-                <span className="label-text text-sm">Allow</span>
-                <input
-                  type="radio"
-                  name={`vstatus-${i}`}
-                  className="radio radio-sm radio-success"
-                  checked={v.status}
-                  onChange={() => {
-                    const next = voterDrafts.slice();
-                    next[i] = { ...next[i], status: true };
-                    setVoterDrafts(next);
-                  }}
-                  disabled={!inSetup && !inRegistration}
-                />
-              </label>
-              <label className="label cursor-pointer gap-2">
-                <span className="label-text text-sm">Revoke</span>
-                <input
-                  type="radio"
-                  name={`vstatus-${i}`}
-                  className="radio radio-sm radio-error"
-                  checked={!v.status}
-                  onChange={() => {
-                    const next = voterDrafts.slice();
-                    next[i] = { ...next[i], status: false };
-                    setVoterDrafts(next);
-                  }}
-                  disabled={!inSetup && !inRegistration}
-                />
-              </label>
+        {isCustom ? (
+          // `addVoters` is a GN-only function in the relay whitelist
+          // (`01-AUTH-DESIGN.md` §4). The contract would accept it from the
+          // owner — `onlyOwnerOrGN` — but the relay deliberately will not sign
+          // it, because enrolling a voter without the matching
+          // `reserveNicHash` call would bypass the duplicate-NIC check. Showing
+          // the form here would only produce a 403 the operator cannot act on.
+          <div className="text-sm opacity-70 space-y-2">
+            <p>
+              On the custom chain, voters are enrolled by their Grama Niladhari officer in the{" "}
+              <Link href="/gn" className="link link-primary">
+                GN portal
+              </Link>
+              , where the NIC is reserved and the address allowlisted in one step.
+            </p>
+            <p className="text-xs opacity-60">
+              Create officer accounts in section 8, and assign them to divisions in section 6.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {voterDrafts.map((v, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
+                  <div className="flex-1 min-w-[260px]">
+                    <AddressInput
+                      placeholder="0x..."
+                      value={v.address}
+                      onChange={val => {
+                        const next = voterDrafts.slice();
+                        next[i] = { ...next[i], address: val as string };
+                        setVoterDrafts(next);
+                      }}
+                    />
+                  </div>
+                  <label className="label cursor-pointer gap-2">
+                    <span className="label-text text-sm">Allow</span>
+                    <input
+                      type="radio"
+                      name={`vstatus-${i}`}
+                      className="radio radio-sm radio-success"
+                      checked={v.status}
+                      onChange={() => {
+                        const next = voterDrafts.slice();
+                        next[i] = { ...next[i], status: true };
+                        setVoterDrafts(next);
+                      }}
+                      disabled={!inSetup && !inRegistration}
+                    />
+                  </label>
+                  <label className="label cursor-pointer gap-2">
+                    <span className="label-text text-sm">Revoke</span>
+                    <input
+                      type="radio"
+                      name={`vstatus-${i}`}
+                      className="radio radio-sm radio-error"
+                      checked={!v.status}
+                      onChange={() => {
+                        const next = voterDrafts.slice();
+                        next[i] = { ...next[i], status: false };
+                        setVoterDrafts(next);
+                      }}
+                      disabled={!inSetup && !inRegistration}
+                    />
+                  </label>
+                  <button
+                    className="btn btn-ghost btn-square"
+                    disabled={(!inSetup && !inRegistration) || voterDrafts.length <= 1}
+                    onClick={() => setVoterDrafts(voterDrafts.filter((_, j) => j !== i))}
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
               <button
-                className="btn btn-ghost btn-square"
-                disabled={(!inSetup && !inRegistration) || voterDrafts.length <= 1}
-                onClick={() => setVoterDrafts(voterDrafts.filter((_, j) => j !== i))}
+                className="btn btn-outline btn-sm gap-2"
+                disabled={!inSetup && !inRegistration}
+                onClick={() => setVoterDrafts([...voterDrafts, { address: "", status: true }])}
               >
-                <TrashIcon className="h-4 w-4" />
+                <PlusIcon className="h-4 w-4" /> Add row
               </button>
             </div>
-          ))}
-          <button
-            className="btn btn-outline btn-sm gap-2"
-            disabled={!inSetup && !inRegistration}
-            onClick={() => setVoterDrafts([...voterDrafts, { address: "", status: true }])}
-          >
-            <PlusIcon className="h-4 w-4" /> Add row
-          </button>
-        </div>
-        <div className="flex justify-end">
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={(!inSetup && !inRegistration) || busy === "voters"}
-            onClick={handleAddVoters}
-          >
-            {busy === "voters" ? "Saving..." : "Submit allowlist"}
-          </button>
-        </div>
+            <div className="flex justify-end">
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={(!inSetup && !inRegistration) || busy === "voters"}
+                onClick={handleAddVoters}
+              >
+                {busy === "voters" ? "Saving..." : "Submit allowlist"}
+              </button>
+            </div>
+          </>
+        )}
       </Section>
 
       <Section
@@ -606,6 +668,10 @@ const AdminPage = () => {
       <AddDivisionSection />
 
       <GNManagementSection />
+
+      {/* Custom chain only: GN officers have credentials instead of wallets, so
+          the Election Authority creates their accounts here. */}
+      {isCustom && <GnAccountsSection />}
     </Wrapper>
   );
 };
@@ -668,28 +734,6 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
-const Section = ({
-  title,
-  hint,
-  children,
-  disabled,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-  disabled?: boolean;
-}) => (
-  <div
-    className={`bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden ${disabled ? "opacity-70" : ""}`}
-  >
-    <div>
-      <h2 className="text-xl font-bold">{title}</h2>
-      {hint && <p className="text-xs opacity-60 mt-1">{hint}</p>}
-    </div>
-    {children}
-  </div>
-);
-
 const PhaseHeader = ({
   phaseLabel,
   phase,
@@ -725,11 +769,7 @@ const GNManagementSection = () => {
   const [gnAddress, setGnAddress] = useState("");
   const [selectedDivision, setSelectedDivision] = useState(0);
   const { divisions, isLoading: divisionsLoading, error: divisionsError, refetch } = useDivisions();
-  const { targetNetwork } = useTargetNetwork();
-  const publicClient = useMemo(
-    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
-    [targetNetwork],
-  );
+  const { write } = useElectionWriter();
 
   // Keep selection valid as divisions load in.
   useEffect(() => {
@@ -749,34 +789,13 @@ const GNManagementSection = () => {
       return;
     }
     try {
-      const { getWalletClient } = await import("wagmi/actions");
-      const { wagmiConfig } = await import("~~/services/web3/wagmiConfig");
-
-      // Get the currently connected wallet from wagmi (RainbowKit)
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) {
-        notification.error("No wallet connected. Connect your wallet first.");
-        return;
-      }
-
-      const abi = [
-        {
-          name: "setGNOfficer",
-          type: "function",
-          stateMutability: "nonpayable",
-          inputs: [{ name: "_gnOfficer", type: "address" }],
-          outputs: [],
-        },
-      ] as const;
-
-      const hash = await walletClient.writeContract({
+      await write({
         address: div.votingContract,
-        abi,
+        abi: SET_GN_OFFICER_ABI,
         functionName: "setGNOfficer",
         args: [gnAddress as `0x${string}`],
       });
 
-      await publicClient.waitForTransactionReceipt({ hash });
       notification.success(`✅ GN assigned to ${div.name}!`);
       setGnAddress("");
       refetch();
@@ -907,6 +926,7 @@ const AddDivisionSection = () => {
   const [isDeploying, setIsDeploying] = useState(false);
   const { refetch } = useDivisions();
   const { targetNetwork } = useTargetNetwork();
+  const { write } = useElectionWriter();
 
   const REGISTRY_ABI = useMemo(
     () => (deployedContracts as Record<number, any>)[targetNetwork.id]?.ElectionRegistry?.abi ?? [],
@@ -918,11 +938,6 @@ const AddDivisionSection = () => {
         | `0x${string}`
         | undefined,
     [targetNetwork.id],
-  );
-
-  const publicClient = useMemo(
-    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
-    [targetNetwork],
   );
 
   const handleCreateDivision = async () => {
@@ -937,18 +952,12 @@ const AddDivisionSection = () => {
     }
     setIsDeploying(true);
     try {
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) {
-        notification.error("No wallet connected.");
-        return;
-      }
-      const hash = await walletClient.writeContract({
+      await write({
         address: REGISTRY_ADDRESS,
         abi: REGISTRY_ABI,
         functionName: "createDivision",
         args: [name],
       });
-      await publicClient.waitForTransactionReceipt({ hash });
       notification.success(`✅ Division "${name}" deployed & registered!`);
       setDivisionName("");
       refetch();

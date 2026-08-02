@@ -148,7 +148,7 @@ Execute strictly in order; each has its own file with spec + acceptance gates.
 | M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 | **done** |
 | M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | **done** |
 | M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 | harness gates green; **browser walkthrough outstanding** |
-| M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | **pass 1 (server) code complete**; pass 2 (UI seam + page refactors) pending |
+| M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | code complete (both passes); **click-through gate outstanding** (`RUNNING-GATES.md` §10) |
 | M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) | pending |
 | M14 | `M14-e2e-swap.md` | Full e2e suite, swap drill, docs, final dual-mode gate | M09–M13 | pending |
 M10 can run in parallel with M11–M13 (different packages).

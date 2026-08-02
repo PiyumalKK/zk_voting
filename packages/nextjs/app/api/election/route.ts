@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, http } from "viem";
 import deployedContracts from "~~/contracts/deployedContracts";
+import { PHASE_LABELS } from "~~/utils/electionPhase";
 import { serverChainConfig } from "~~/utils/serverChain";
 
 /**
@@ -61,8 +62,6 @@ const VOTING_ABI = [
   { name: "getVoteCounts", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256[]" }] },
   { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
 ] as const;
-
-const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
 
 interface DivisionState {
   name: string;

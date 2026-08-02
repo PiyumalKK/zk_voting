@@ -190,10 +190,11 @@ export const useDivisions = () => {
 
 /**
  * Returns the division for which the given address is the authoritative on-chain GN.
+ *
+ * Re-exported from `utils/gnDivision` so existing importers keep working; the
+ * implementation lives there because it is pure and should be testable without
+ * loading the wagmi read stack this module depends on.
  */
-export const findDivisionForGN = (divisions: LiveDivision[], address?: string): LiveDivision | undefined => {
-  if (!address) return undefined;
-  return divisions.find(d => d.gnOfficer.toLowerCase() === address.toLowerCase());
-};
+export { findDivisionForGN } from "~~/utils/gnDivision";
 
-export const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
+export { PHASE_LABELS } from "~~/utils/electionPhase";

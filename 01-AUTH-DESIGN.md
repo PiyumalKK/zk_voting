@@ -81,6 +81,13 @@ Request: `{ target: "0x…", fn: "startVoting", args: [3600] }`. Steps, in order
 Rate limit: 30 relay calls/min per session. The relay never signs `register`, `vote`, or
 value transfers — voter txs must not pass through the server (anonymity + trust boundary).
 
+**`addVoters` is GN-only, deliberately.** The contract itself would accept it from the
+owner (`onlyOwnerOrGN`), and the admin panel offers a bulk-allowlist section in hardhat
+mode for exactly that reason. The relay does not sign it for the `admin` role, because
+allowlisting an address without the paired `reserveNicHash` call skips the duplicate-NIC
+check that the enrolment flow exists to enforce. In custom mode the admin panel therefore
+renders that section as a pointer to the GN portal rather than a form (M12 pass 2).
+
 ---
 
 ## 5. Voter verification chain (unchanged, restated end-to-end)

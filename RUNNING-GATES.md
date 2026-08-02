@@ -1244,7 +1244,114 @@ must work in a checkout that has never configured M12's environment.
 
 ---
 
-## 10. What to send me if a gate fails
+## 10. M12 pass 2 gate — no-wallet auth, browser side
+
+Pass 2 completes M12: the `/login` page, the `useElectionWriter` / `useElectionAuth`
+seam, the admin and GN page refactors, the GN Accounts panel, and the session
+branch of `/api/nic/hash`. After this, custom mode is operable end to end **with
+no wallet extension installed at all**.
+
+### Before you start: `yarn install`
+
+Pass 2 adds four dev dependencies for the component tests
+(`jsdom`, `@testing-library/react`, `@testing-library/dom`,
+`@testing-library/user-event`). From the repo root:
+
+```
+cd /d D:\Projects\FYP\zk_voting
+yarn install
+```
+
+### Phase A — offline checks
+
+No chain and no dev server needed. From `packages/nextjs`:
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+yarn test
+yarn check-types
+yarn lint
+```
+
+| Check | Expected |
+|---|---|
+| `yarn test` | Two projects run — `node` (185 cases) and `jsdom` (111). All green. Pass 2 adds 135: `utils/chainMode`, `utils/navigation`, `services/auth/nicHashAuth` (node); `hooks/useElectionAuth`, `hooks/useElectionWriter`, `hooks/useGnDivision`, `app/login/page`, `components/ElectionIdentity`, `components/Header`, `app/gn/page`, `app/gn/register/page`, `app/voting/admin/page`, `app/voting/admin/_components/GnAccountsSection` (jsdom) |
+| `yarn check-types` | Clean. Partially pre-verified: the agent could not run `tsc` against the repo directly (network mount — ~20k `.d.ts` reads, never finished inside a 45-second tool call), so it copied `typescript` and the type declarations to local disk and type-checked the source tree there. Every M12 pass-2 file is clean under `strict`. That check could not resolve a handful of packages (`@rainbow-me/rainbowkit`, `next-themes`, `blo`, `poseidon-lite`, …), so **run it yourself** — call sites touching those are still unverified. |
+| `yarn lint` | Clean. Not run in the sandbox, same reason. |
+
+Then both builds, which is the check that no client component accidentally
+imports a server-only module:
+
+```
+# hardhat mode — no M12 environment configured at all
+set NEXT_PUBLIC_CHAIN_BACKEND=
+yarn build
+
+# custom mode
+set NEXT_PUBLIC_CHAIN_BACKEND=custom
+yarn build
+```
+
+Both must be green. A failure mentioning `node:fs`, `node:crypto` or `bcryptjs`
+in a client bundle means something under `services/auth/` was imported as a
+value (not a type) from a `"use client"` file.
+
+### Phase B — the click-through gate (custom mode, no wallet)
+
+Node running, contracts deployed with `yarn deploy --network custom`, the custom
+env column from MASTER §7 set in `.env.local`, `yarn dev` running. **Use a
+browser profile with no MetaMask installed** — that is the whole point of the
+gate. A private window with extensions disabled is enough.
+
+| # | Step | Expected |
+|---|---|---|
+| 1 | Open `/voting/admin` | Redirected to `/login?next=%2Fvoting%2Fadmin` |
+| 2 | Wrong password ×5 | Fifth attempt (or sooner) answers "Account locked … 15 minutes" |
+| 3 | Sign in as `ADMIN_USERNAME` (wait out the lockout, or restart `yarn dev` to clear it) | Lands on `/voting/admin`; header shows the username and "Election Authority", **no Connect Wallet button** |
+| 4 | Section 7 → create a division | Appears in the picker; `/blockexplorer` shows the transaction |
+| 5 | Sections 1–5 on that division: question → candidates → start registration → start voting → end election → start new election | Each lands on chain; each is one line in `packages/nextjs/data/relay-audit.log` |
+| 5b | Look at section 3, "Allowlist voters" | Shows a pointer to the GN portal, **not** a form. `addVoters` is GN-only in the relay whitelist — see `01-AUTH-DESIGN.md` §4 |
+| 6 | Section 8 → create GN account for division 0 | One-time password shown once; row appears with **Assigned** |
+| 7 | `type packages\nextjs\data\gn-accounts.json` | No 64-hex private key anywhere in the file |
+| 8 | Sign out → sign in as the GN | Lands on `/gn`; the portal shows that division only |
+| 9 | `/gn/register`: NIC → paste an address → phone → submit | `reserveNicHash` **and** `addVoters` both succeed. This is the step that proves the `/api/nic/hash` session branch works — before pass 2 it answered 401 for a wallet-less GN |
+| 10 | While signed in as the GN, open `/voting/admin` | Bounced to `/gn` (middleware role routing) |
+| 11 | Suspend that officer from the admin panel, then try to sign in as them | Sign-in refused |
+
+Cross-division refusal is covered by unit tests (`relayPolicy.test.ts`,
+`nicHashAuth.test.ts`); to check it by hand, edit the `divisionId` in a second
+GN account and confirm the relay answers 403 "You may only act on your own
+division."
+
+### Phase C — hardhat regression
+
+**Not optional.** Restore the hardhat env column and restart `yarn dev`, with
+MetaMask enabled again:
+
+| Check | Expected |
+|---|---|
+| Header | RainbowKit Connect Wallet button, exactly as before M12 |
+| `/voting/admin` | No redirect; owner-gated by the connected wallet; every lifecycle action prompts MetaMask |
+| `/gn` and `/gn/register` | GN resolved from the connected wallet; `addVoters` prompts MetaMask; NIC hashing still uses the `x-gn-signature` path |
+| Admin section 3, "Allowlist voters" | The form is **back** — the owner may call `addVoters` directly here |
+| `/login` | Renders "authenticate with a wallet", no credential form |
+| Browser devtools → Network | **No request to `/api/auth/session` on any page.** The seam must not add traffic in hardhat mode |
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| `/login` redirect loop | The cookie is not being set — check `SESSION_SECRET` is 32+ chars and that you are on `http://localhost`, not an IP (SameSite=Strict) |
+| Admin page shows "Sign in as the Election Authority" after a successful login | The session says `role: "gn"`. You signed in with a GN account |
+| Every admin action fails `OwnableUnauthorizedAccount` | `ADMIN_RELAY_PRIVATE_KEY` is not the deploying account |
+| GN enrolment fails 403 "no longer the assigned GN officer" | `setGNOfficer` never landed for that account — the Section 8 row shows **Not assigned**. Assign the address from Section 6 |
+| GN enrolment fails 401 at `/api/nic/hash` | The session branch is not being taken — confirm `NEXT_PUBLIC_CHAIN_BACKEND=custom` is set for the **server** process, not just the browser |
+| "Too many transactions in the last minute" during the ALL-divisions buttons | The relay's 30/min/session budget. Wait a minute; it is per session, not per division |
+| Hardhat mode shows a Sign in button in the header | `NEXT_PUBLIC_CHAIN_BACKEND` is still `custom` in `.env.local`, or `yarn dev` was not restarted (it is a build-time inline) |
+
+---
+
+## 11. What to send me if a gate fails
 
 Paste the **full terminal output** of the failing command, plus the command you ran.
 For Go build failures, the compiler error with its file:line is enough. For harness

@@ -1,4 +1,5 @@
 import type { SessionOptions } from "iron-session";
+import { isCustomMode } from "~~/utils/chainMode";
 
 /**
  * Session shape and cookie policy for no-wallet auth (M12).
@@ -84,10 +85,12 @@ export const getSessionOptions = (): SessionOptions =>
  * 404, the middleware passes every request through untouched, and MetaMask
  * behaviour is exactly what it was before — the locked decision in MASTER §1.
  *
- * Read via literal member access because Next.js only inlines
- * `process.env.NEXT_PUBLIC_*` into the client and Edge bundles in that form.
+ * Delegates to `utils/chainMode` so the server, the Edge middleware and the
+ * React components all answer this question from the same code. A second
+ * spelling of the check is how a page ends up rendering wallet controls on a
+ * deployment whose middleware is already demanding a session.
  */
-export const isCustomChainMode = (): boolean => process.env.NEXT_PUBLIC_CHAIN_BACKEND === "custom";
+export const isCustomChainMode = (): boolean => isCustomMode();
 
 /**
  * Whether a role may access a given pathname.

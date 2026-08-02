@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
 import { getSessionOptions, isCustomChainMode, isPathAllowedForRole } from "~~/services/auth/session";
 import type { SessionData } from "~~/services/auth/session";
+import { homePathForRole } from "~~/utils/chainMode";
 
 /**
  * Route gating for no-wallet auth (M12).
@@ -56,7 +57,8 @@ export async function middleware(req: NextRequest) {
     }
     // Send each role somewhere it is actually allowed to be, rather than
     // bouncing an authenticated user to a login page they have already passed.
-    return NextResponse.redirect(new URL(session.role === "admin" ? "/voting/admin" : "/gn", req.url));
+    // Same table the login page redirects with, so the two cannot disagree.
+    return NextResponse.redirect(new URL(homePathForRole(session.role), req.url));
   }
 
   return response;
