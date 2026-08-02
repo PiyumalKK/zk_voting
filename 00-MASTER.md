@@ -148,7 +148,7 @@ Execute strictly in order; each has its own file with spec + acceptance gates.
 | M09 | `M09-persistence-audit.md` | Restart recovery + `cmd/audit` replay verification | M08 | **done** |
 | M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | **done** |
 | M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 | harness gates green; **browser walkthrough outstanding** |
-| M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | pending |
+| M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | **pass 1 (server) code complete**; pass 2 (UI seam + page refactors) pending |
 | M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) | pending |
 | M14 | `M14-e2e-swap.md` | Full e2e suite, swap drill, docs, final dual-mode gate | M09–M13 | pending |
 M10 can run in parallel with M11–M13 (different packages).
@@ -219,6 +219,8 @@ M10 can run in parallel with M11–M13 (different packages).
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` | — | bcrypt hash (M12) |
 | `ADMIN_RELAY_PRIVATE_KEY` | — | key of the contracts' owner account (M12) |
 | `GN_KEY_ENCRYPTION_KEY` | — | AES-256 key for GN keystore at rest (M12) |
+| `GN_ACCOUNTS_FILE` | `./data/gn-accounts.json` | GN account store location. Added in M12, not in the original table. |
+| `RELAY_AUDIT_LOG` | `./data/relay-audit.log` | Relay JSONL audit log location. Added in M12, not in the original table. |
 | `FAUCET_CHAIN_IDS` | `31337,9494` (default) | `31337,9494` — chains the dev faucet serves (M11) |
 | `NEXT_PUBLIC_CHAIN_API_URL` / `ADMIN_API_PASSWORD` / `ADMIN_PRIVATE_KEY_PATH` / `CHAIN_API_URL` | — | **removed in M11** with the v1 REST seam |
 

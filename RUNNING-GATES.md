@@ -1053,7 +1053,198 @@ Worth recording, because neither would have surfaced from reading the code:
 
 ---
 
-## 9. What to send me if a gate fails
+## 9. M12 pass 1 gate — no-wallet auth, server side
+
+M12 was split in two. **Pass 1 (this section) is the server half**: the auth
+services, the login/logout/session routes, `middleware.ts`, `POST /api/relay`
+and `/api/gn-accounts`. **Pass 2 adds the browser half** — `app/login/page.tsx`,
+the `useElectionWriter` seam and the admin/GN page refactors.
+
+> **What you cannot do yet.** There is no `/login` page until pass 2, so the
+> middleware's redirect lands on a 404, and the admin/GN pages still sign with
+> MetaMask. The full M12 acceptance gate in `M12-no-wallet-auth.md` — the
+> click-through election lifecycle with no wallet installed — belongs to pass 2.
+> This section verifies the server behaves correctly on its own.
+
+### Before you start: `yarn install`
+
+M12 adds two dependencies (`iron-session`, `bcryptjs`). From the repo root:
+
+```
+cd /d D:\Projects\FYP\zk_voting
+yarn install
+```
+
+### Phase A — offline checks
+
+No chain and no dev server needed.
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+
+yarn test            # raw: vitest run
+yarn check-types     # raw: tsc --noEmit --incremental
+yarn lint            # raw: next lint
+yarn build           # raw: next build
+```
+
+**Expected**
+
+| Command | Pass looks like |
+|---|---|
+| `yarn test` | `Test Files 13 passed`, `Tests 161 passed` (49 from M11 + 112 from M12) |
+| `yarn check-types` | no output |
+| `yarn lint` | `No ESLint warnings or errors` (the two pre-existing warnings noted in §8 may persist) |
+| `yarn build` | `✓ Compiled successfully`; the route table now lists `/api/auth/login`, `/api/auth/logout`, `/api/auth/session`, `/api/relay`, `/api/gn-accounts`, and a `ƒ Middleware` line |
+
+The M12 test files are `middleware.test.ts` and `services/auth/*.test.ts`. The
+ones worth reading if you only read a few: `relayPolicy.test.ts` (every way a GN
+is stopped from acting outside their division) and `middleware.test.ts` (proves
+hardhat mode is untouched, and that a missing `SESSION_SECRET` fails closed).
+
+**Two of these tests exist because they caught real bugs during development** —
+a stack overflow in revert decoding on a self-referential error chain, and
+`JSON.stringify` throwing on `bigint` while building an audit line. Both would
+have shown up as opaque 500s from the relay.
+
+### Phase B — the server against the custom chain
+
+Needs the node running with contracts deployed (§5). Set up the environment
+first — **all five variables, or the routes report 503 rather than working**:
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+```
+
+Add to `.env.local` (on top of the custom-mode column from §8):
+
+```
+NEXT_PUBLIC_CHAIN_BACKEND=custom
+NEXT_PUBLIC_CHAIN_ID=9494
+NEXT_PUBLIC_RPC_URL=http://127.0.0.1:9545
+
+SESSION_SECRET=<openssl rand -base64 32>
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD_HASH=<see below>
+ADMIN_RELAY_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+GN_KEY_ENCRYPTION_KEY=<openssl rand -hex 32>
+```
+
+Generate the admin password hash (PowerShell, one line):
+
+```
+node -e "import('bcryptjs').then(b=>b.hash(process.argv[1],12)).then(console.log)" "your-password"
+```
+
+`ADMIN_RELAY_PRIVATE_KEY` above is **Hardhat account #0** — the account that owns
+the deployed contracts, and a publicly known test key. If admin actions revert
+with `OwnableUnauthorizedAccount`, this is the variable that is wrong.
+
+Then `yarn dev`, and drive the API directly (PowerShell `curl` is
+`Invoke-WebRequest`; these use `curl.exe` explicitly):
+
+```
+# 1. Signed out: the relay refuses.
+curl.exe -s -X POST http://localhost:3000/api/relay -H "Content-Type: application/json" ^
+  -d "{\"target\":\"0x0\",\"fn\":\"endElection\",\"args\":[]}"
+#    -> {"error":"Sign in to continue."}   (401)
+
+# 2. Wrong password.
+curl.exe -s -X POST http://localhost:3000/api/auth/login -H "Content-Type: application/json" ^
+  -d "{\"username\":\"admin\",\"password\":\"wrong\"}"
+#    -> {"error":"Incorrect username or password."}   (401)
+#    Repeat 5x -> {"error":"Account locked for 15 minutes..."}   (429)
+#    Use a different username to keep testing, or restart `yarn dev` to clear
+#    the lockout (it is process-local by design — see 01-AUTH-DESIGN.md §6).
+
+# 3. Correct password, keeping the cookie.
+curl.exe -s -c cookies.txt -X POST http://localhost:3000/api/auth/login ^
+  -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"your-password\"}"
+#    -> {"username":"admin","role":"admin"}
+
+curl.exe -s -b cookies.txt http://localhost:3000/api/auth/session
+#    -> {"mode":"custom","session":{"username":"admin","role":"admin",...}}
+
+# 4. A real admin action. Use a division address from /api/election.
+curl.exe -s -b cookies.txt -X POST http://localhost:3000/api/relay ^
+  -H "Content-Type: application/json" ^
+  -d "{\"target\":\"0x<division>\",\"fn\":\"setQuestion\",\"args\":[\"Gate test\"]}"
+#    -> {"txHash":"0x...","blockNumber":"...","status":"success"}
+
+# 5. The relay must refuse to sign voter functions, whoever is asking.
+curl.exe -s -b cookies.txt -X POST http://localhost:3000/api/relay ^
+  -H "Content-Type: application/json" ^
+  -d "{\"target\":\"0x<division>\",\"fn\":\"register\",\"args\":[1]}"
+#    -> {"error":"Role \"admin\" may not call register on Voting."}   (403)
+
+# 6. And to sign for addresses it does not know.
+curl.exe -s -b cookies.txt -X POST http://localhost:3000/api/relay ^
+  -H "Content-Type: application/json" ^
+  -d "{\"target\":\"0x9999999999999999999999999999999999999999\",\"fn\":\"setQuestion\",\"args\":[\"x\"]}"
+#    -> {"error":"The relay does not sign calls to that address."}   (403)
+
+# 7. Create a GN account (also assigns it on-chain via setGNOfficer).
+curl.exe -s -b cookies.txt -X POST http://localhost:3000/api/gn-accounts ^
+  -H "Content-Type: application/json" -d "{\"username\":\"gn-colombo\",\"divisionId\":0}"
+#    -> {"username":"gn-colombo","password":"<shown once>","address":"0x...","assigned":true}
+```
+
+**Then check the two files on disk.** This is the part of the gate that cannot
+be faked:
+
+```
+type data\gn-accounts.json
+#  - contains "encryptedPrivateKey":"v1:..." and a $2b$ bcrypt hash
+#  - contains NO bare 64-hex string, and not the password you were shown
+
+findstr /C:"0x" data\gn-accounts.json
+#  - only the 40-hex `address` field should match
+
+type data\relay-audit.log
+#  - one JSON line per call above, including the refusals, each with
+#    {ts, role, username, target, fn, args, status}
+```
+
+Finally, sign in as the GN (step 3 with the new credentials) and confirm the
+scoping rule — this is the single most important behaviour in M12:
+
+```
+# addVoters on the GN's own division 0 -> success
+# the same call against division 1     -> 403 "You may only act on your own division."
+# startVoting on any division          -> 403 (admin-only function)
+```
+
+### Phase C — hardhat regression
+
+**Not optional.** Restore the hardhat env column (§8) and restart `yarn dev`:
+
+| Check | Expected |
+|---|---|
+| `/voting/admin` and `/gn` | Load with MetaMask exactly as before M12 — no redirect, no login |
+| `curl.exe -s -X POST http://localhost:3000/api/auth/login -d "{}" -H "Content-Type: application/json"` | 404 `Credential login is only available in custom-chain mode.` |
+| `curl.exe -s -X POST http://localhost:3000/api/relay -d "{}" -H "Content-Type: application/json"` | 404 `The relay is only available in custom-chain mode...` |
+| `yarn build` | Green with no `SESSION_SECRET` set at all |
+
+The last row is the one that catches an accidental hard dependency: hardhat mode
+must work in a checkout that has never configured M12's environment.
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| Any auth route returns 503 `Authentication is not configured on this server.` | `SESSION_SECRET` is missing or under 32 characters. The server log names the variable. |
+| Relay returns 503 `ADMIN_RELAY_PRIVATE_KEY is missing or malformed` | Not set, or not a `0x` + 64-hex string. |
+| Relay returns 503 `The GN account store is unavailable` | `GN_KEY_ENCRYPTION_KEY` is missing or not 32 bytes (64 hex / base64). |
+| Admin actions revert `OwnableUnauthorizedAccount` | `ADMIN_RELAY_PRIVATE_KEY` is not the account that deployed the contracts. |
+| GN gets 403 `not the on-chain GN officer for <division>` | The account exists but `setGNOfficer` never landed — check `assigned` in the creation response, and re-run it from the relay. |
+| Relay returns 503 `Cannot reach the election chain` | The node is down, or `RPC_URL` / `NEXT_PUBLIC_RPC_URL` points somewhere else. |
+| Relay returns 503 `No Voting ABI recorded for chain N` | `deployedContracts.ts` lost the block for this chain id. Re-run `yarn deploy --network custom`. |
+| A revert message shows as a generic failure instead of a custom-error name | The relay's decoding lost it. Send me the `errorName` field from the response and the matching `relay-audit.log` line. |
+| `data/` is committed to git | It must not be — `packages/nextjs/.gitignore` has `/data/`. It holds sealed signing keys. |
+
+---
+
+## 10. What to send me if a gate fails
 
 Paste the **full terminal output** of the failing command, plus the command you ran.
 For Go build failures, the compiler error with its file:line is enough. For harness

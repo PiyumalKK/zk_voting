@@ -1,7 +1,62 @@
 # M12 — No-wallet admin/GN auth + signing relay (custom mode only)
 
-Status: pending · Depends: M11 · Package: `packages/nextjs`
+Status: **pass 1 (server) code complete · pass 2 (UI) pending** · Depends: M11 · Package: `packages/nextjs`
 **Read `01-AUTH-DESIGN.md` first — it is the spec. This file adds only sequencing + gates.**
+
+## Split into two passes
+
+The milestone was implemented in two passes so the security-critical half could
+be reviewed before the UI churn:
+
+- **Pass 1 (done):** build-order items 1–3 and the server half of 6 — the auth
+  services, auth routes, middleware, `POST /api/relay` and `/api/gn-accounts`.
+- **Pass 2 (next):** items 4–5 and the admin panel UI — `useElectionWriter`,
+  `useElectionAuth`, `app/login/page.tsx`, and the mechanical page refactors.
+  **Until pass 2 lands, the middleware redirects to `/login`, which does not
+  exist yet**, and the admin/GN pages still call `walletClient.writeContract`
+  directly — so custom mode is not yet operable end-to-end by hand.
+
+### Pass 1 inventory
+
+| File | Role |
+|---|---|
+| `services/auth/crypto.ts` | bcrypt helpers, AES-256-GCM envelope, key parsing, one-time password generation |
+| `services/auth/session.ts` | Session shape, cookie policy, role→path table. **Edge-safe** — the only auth module `middleware.ts` may import |
+| `services/auth/serverSession.ts` | `getServerSession` / `requireSession` for route handlers (Node runtime) |
+| `services/auth/accounts.ts` | `GnAccountStore`: atomic JSON store, sealed keys, CRUD |
+| `services/auth/rateLimit.ts` | Fixed-window limiter + login lockout, injectable clock |
+| `services/auth/relayPolicy.ts` | **Pure** whitelist, GN division scoping, ABI arity/type validation |
+| `services/auth/relayContracts.ts` | Server-side resolution of addressable contracts (registries + live divisions) |
+| `services/auth/relayExecutor.ts` | Authorise → sign → send → audit; custom-error decoding |
+| `services/auth/auditLog.ts` | JSONL relay audit log |
+| `middleware.ts` | Route gating; **returns `next()` immediately in hardhat mode** |
+| `app/api/auth/{login,logout,session}/route.ts` | Credential login, 5/min/IP, lockout 15 min after 5 failures |
+| `app/api/relay/route.ts` | The signer endpoint, 30/min/session |
+| `app/api/gn-accounts/route.ts` | Admin-only GN account CRUD (`GET`/`POST`/`PATCH`/`DELETE`) + auto `setGNOfficer` |
+
+Dependencies added: `iron-session@8.0.4`, `bcryptjs@3.0.3` (pure JS — no native
+build step on Windows, CI or Vercel).
+
+Tests: **112 new cases** across `middleware.test.ts` and `services/auth/*.test.ts`
+— the AES envelope (round-trip, wrong key, cross-account AAD, tamper), the
+account store (no plaintext key on disk, concurrent-write serialisation,
+corrupt-file refusal), the relay policy (cross-division GN, unknown target,
+voter functions, argument coercion and caps), revert decoding, audit-line
+serialisation, and the middleware (hardhat pass-through, forged and
+foreign-sealed cookies, role routing, fail-closed on a bad `SESSION_SECRET`).
+Run them with `yarn test`; the gate is `RUNNING-GATES.md` §9.
+
+Three of those tests exist because they caught real bugs during the
+verification pass, all of which would have surfaced as opaque 500s:
+
+1. `describeRevert` overflowed the stack on a self-referential error `cause`
+   — viem's `walk()` has no cycle detection, and this code runs inside a catch.
+2. `serialiseArgs` threw on a `bigint` nested in an array, because
+   `JSON.stringify` cannot serialise one — and it runs while *building* the
+   audit record, before any write is attempted.
+3. Session construction throws when `SESSION_SECRET` is missing, and no route
+   handler caught it. Now centralised in `tryGetServerSession()` → 503 naming
+   the variable.
 
 ## Build order
 1. `services/auth/` — iron-session config (`SESSION_SECRET`), bcrypt helpers, GN account
@@ -32,6 +87,12 @@ Status: pending · Depends: M11 · Package: `packages/nextjs`
    production replaces this with a dedicated key at deploy time.
 
 ## Acceptance gate
+
+Pass 1's runnable gate — offline checks, the auth/relay API driven by `curl`,
+the on-disk key and audit-log inspection, and the hardhat regression — is
+`RUNNING-GATES.md` §9. The click-through gate below is **pass 2's**, because it
+needs the login page and the refactored admin/GN pages.
+
 ```
 # Custom mode, node running, contracts deployed. MetaMask NOT installed / disconnected.
 - /voting/admin redirects to /login; admin logs in; runs full lifecycle:
