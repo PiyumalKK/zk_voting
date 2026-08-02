@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, http } from "viem";
 import deployedContracts from "~~/contracts/deployedContracts";
+import { serverChainConfig } from "~~/utils/serverChain";
 
 /**
  * GET /api/election
@@ -16,8 +17,7 @@ import deployedContracts from "~~/contracts/deployedContracts";
  * The server holds NO secrets — this is purely public on-chain data.
  */
 
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 31337);
-const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const { chainId: CHAIN_ID, rpcUrl: RPC_URL } = serverChainConfig;
 
 const REGISTRY_ABI = [
   {

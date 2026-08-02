@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, getAddress, http, verifyMessage } from "viem";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { canonicalizeNic, hashNic } from "~~/services/nic/nicHash";
+import { serverChainConfig } from "~~/utils/serverChain";
 
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 31337);
-const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const { chainId: CHAIN_ID, rpcUrl: RPC_URL } = serverChainConfig;
 const SIGNATURE_MAX_AGE_MS = 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 20;

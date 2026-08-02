@@ -1,16 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NextPage } from "next";
 import { createPublicClient, http } from "viem";
-import { hardhat } from "viem/chains";
 import { useAccount } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { findDivisionForGN, useDivisions } from "~~/hooks/useDivisions";
 import { wagmiConfig } from "~~/services/web3/wagmiConfig";
+import { getDeployedAddress } from "~~/utils/deployedAddress";
 import { notification } from "~~/utils/scaffold-eth";
-
-const publicClient = createPublicClient({ chain: hardhat, transport: http("http://127.0.0.1:8545") });
 
 const VOTING_ABI = [
   { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -49,7 +48,8 @@ const NIC_REGISTRY_ABI = [
   },
 ] as const;
 
-const NIC_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS as `0x${string}` | undefined;
+/** Optional override; normally the address comes from the deployment record. */
+const NIC_REGISTRY_ADDRESS_OVERRIDE = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS;
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -65,6 +65,23 @@ const GNRegisterVoter: NextPage = () => {
   const { address, isConnected } = useAccount();
   const { divisions, isLoading } = useDivisions();
   const myDivision = findDivisionForGN(divisions, address) ?? null;
+
+  // Bound to the configured target network, not a hardcoded Hardhat endpoint —
+  // this page must follow the chain the app is pointed at (MASTER §8).
+  const { targetNetwork } = useTargetNetwork();
+  const publicClient = useMemo(
+    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
+    [targetNetwork],
+  );
+
+  // NicRegistry lives at a different address on each chain, so it must be read
+  // from the deployment record for the *current* target network. A single
+  // NEXT_PUBLIC_ address cannot be correct in both modes — it is kept only as an
+  // escape hatch for pointing at a registry deployed outside `yarn deploy`.
+  const nicRegistryAddress = useMemo(
+    () => getDeployedAddress(targetNetwork.id, "NicRegistry", NIC_REGISTRY_ADDRESS_OVERRIDE),
+    [targetNetwork.id],
+  );
 
   // NIC validation (Sri Lankan format)
   const validateNIC = (nic: string): boolean => {
@@ -170,7 +187,7 @@ const GNRegisterVoter: NextPage = () => {
 
   // Submit: call addVoters on the CORRECT division contract via connected wallet
   const handleSubmit = async () => {
-    if (!voterAddress || !voterPhone || !myDivision || !NIC_REGISTRY_ADDRESS || !address) return;
+    if (!voterAddress || !voterPhone || !myDivision || !nicRegistryAddress || !address) return;
 
     setIsSubmitting(true);
     try {
@@ -202,7 +219,7 @@ const GNRegisterVoter: NextPage = () => {
       }
 
       const reservationHash = await walletClient.writeContract({
-        address: NIC_REGISTRY_ADDRESS,
+        address: nicRegistryAddress,
         abi: NIC_REGISTRY_ABI,
         functionName: "reserveNicHash",
         args: [hashResult.nicHash as `0x${string}`, myDivision.votingContract],
@@ -266,12 +283,12 @@ const GNRegisterVoter: NextPage = () => {
       />
     );
   }
-  if (!NIC_REGISTRY_ADDRESS) {
+  if (!nicRegistryAddress) {
     return (
       <CenterMessage
         icon="⚠️"
-        title="NIC Registry Not Configured"
-        subtitle="Set NEXT_PUBLIC_NIC_REGISTRY_ADDRESS to enable GN registration."
+        title="NIC Registry Not Deployed"
+        subtitle={`No NicRegistry in the deployment record for chain ${targetNetwork.id}. Run the deploy for this chain, or set NEXT_PUBLIC_NIC_REGISTRY_ADDRESS to override.`}
       />
     );
   }

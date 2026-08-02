@@ -725,6 +725,11 @@ const GNManagementSection = () => {
   const [gnAddress, setGnAddress] = useState("");
   const [selectedDivision, setSelectedDivision] = useState(0);
   const { divisions, isLoading: divisionsLoading, error: divisionsError, refetch } = useDivisions();
+  const { targetNetwork } = useTargetNetwork();
+  const publicClient = useMemo(
+    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
+    [targetNetwork],
+  );
 
   // Keep selection valid as divisions load in.
   useEffect(() => {
@@ -744,8 +749,6 @@ const GNManagementSection = () => {
       return;
     }
     try {
-      const { createPublicClient, http } = await import("viem");
-      const { hardhat } = await import("viem/chains");
       const { getWalletClient } = await import("wagmi/actions");
       const { wagmiConfig } = await import("~~/services/web3/wagmiConfig");
 
@@ -773,7 +776,6 @@ const GNManagementSection = () => {
         args: [gnAddress as `0x${string}`],
       });
 
-      const publicClient = createPublicClient({ chain: hardhat, transport: http("http://127.0.0.1:8545") });
       await publicClient.waitForTransactionReceipt({ hash });
       notification.success(`✅ GN assigned to ${div.name}!`);
       setGnAddress("");

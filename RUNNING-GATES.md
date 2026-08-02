@@ -6,9 +6,13 @@
 > run on your machine. This file is the missing "how".
 >
 > Applies to M05 (write path), M06 (`eth_getLogs`), M07 (dev/compat methods),
-> M08 (deploy + contract suite), M09 (restart recovery + audit replay) and
-> M10 (replication — §7).
+> M08 (deploy + contract suite), M09 (restart recovery + audit replay),
+> M10 (replication — §7) and M11 (the Next.js frontend — §8).
 > Later milestones add their own gate commands; the setup in §1 does not change.
+>
+> **§8 (M11) is the exception to all of this:** it runs in `packages/nextjs`,
+> needs no Go toolchain, and its offline phase needs no running chain at all.
+> Start there if you only have a few minutes.
 
 ---
 
@@ -826,7 +830,230 @@ cluster does not disturb the chain those gates left behind.
 
 ---
 
-## 8. What to send me if a gate fails
+## 8. M11 gate — Next.js on the custom chain
+
+The first gate that lives in `packages/nextjs` rather than `packages/blockchain`,
+so none of the Go setup in §1 applies. Three phases: offline, then the app
+against the custom chain, then the same thing against Hardhat. **Phase C is not
+optional** — it is the half of the claim that says the swap goes both ways.
+
+### Before you start: `yarn install`
+
+M11 adds one dependency (`vitest`) and two scripts (`test`, `test:watch`). From
+the repo root:
+
+```
+cd /d D:\Projects\FYP\zk_voting
+yarn install
+```
+
+### Phase A — offline checks
+
+No chain and no dev server needed.
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+
+yarn test            # raw: vitest run
+yarn check-types     # raw: tsc --noEmit --incremental
+yarn lint            # raw: next lint
+yarn build           # raw: next build
+```
+
+**Expected**
+
+| Command | Pass looks like |
+|---|---|
+| `yarn test` | `Test Files 5 passed`, `Tests 49 passed` |
+| `yarn check-types` | no output |
+| `yarn lint` | `No ESLint warnings or errors` |
+| `yarn build` | `✓ Compiled successfully`, then the route table |
+
+The four test files, and what each is for:
+
+| File | What it proves |
+|---|---|
+| `utils/customChain.test.ts` (14) | The custom chain resolves to 9494 / :9545 by default and follows `NEXT_PUBLIC_CHAIN_ID` / `NEXT_PUBLIC_RPC_URL`. A malformed id falls back instead of producing a `NaN` chain id — which viem accepts silently and which then fails somewhere unrelated. |
+| `utils/serverChain.test.ts` (11) | The API routes' chain config defaults to Hardhat (so a checkout with no `.env.local` is unchanged), `RPC_URL` overrides `NEXT_PUBLIC_RPC_URL`, and the faucet allowlist parser drops malformed entries and **fails closed** on wholly invalid input. |
+| `scaffold.config.test.ts` (5) | The swap switch itself: `NEXT_PUBLIC_CHAIN_BACKEND=custom` repoints `targetNetworks` at the real custom chain, anything else stays on Hardhat. One case explicitly asserts the target is *not* chain 1 — the `chains.mainnet` placeholder this replaced would have sent every read to a public RPC while looking fine. |
+| `utils/deployedAddress.test.ts` (11) | Contract addresses resolve per chain and never leak across chains; a blank env override falls back to the deployment record instead of masking it. Two cases assert the real `deployedContracts.ts` carries `NicRegistry` and `ElectionRegistry` on **both** 31337 and 9494. |
+| `utils/noHardcodedChain.test.ts` (8) | The regression net. Scans `app/`, `components/`, `hooks/`, `utils/`, `services/` for `31337`, `:8545`, `webSocket(`, `hardhat.id` and imports from the deleted `services/chain`. Comments are stripped before matching, and every permitted occurrence sits in a named allowlist with its reason. |
+
+If `noHardcodedChain` fails, read the file list it prints — that is the fix list.
+Adding a file to its allowlist is fine, but write down why.
+
+### Phase B — custom mode
+
+**Terminal 1** — the node (reuse the data directory from M08/M09; do not reset):
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make run-dev
+```
+
+**Terminal 2** — `packages\nextjs\.env.local` must hold the custom column:
+
+```
+NEXT_PUBLIC_CHAIN_BACKEND=custom
+NEXT_PUBLIC_CHAIN_ID=9494
+NEXT_PUBLIC_RPC_URL=http://127.0.0.1:9545
+```
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+yarn dev
+```
+
+**Terminal 3** — the harness:
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+set CHECK_CHAIN_ID=9494
+set CHECK_RPC_URL=http://127.0.0.1:9545
+node e2e\frontend-check.mjs
+```
+
+(PowerShell: `$env:CHECK_CHAIN_ID="9494"` etc. — see §0.)
+
+> **Never `set RPC_URL` or `NEXT_PUBLIC_*` in a console you will later run
+> `yarn dev` from.** On Windows those persist for the session and are inherited
+> by child processes, and process env **outranks `.env.local`**. The result is a
+> server that reads contract addresses for one chain and sends calls to the
+> other — which looks exactly like a code bug and is not one. This is why the
+> harness's variables carry a `CHECK_` prefix: they cannot collide with the
+> app's. The harness warns if it sees app variables set in its own shell.
+
+**Expected:** every line `[PASS]` or `[SKIP]`, final line `PASS`.
+
+`frontend-check.mjs` drives the four API routes the mobile app and the pages
+depend on, and cross-checks each answer against the node directly — the
+server-rebuilt Merkle root must equal the contract's root, the resolved candidate
+name must equal the one in the `VoteCast` log, the faucet's claimed transfer must
+show up as a balance increase. Checks that need election data (a registered
+commitment, a cast vote) print `[SKIP]` with the reason on a freshly deployed
+chain; pass `--strict` to turn those into failures once M14 runs a full election.
+
+Then walk the pages in a browser:
+
+| Page | Expected |
+|---|---|
+| `/results` | the three divisions plus the national tally |
+| `/audit` | `VoteCast` logs load without console errors |
+| `/blockexplorer` | browses the node's blocks, and keeps ticking as new ones seal |
+| `/gn` | connects with MetaMask on chain 9494; the voter roll loads |
+| `/voting/admin` | phase controls work with MetaMask on chain 9494 (temporary — M12 replaces this with credential login) |
+
+Add chain 9494 to MetaMask manually the first time: RPC `http://127.0.0.1:9545`,
+currency ETH. Import a genesis-prefunded account with one of the Hardhat mnemonic
+keys to act as owner/GN.
+
+### Phase C — Hardhat regression
+
+Restore the hardhat column in `.env.local`, then:
+
+```
+# Terminal 1
+cd /d D:\Projects\FYP\zk_voting
+yarn chain
+
+# Terminal 2
+yarn deploy
+
+# Terminal 3
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+yarn dev
+
+# Terminal 4 — no env vars needed; the harness defaults to 31337 / :8545
+node e2e\frontend-check.mjs
+```
+
+**Expected:** the same check names, the same verdicts. Walk the same pages; they
+must behave exactly as they did before M11.
+
+### Observed on the first gate run (2026-08-02)
+
+All three phases green. The numbers to quote in the FYP report:
+
+| Phase | Observation |
+|---|---|
+| A | `49 passed (49)` across 5 test files in 0.83 s; `check-types` silent; `lint` 2 pre-existing warnings (see below); `build` compiled, 23 routes. (First run was 36/4; the third bug's fix added `deployedAddress.ts` with 11 tests and 2 further guards.) |
+| B (custom, 9494) | `19 checks: 17 passed, 0 failed, 2 skipped` — `PASS` |
+| B — node state | Started from the M08/M09 data directory: `height=787`, `stateRoot=0x8ce1fd46…`, matching M09's audit exactly. Reads, writes and receipts all served from a chain built by earlier milestones. |
+| B — write path | `/api/faucet` funded a fresh address on chain 9494; balance `0 → 50000000000000000`. Sign, seal, receipt, balance — the whole write path through the app, on free gas. |
+| C (hardhat, 31337) | `19 checks: 17 passed, 0 failed, 2 skipped` — `PASS`. **The same check names with the same verdicts as B**; the only difference in the output is `chainId=31337` vs `9494`. |
+
+That last row is the milestone's headline result: the same API surface, exercised
+identically against two entirely different chain implementations, with no source
+change between the runs — only three lines of `.env.local`.
+
+The two `[SKIP]`s in both phases are `merkle-path returns a proof…` and
+`verify-vote resolves a real vote…`. Both need election data that a freshly
+deployed chain does not have. M14 runs a full election and should turn them into
+passes; run the harness with `--strict` there.
+
+The two `yarn lint` warnings are **pre-existing and unrelated to M11**: a
+`react-hooks/exhaustive-deps` note on `candList` in `app/voting/admin/page.tsx`
+(line 126, untouched by this milestone) and a prettier nit on the GitHub icon
+path in `components/Footer.tsx` (line 50). `yarn format` clears the second.
+
+### Still outstanding: the browser walkthrough
+
+**The page-by-page table above has not been run.** Only the harness and the
+offline checks have. That gap is not cosmetic — the third bug below lived on
+`/gn/register`, a page the harness never touches, and survived two full green
+harness runs because of it. M11 is not done until the five pages have been
+opened in both modes.
+
+### Three bugs this gate found
+
+Worth recording, because neither would have surfaced from reading the code:
+
+1. **`NEXT_PUBLIC_NIC_REGISTRY_ADDRESS` held one address for two chains.**
+   `NicRegistry` has a different address per chain, so a single env value cannot
+   be right in both modes — and the committed value (`0x9A9f2CCf…`) matched
+   *neither* deployment (both record `0x5FC8d326…`), so GN registration was
+   pointing at a dead address in Hardhat mode too. `gn/register/page.tsx` now
+   reads it from `deployedContracts[targetNetwork.id]`, with the env var demoted
+   to an optional override. Leave it empty.
+2. **The harness's `RPC_URL`/`CHAIN_ID` collided with the app's own variables.**
+   Setting them in a console and later starting `yarn dev` from the same window
+   gave the server a hybrid config: 31337 contract addresses, calls sent to
+   :9545. Renamed to `CHECK_RPC_URL` / `CHECK_CHAIN_ID`; the harness now also
+   warns when it sees app variables in its shell.
+3. **`??` against `process.env` — introduced by the fix for (1), found by
+   re-reading it.** `NEXT_PUBLIC_NIC_REGISTRY_ADDRESS=` in a `.env` file yields
+   the **empty string**, not `undefined`, so `process.env.X ?? deployedAddress`
+   evaluated to `""` and the deployment-record fallback never ran. `""` is falsy,
+   so `/gn/register` reported "NIC Registry Not Deployed" in both modes. Address
+   resolution now lives in `utils/deployedAddress.ts`, which normalises blank to
+   absent, and two new guards in `noHardcodedChain.test.ts` reject `process.env.X
+   ??` and env-supplied contract addresses outright.
+
+   The lesson worth keeping: the fix for a config bug is itself config code, and
+   deserves the same scrutiny. This one was caught by reading, not by any test —
+   which is why it is now a test.
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| `yarn test` can't find `vitest` | `yarn install` from the repo root — M11 added the dependency. |
+| A `noHardcodedChain` test fails | A chain literal came back. The printed file list is the fix list; each file should read its chain from `useTargetNetwork()` (components), `scaffoldConfig.targetNetworks[0]` (module scope) or `serverChainConfig` (API routes). |
+| `frontend-check.mjs` exits 2 with "Cannot reach the node" | The node isn't running, or `CHECK_RPC_URL` was set in a different terminal (§0). |
+| `frontend-check.mjs` exits 2 with a chain-id mismatch | `CHECK_CHAIN_ID` and the node disagree. The harness refuses to run rather than report confusing failures. |
+| The dev server's stack trace shows an RPC URL that isn't the one in `.env.local` | Environment leak — see the warning box above. Close that console, open a fresh one, restart `yarn dev`. The harness prints a `WARNING:` block listing the offending variables if they are also set in *its* shell. |
+| `election reports the configured chain id` fails | The app's `NEXT_PUBLIC_CHAIN_ID` and the harness's `CHAIN_ID` differ, or `.env.local` wasn't picked up — Next.js only reads it at startup, so restart `yarn dev`. |
+| `election lists at least one division` fails | Contracts aren't deployed on this chain. `yarn deploy --network custom` (or plain `yarn deploy` for Hardhat). |
+| `every division's Voting contract is readable` fails | `ElectionRegistry` lists divisions whose `Voting` contracts don't answer `eth_call` — a chain/deployment mismatch. Check that `deployedContracts.ts` still holds both the `31337` and `9494` blocks (§5.1). |
+| `server-rebuilt root matches the contract's root` fails | `eth_getLogs` and `eth_call` disagree on this node — a node bug, not a frontend one. Send me the two roots and the division address. |
+| `faucet funds an address` reports `[SKIP] disabled for chain N` | `FAUCET_CHAIN_IDS` doesn't include the chain. Default is `31337,9494`. |
+| `/blockexplorer` shows nothing and the console mentions WebSocket | A `webSocket(` transport came back somewhere; the `noHardcodedChain` guard should have caught it. Our node has no `eth_subscribe` (MASTER §9). |
+| The faucet button next to the wallet is missing in custom mode | Expected and deliberate — see the note at the top of `M11-frontend-switch.md`. |
+| A page works in Hardhat mode but not custom mode | The classic M11 failure. Grep the page for a chain literal; if there isn't one, it is reading a contract address from `deployedContracts[31337]` via a hardcoded key. |
+
+---
+
+## 9. What to send me if a gate fails
 
 Paste the **full terminal output** of the failing command, plus the command you ran.
 For Go build failures, the compiler error with its file:line is enough. For harness

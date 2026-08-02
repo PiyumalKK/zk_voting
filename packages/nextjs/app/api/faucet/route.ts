@@ -1,35 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createWalletClient, http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { resolveFaucetChainIds, serverChain, serverChainConfig } from "~~/utils/serverChain";
 
 /**
  * POST /api/faucet   body: { address: "0x..." }
  *
  * DEV-ONLY faucet. Funds a fresh burner wallet with a little ETH so it can pay
- * gas for the anonymous vote() transaction on the LOCAL Hardhat chain.
+ * gas for the anonymous vote() transaction.
  *
- * ⚠️ Local chain only. In production, burner gas is sponsored by an ERC-4337
+ * ⚠️ Local chains only. In production, burner gas is sponsored by an ERC-4337
  * paymaster / relayer — never by a server-held key. This route refuses to run on
- * any non-local chain id.
+ * any chain outside `FAUCET_CHAIN_IDS`.
+ *
+ * On the custom chain (9494) gas is free, so a burner does not strictly need
+ * funding to vote — but the route still works there, because the genesis
+ * prefunds the same 20 Hardhat mnemonic accounts this signs with (MASTER §3).
+ * Keeping it enabled means the mobile app's funding step needs no mode branch.
  */
 
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 31337);
-const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const { chainId: CHAIN_ID, rpcUrl: RPC_URL } = serverChainConfig;
+const FAUCET_CHAIN_IDS = resolveFaucetChainIds(process.env.FAUCET_CHAIN_IDS);
 const FUND_AMOUNT_ETH = "0.05";
 
 // Well-known Hardhat account #0 (public test key — NOT a secret, local only).
 const HARDHAT_ACCOUNT_0 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-const localChain = {
-  id: CHAIN_ID,
-  name: "Hardhat",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: [RPC_URL] } },
-} as const;
-
 export async function POST(req: NextRequest) {
-  if (CHAIN_ID !== 31337) {
-    return NextResponse.json({ error: "Faucet is disabled on non-local chains" }, { status: 403 });
+  if (!FAUCET_CHAIN_IDS.has(CHAIN_ID)) {
+    return NextResponse.json(
+      {
+        error: `Faucet is disabled on chain ${CHAIN_ID}`,
+        allowedChainIds: [...FAUCET_CHAIN_IDS],
+      },
+      { status: 403 },
+    );
   }
 
   let address: string | undefined;
@@ -45,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const account = privateKeyToAccount(HARDHAT_ACCOUNT_0);
-    const wallet = createWalletClient({ account, chain: localChain, transport: http(RPC_URL) });
+    const wallet = createWalletClient({ account, chain: serverChain, transport: http(RPC_URL) });
     const hash = await wallet.sendTransaction({
       to: address as `0x${string}`,
       value: parseEther(FUND_AMOUNT_ETH),

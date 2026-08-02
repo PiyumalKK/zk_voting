@@ -1,5 +1,6 @@
 import * as chains from "viem/chains";
 import scaffoldConfig from "~~/scaffold.config";
+import { customChain, isLocalChainId } from "~~/utils/customChain";
 
 type ChainAttributes = {
   // color | [lightThemeColor, darkThemeColor]
@@ -45,6 +46,9 @@ export const getAlchemyHttpUrl = (chainId: number) => {
 export const NETWORKS_EXTRA_DATA: Record<string, ChainAttributes> = {
   [chains.hardhat.id]: {
     color: "#b8af0c",
+  },
+  [customChain.id]: {
+    color: "#2f855a",
   },
   [chains.mainnet.id]: {
     color: "#ff8b9e",
@@ -123,7 +127,9 @@ export function getBlockExplorerTxLink(chainId: number, txnHash: string) {
  */
 export function getBlockExplorerAddressLink(network: chains.Chain, address: string) {
   const blockExplorerBaseURL = network.blockExplorers?.default?.url;
-  if (network.id === chains.hardhat.id) {
+  // Local development chains (Hardhat and the custom Go node) have no public
+  // explorer — link to the app's built-in one instead.
+  if (isLocalChainId(network.id)) {
     return `/blockexplorer/address/${address}`;
   }
 

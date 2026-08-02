@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation";
 import { Bars3Icon, BugAntIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
-import { isCustomChain } from "~~/services/chain/hooks";
 
 type HeaderMenuLink = {
   label: string;
@@ -52,18 +51,11 @@ const adminLink: HeaderMenuLink = {
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
   const isOwner = useIsVotingOwner();
-  // Custom chain: no wallets, so "Debug Contracts" (an EVM/RPC tool) is
-  // replaced by the REST chain explorer. The Admin link is always shown —
-  // the page itself is password-gated (there is no wallet-owner signal to
-  // hide it behind).
-  const menu = isCustomChain
-    ? [
-        ...baseMenuLinks.filter(l => l.href !== "/debug"),
-        { label: "Chain Explorer", href: "/chain-explorer", icon: <BugAntIcon className="h-4 w-4" /> },
-      ]
-    : baseMenuLinks;
-  const showAdmin = isCustomChain ? true : isOwner;
-  const links = showAdmin ? [...menu, adminLink] : menu;
+  // Both backends are plain EVM chains reached over JSON-RPC, so the menu is
+  // identical in either mode: /debug and /blockexplorer work against our node
+  // just as they do against Hardhat. The Admin link stays wallet-gated until
+  // M12 replaces MetaMask with credential login on the custom chain.
+  const links = isOwner ? [...baseMenuLinks, adminLink] : baseMenuLinks;
 
   return (
     <>
@@ -127,8 +119,10 @@ export const Header = () => {
         </ul>
       </div>
       <div className="navbar-end grow mr-4">
-        {/* Wallets only exist on the EVM backend; the custom chain is wallet-free. */}
-        {!isCustomChain && <RainbowKitCustomConnectButton />}
+        {/* Admin and GN officers still sign with MetaMask in both modes; M12
+            replaces this with credential login + a server relay on the custom
+            chain, at which point this becomes mode-dependent again. */}
+        <RainbowKitCustomConnectButton />
       </div>
     </div>
   );
