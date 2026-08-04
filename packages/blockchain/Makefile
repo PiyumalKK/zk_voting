@@ -1,6 +1,18 @@
-.PHONY: build build-audit build-gencerts run run-dev audit test vet fmt reset reset-cluster tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build gen-certs run-cluster cluster-test block-rlp-test
+.PHONY: build build-audit build-gencerts run run-dev audit test vet fmt reset reset-cluster reset-e2e tidy diff diff-write diff-logs diff-dev diff-install shape-check smoke probe-build gen-certs run-cluster cluster-test block-rlp-test e2e e2e-core-test
 
 DATA_DIR ?= data
+
+# The M14 full-election gate runs on its own chain, deliberately separate from
+# $(DATA_DIR): `make e2e` resets the chain it uses, and the `data/` directory
+# is the one M08 built, M09 audited and M11-M13 read from.
+E2E_DATA_DIR ?= data-e2e
+
+# Extra flags passed through to e2e/election.mjs, e.g.
+#   make e2e E2E_ARGS="--quiet"
+#   make e2e E2E_ARGS="--no-deploy"
+# (Quoted arguments do not survive a cmd.exe make command line — see
+# RUNNING-GATES §0; from cmd.exe, call `node e2e\election.mjs --quiet` instead.)
+E2E_ARGS ?=
 
 # Where `make gen-certs` writes the cluster's mTLS material, and where
 # e2e/cluster.mjs expects to find it (M10).
@@ -251,3 +263,45 @@ endif
 # harnesses never requires a Solidity toolchain.
 probe-build:
 	cd e2e && node diff/contracts/build.mjs
+
+# ── M14: the full election ────────────────────────────────────────────────
+
+# Offline unit tests for the election's cryptography and Merkle-path logic.
+# No node, no chain, no network, no proving — run this before `make e2e`, and
+# after any change to e2e/lib/election-core.mjs. A failure here is a failure
+# of arithmetic, which is much cheaper to read than the same fault surfacing
+# as an invalid proof ten minutes into the full gate.
+e2e-core-test:
+	cd e2e && node --test lib/election-core.test.mjs
+
+# The M14 acceptance gate: one complete election, end to end, on a chain this
+# target creates and destroys.
+#
+#   fresh node -> yarn deploy --network custom -> admin lifecycle -> GN
+#   enrols five voters -> each registers -> Merkle path from logs -> REAL
+#   UltraHonk proof -> vote from an UNFUNDED burner -> tally / nullifier /
+#   double-vote -> restart -> cmd/audit replays the whole chain
+#
+# It starts and stops its own node on :9545 against $(E2E_DATA_DIR), so
+# nothing else may be listening there — `make run` in another terminal makes
+# this fail immediately, on purpose, rather than driving the wrong chain.
+#
+# Needs, beyond the Go binaries: `yarn compile` at the repo root (contract
+# artifacts and the deploy toolchain), `make diff-install` (viem, bb.js,
+# noir_js, poseidon-lite), and internet access on the FIRST run only — bb.js
+# downloads its structured reference string and caches it in ~/.bb-crs.
+#
+#   make e2e
+#   make e2e E2E_ARGS="--quiet"        # don't echo the node's own log
+e2e: build build-audit e2e-core-test
+	cd e2e && node election.mjs $(E2E_ARGS)
+
+# Delete the full-election gate's data directory. `make e2e` does this itself
+# at the start of every run; this is for reclaiming the disk afterwards.
+ifeq ($(OS),Windows_NT)
+reset-e2e:
+	if exist $(E2E_DATA_DIR) rmdir /s /q $(E2E_DATA_DIR)
+else
+reset-e2e:
+	rm -rf $(E2E_DATA_DIR)
+endif

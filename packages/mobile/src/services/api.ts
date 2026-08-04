@@ -85,12 +85,35 @@ export const api = {
       body: JSON.stringify({ phone, code }),
     }),
 
-  /** DEV-only: fund a burner wallet with gas on the local chain. */
+  /** DEV-only: fund a burner wallet with gas on the local chain. Throws on failure. */
   fundBurner: (address: string) =>
     req<{ funded: boolean; txHash?: string; error?: string }>("/api/faucet", {
       method: "POST",
       body: JSON.stringify({ address }),
     }),
+
+  /**
+   * Fund an address if the faucet is willing, and carry on if it is not.
+   *
+   * Funding is a **convenience, not a precondition**. The custom chain prices
+   * gas at zero (`eth_gasPrice` → `0x0`), so a burner with a zero balance can
+   * transact — that is the whole point of the custom chain, and the property
+   * M13's gate exists to demonstrate. Hardhat mode still needs the faucet, but
+   * even there the transaction itself is the honest test of whether the wallet
+   * can pay: an "insufficient funds" error from the node is precise, whereas
+   * aborting here reports a faucet outage as a voting failure.
+   *
+   * Returns whether the top-up landed, for the caller to log — no caller should
+   * branch on it.
+   */
+  tryFundBurner: async (address: string): Promise<boolean> => {
+    try {
+      const res = await api.fundBurner(address);
+      return res.funded === true;
+    } catch {
+      return false;
+    }
+  },
 
   /** Verify whether a vote (identified by nullifier hash) was counted on-chain. */
   verifyVote: (division: string, nullifierHash: string) =>

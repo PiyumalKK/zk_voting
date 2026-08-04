@@ -251,6 +251,16 @@ const GNRegisterVoter: NextPage = () => {
       const msg = error?.shortMessage || error?.message || "Transaction failed";
       if (msg.includes("NicRegistry__AlreadyUsed")) {
         notification.error("This NIC is already registered to another voter");
+      } else if (msg.includes("Unregistered division")) {
+        // Not a permissions problem, and the raw revert string does not say so.
+        // The division exists and this officer is assigned to it, but it was
+        // never authorised in the NIC Registry — which only an admin can do, in
+        // section 7 of the admin panel. Divisions created by hand before that
+        // step was automatic land here.
+        notification.error(
+          "This division has not been authorised for voter enrolment yet. " +
+            "Ask the Election Authority to authorise it in section 7 of the admin panel, then try again.",
+        );
       } else if (msg.includes("Not owner or GN")) {
         notification.error("You are not authorized as GN for this division.");
       } else if (

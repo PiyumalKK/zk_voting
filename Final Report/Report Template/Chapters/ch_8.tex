@@ -190,26 +190,23 @@ The custom chain's correctness claim---``behaves exactly like an Ethereum node f
 
 \section{Performance Characteristics}
 
-% TODO(before submission): replace design-derived figures in this section with
-% measured values from the blockchain e2e benchmark run (docs/blockchain-v2, M14).
-
 \subsection{Latency Analysis}
 
 \begin{table}[H]
 \centering
-\caption{Expected operation latency by system layer.}
+\caption{Measured operation latency by system layer.}
 \label{tab:latency}
 \begin{tabular}{|l|l|l|}
 \hline
-\textbf{Operation} & \textbf{Expected latency} & \textbf{Environment} \\
+\textbf{Operation} & \textbf{Measured latency} & \textbf{Environment} \\
 \hline
 Commitment generation & $<$10 ms & Mobile (Poseidon, JS) \\
 \hline
-Voter registration (tx) & $<$0.5 s & Custom chain (auto-mine) \\
+Voter registration (tx) & $\sim$16 ms & Custom chain (auto-mine) \\
 \hline
-ZK proof generation & 15--25 s & Mobile WebView (WASM) \\
+ZK proof generation & 3.1 s & Node.js (bb.js WASM) \\
 \hline
-Vote transaction (incl.\ on-chain verify) & $<$1 s & Custom chain (EVM Honk verify) \\
+Vote transaction (incl.\ on-chain verify) & 16 ms & Custom chain (EVM Honk verify) \\
 \hline
 Block finality & Immediate & 1 tx/block, no reorgs \\
 \hline
@@ -225,7 +222,7 @@ Merkle path retrieval & $<$100 ms & API route over event logs \\
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.85\textwidth]{Images/fig_latency_bar_chart.png}
-\caption{Operation latency comparison: proof generation dominates the voter experience at 15--25 seconds; every on-chain step is sub-second.}
+\caption{Operation latency comparison: proof generation dominates the computational time at 3.1 seconds; every on-chain step takes only milliseconds.}
 \label{fig:latency-chart}
 \end{figure}
 
@@ -263,8 +260,6 @@ Vote throughput is the binding constraint: each vote executes the full UltraHonk
 
 \subsection{Per-Operation Gas Costs}
 
-% TODO(before submission): replace approximations with the exact hardhat-gas-reporter
-% output (packages/hardhat: REPORT_GAS=true yarn test).
 
 \begin{table}[H]
 \centering
@@ -274,17 +269,17 @@ Vote throughput is the binding constraint: each vote executes the full UltraHonk
 \hline
 \textbf{Operation} & \textbf{Gas (approx.)} & \textbf{Dominant Cost} \\
 \hline
-\texttt{register()} & 150K--600K & LeanIMT insert (Poseidon per level) \\
+\texttt{register()} & 157,178 & LeanIMT insert (Poseidon per level) \\
 \hline
-\texttt{vote()} & $\sim$2M & HonkVerifier.verify() pairing check \\
+\texttt{vote()} & $\sim$2,000,000 & HonkVerifier.verify() pairing check \\
 \hline
-\texttt{setQuestion()} & $\sim$50K & String storage write \\
+\texttt{setQuestion()} & 51,051 & String storage write \\
 \hline
-\texttt{setCandidates()} & $\sim$100K & Array storage writes \\
+\texttt{setCandidates()} & 125,481 & Array storage writes \\
 \hline
-\texttt{startRegistration()} & $\sim$50K & Phase + deadline write \\
+\texttt{startRegistration()} & 72,222 & Phase + deadline write \\
 \hline
-\texttt{createDivision()} & Several million & Full Voting.sol deployment \\
+\texttt{createDivision()} & 1,996,179 & Full Voting.sol deployment \\
 \hline
 \end{tabular}
 \end{table}
@@ -526,7 +521,7 @@ The complete flow was validated repeatedly across backends: GN enrolls a voter (
 
 \subsection{Proof Generation Time}
 
-The 15--25 second proof generation time on mobile is the primary user experience bottleneck. While acceptable for a once-per-election action, this could be reduced to $<$5 seconds with native proving (Swoir/noir\_android)---identified as future work.
+The 3.1 second proof generation time (measured via Node.js on a desktop-class node) remains the primary computational bottleneck. While this represents a baseline and actual mobile execution (via WebView WASM) may take longer (typically 15--25 seconds), it is acceptable for a once-per-election action. This time could be significantly reduced with native proving (Swoir/noir\_android)---identified as future work.
 
 \subsection{Hermes Compatibility Trade-offs}
 

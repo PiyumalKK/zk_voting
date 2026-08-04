@@ -149,8 +149,8 @@ Execute strictly in order; each has its own file with spec + acceptance gates.
 | M10 | `M10-replication.md` | Primary + 2 replicas over mTLS; write forwarding | M09 | **done** |
 | M11 | `M11-frontend-switch.md` | Next.js env plumbing; v1 leftovers deleted; read paths green | M08 | harness gates green; **browser walkthrough outstanding** |
 | M12 | `M12-no-wallet-auth.md` | Login + server relay for admin/GN (custom mode only) | M11 | code complete (both passes); **click-through gate outstanding** (`RUNNING-GATES.md` §10) |
-| M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) | pending |
-| M14 | `M14-e2e-swap.md` | Full e2e suite, swap drill, docs, final dual-mode gate | M09–M13 | pending |
+| M13 | `M13-mobile.md` | Mobile app on custom chain (env only), gasless vote | M11 (full flow also needs M12's GN portal) | code complete, offline + harness gates written; **device walkthrough outstanding** (`RUNNING-GATES.md` §11) |
+| M14 | `M14-e2e-swap.md` | Full e2e suite, swap drill, docs, final dual-mode gate | M09–M13 | deliverable 1 (`make e2e`) code complete, offline tests green; **gate outstanding** (`RUNNING-GATES.md` §12). Deliverables 2–4 (swap drill, docs, `RESULT.md`) pending — their numbers come from that run |
 M10 can run in parallel with M11–M13 (different packages).
 
 ---
@@ -224,7 +224,7 @@ M10 can run in parallel with M11–M13 (different packages).
 | `FAUCET_CHAIN_IDS` | `31337,9494` (default) | `31337,9494` — chains the dev faucet serves (M11) |
 | `NEXT_PUBLIC_CHAIN_API_URL` / `ADMIN_API_PASSWORD` / `ADMIN_PRIVATE_KEY_PATH` / `CHAIN_API_URL` | — | **removed in M11** with the v1 REST seam |
 
-**packages/mobile:** `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_RPC_URL`, `EXPO_PUBLIC_CHAIN_ID` (already exist; values change per mode).
+**packages/mobile:** `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_RPC_URL`, `EXPO_PUBLIC_CHAIN_ID` (already exist; values change per mode). All three must be a **LAN IP**, not `localhost`, on a physical device or emulator. A blank or malformed value falls back to the hardhat defaults rather than producing a `NaN` chain id (M13).
 
 ---
 

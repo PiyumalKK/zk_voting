@@ -7,8 +7,9 @@
 >
 > Applies to M05 (write path), M06 (`eth_getLogs`), M07 (dev/compat methods),
 > M08 (deploy + contract suite), M09 (restart recovery + audit replay),
-> M10 (replication — §7) and M11 (the Next.js frontend — §8).
-> Later milestones add their own gate commands; the setup in §1 does not change.
+> M10 (replication — §7), M11 (the Next.js frontend — §8), M12 (no-wallet
+> auth — §9, §10), M13 (mobile — §11) and M14 (the full election — §12).
+> The setup in §1 does not change between them.
 >
 > **§8 (M11) is the exception to all of this:** it runs in `packages/nextjs`,
 > needs no Go toolchain, and its offline phase needs no running chain at all.
@@ -512,7 +513,14 @@ yarn test:custom
 (`yarn test` stays pinned to `--network hardhat`, so hardhat-mode regression
 runs are unaffected.)
 
-**Expected:** 55 passing (13 `GNAndRegistry` + 5 `NicRegistry` + 37 `Voting`).
+**Expected:** 65 passing (13 `GNAndRegistry` + 5 `NicRegistry` + 37 `Voting` +
+10 `DivisionEnrolment`).
+
+`DivisionEnrolment.ts` was added on 2026-08-03 with the fix for the
+runtime-division enrolment defect (§13). It pins what a division created by
+`ElectionRegistry.createDivision()` can and cannot do, and what a client must
+call to finish setting one up. Worth reading if the admin panel's section 7
+ever changes.
 
 Expect it to take a few minutes. Each of the 37 `Voting` tests redeploys the
 4.7M-gas HonkVerifier, and this node seals one transaction per block, so the
@@ -654,7 +662,7 @@ yarn test:custom
 ```
 
 which redeploys and passes only if the recovered chain is fully functional
-(55 passing, as in §5.5).
+(65 passing, as in §5.5).
 
 ### If something fails
 
@@ -1275,7 +1283,7 @@ yarn lint
 
 | Check | Expected |
 |---|---|
-| `yarn test` | Two projects run — `node` (185 cases) and `jsdom` (111). All green. Pass 2 adds 135: `utils/chainMode`, `utils/navigation`, `services/auth/nicHashAuth` (node); `hooks/useElectionAuth`, `hooks/useElectionWriter`, `hooks/useGnDivision`, `app/login/page`, `components/ElectionIdentity`, `components/Header`, `app/gn/page`, `app/gn/register/page`, `app/voting/admin/page`, `app/voting/admin/_components/GnAccountsSection` (jsdom) |
+| `yarn test` | Two projects run — `node` (185 cases) and `jsdom` (115, was 111 before §13's fix added four to `app/voting/admin/page`). All green. Pass 2 adds 135: `utils/chainMode`, `utils/navigation`, `services/auth/nicHashAuth` (node); `hooks/useElectionAuth`, `hooks/useElectionWriter`, `hooks/useGnDivision`, `app/login/page`, `components/ElectionIdentity`, `components/Header`, `app/gn/page`, `app/gn/register/page`, `app/voting/admin/page`, `app/voting/admin/_components/GnAccountsSection` (jsdom) |
 | `yarn check-types` | Clean. Partially pre-verified: the agent could not run `tsc` against the repo directly (network mount — ~20k `.d.ts` reads, never finished inside a 45-second tool call), so it copied `typescript` and the type declarations to local disk and type-checked the source tree there. Every M12 pass-2 file is clean under `strict`. That check could not resolve a handful of packages (`@rainbow-me/rainbowkit`, `next-themes`, `blo`, `poseidon-lite`, …), so **run it yourself** — call sites touching those are still unverified. |
 | `yarn lint` | Clean. Not run in the sandbox, same reason. |
 
@@ -1351,7 +1359,542 @@ MetaMask enabled again:
 
 ---
 
-## 11. What to send me if a gate fails
+## 11. M13 gate — the mobile app on the custom chain
+
+Four phases. Phase A is offline and takes under a minute. Phase B needs the node
+and the Next.js app but no phone. Phases C and D are the device walkthrough, and
+only they can prove the whole flow — the earlier phases exist so that a failure
+there means something specific.
+
+Like §8, this section needs **no Go toolchain**: the node has to be *running*,
+but nothing here builds it.
+
+### Before you start: `yarn install`
+
+M13 adds one devDependency to `packages/mobile` (`vitest`) and three scripts
+(`test`, `test:watch`, `chain-check`).
+
+```
+cd /d D:\Projects\FYP\zk_voting
+yarn install
+```
+
+> If `yarn install` complains about `packages\mobile\node_modules\vitest`, delete
+> that entry first (`rmdir packages\mobile\node_modules\vitest`) and re-run. The
+> agent left a symlink there while verifying the suite and could not remove it
+> from its sandbox — it points at a path that does not exist on your machine.
+
+### Phase A — offline checks
+
+No chain, no dev server, no phone.
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\mobile
+
+yarn test            # raw: vitest run
+yarn check-types     # raw: tsc --noEmit
+```
+
+**Expected**
+
+| Command | Pass looks like |
+|---|---|
+| `yarn test` | `Test Files 3 passed`, `Tests 36 passed` |
+| `yarn check-types` | no output |
+
+The three test files, and what each is for:
+
+| File | What it proves |
+|---|---|
+| `src/config.test.ts` (15) | The app resolves to 9494 / :9545 on `EXPO_PUBLIC_*` alone — M13's whole claim, as a test. A blank or malformed chain id falls back instead of becoming `NaN` or `0`, either of which viem signs with silently. |
+| `src/services/api.test.ts` (7) | `tryFundBurner` never throws, whatever the faucet does — a disabled chain, a 502, an unreachable host. `fundBurner` still throws, so a caller that needs the failure can have it. |
+| `src/services/chain.test.ts` (14) | The hand-built legacy transaction, driven over HTTP against a recording JSON-RPC server. Asserts the envelope (legacy, chain id, gas price, 600k/15M limits, nonce, selector), that **no** `eth_estimateGas` / `eth_feeHistory` / `eth_maxPriorityFeePerGas` call is made, that a zero gas price is used rather than the 1-gwei fallback, and that every vote gets a fresh sender. |
+
+If `chain.test.ts` fails on a `gasPrice` assertion, read the helper comment in
+that file first: a legacy transaction encodes zero as an empty RLP item and
+viem's parser omits the key, so `undefined` there means zero, not missing.
+
+### Phase B — the harness against a live node
+
+**Terminal 1** — the node (reuse the M08/M09 data directory; do not reset):
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make run-dev
+```
+
+**Terminal 2** — the app in custom mode (`.env.local` as in §8/§9):
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\nextjs
+yarn dev
+```
+
+**Terminal 3** — the harness. Defaults point at the **custom** chain, unlike
+§8's, because M13 is a custom-chain milestone:
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\mobile
+node e2e\mobile-chain-check.mjs
+```
+
+**Expected:** every line `[PASS]` or `[SKIP]`, final line `PASS`.
+
+The checks that matter most:
+
+| Check | Why it is here |
+|---|---|
+| `an unfunded burner transacts and is mined` | **THE gas-problem proof.** A wallet that has never held a wei signs, sends, and gets `status: success`, and its balance is still 0 afterwards. This is the milestone's headline result and the number to quote in the FYP report. |
+| `eth_getTransactionCount agrees on latest and pending` | MASTER §10 pitfall 4. The app asks for `latest`; a disagreement would mean nonces that skip. |
+| `the chain prices gas at zero` | The app's 1-gwei fallback fires only on RPC *failure*, so a non-zero answer here would quietly reprice every vote. |
+| `a reverting vote returns decodable custom-error data` | MASTER §10 pitfalls 1 and 2, from the phone's side. The screens' "already voted" copy is derived from the custom error's *name*, so `Voting__…` has to survive the round trip. Needs `yarn compile` to have run — it reads the real `Voting` ABI. |
+| `merkle-path serves a path the prover can use` | The API's root must equal the contract's. A mismatch shows up on the phone as `Voting__InvalidRoot` after a two-minute proof, which is the hardest failure in the system to diagnose. |
+
+Two checks SKIP on a chain with no election data (`merkle-path`, and the
+registration transaction unless you supply a key). To run the registration
+check, pass an allowlisted voter's key:
+
+```
+set CHECK_VOTER_KEY=0x<private key of an allowlisted voter>
+node e2e\mobile-chain-check.mjs
+```
+
+Add `--strict` in M14, once a full election exists, to turn the SKIPs into
+failures.
+
+In **hardhat mode** `CHECK_VOTER_KEY` does double duty: it also pays for the
+reverting-vote transaction, which cannot come from an empty burner on a chain
+that charges gas. Left unset it falls back to account #0 of the default
+mnemonic, which genesis prefunds on both chains.
+
+**Hardhat regression** (MASTER §6 rule 4) — the same harness, the other backend:
+
+```
+# yarn chain && yarn deploy, nextjs in hardhat mode, then:
+cd /d D:\Projects\FYP\zk_voting\packages\mobile
+set CHECK_CHAIN_ID=31337
+set CHECK_RPC_URL=http://127.0.0.1:8545
+node e2e\mobile-chain-check.mjs
+```
+
+The free-gas checks SKIP with a stated reason (Hardhat charges gas, so an
+unfunded sender genuinely cannot transact); everything else must pass with the
+same check names.
+
+### What has and has not been run (2026-08-03)
+
+Being precise about this, because the distinction matters for the report:
+
+| | Status |
+|---|---|
+| Phase A (`yarn test`, `yarn check-types`) | **Run and green** — `36 passed (36)`, `tsc` silent |
+| Phase B, against a **mock** JSON-RPC node | **Run and green** in both modes — custom `16 passed, 0 failed, 2 skipped`; hardhat `10 passed, 0 failed, 4 skipped` |
+| Phase B, against the **real** node | **Not run.** No Go toolchain in the agent's sandbox, as with every milestone so far |
+| Phases C and D (device) | **Not run.** Needs a phone |
+
+The mock run is worth what it is worth: it proves the harness executes every
+branch, parses what a node returns, and reports sensibly — not that the node
+behaves. The numbers to record in the FYP report come from your phase B run.
+
+The hardhat-mode mock is the one that earned its keep. It rejects any
+zero-priced transaction the way Hardhat really does, and that caught a bug in
+this harness before you ever saw it: the reverting-vote check signed with
+`gasPrice: 0` from an empty burner, so on Hardhat it was refused as *underpriced*
+and never reached the revert it exists to test. It now takes the price from the
+node and the sender from a funded account. The lesson is M11's, again: a check
+that only ever runs against one backend is not yet a check.
+
+### Phase C — the device flow
+
+This is the milestone's real gate and it needs a phone. Point the app at your
+machine's **LAN IP**, not `localhost` — a device resolves `localhost` to itself.
+
+`packages\mobile\.env` (or the shell you run `expo start` from):
+
+```
+EXPO_PUBLIC_API_URL=http://<LAN-IP>:3000
+EXPO_PUBLIC_RPC_URL=http://<LAN-IP>:9545
+EXPO_PUBLIC_CHAIN_ID=9494
+```
+
+The node binds all interfaces and the Next.js dev server needs `--hostname
+0.0.0.0` (or `yarn dev -H 0.0.0.0`) to be reachable from the phone. Check from
+the phone's browser before blaming the app:
+
+```
+http://<LAN-IP>:3000/api/election      → JSON with chainId 9494
+```
+
+Then, per the milestone's step 4: onboarding → GN enrols you via the web portal
+(M12) → register (OTP + biometric) → the WebView proof → vote → "Verify My Vote".
+
+| Step | Expected |
+|---|---|
+| Register | Transaction mined; `/blockexplorer` shows it; a `NewLeaf` log is present |
+| Vote | Receipt `status: 1` at `gasPrice 0`, from a burner the faucet never funded |
+| Vote again | The app's existing "already voted" error, decoded from the node's revert data |
+| Verify My Vote | Finds the nullifier on-chain and names the candidate |
+| `/results` on the web | The tally moves |
+
+### Phase D — the zero-balance proof by hand
+
+Worth doing once explicitly, because it is the claim the whole custom chain was
+built for. Stop the Next.js app (or block `/api/faucet`) and cast a vote. The
+top-up will fail, the app will carry on, and the vote will land. Before M13 this
+aborted with "Could not fund the anonymous wallet".
+
+Then confirm on-chain:
+
+```
+curl.exe -s -X POST localhost:9545 -H "content-type: application/json" ^
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBalance\",\"params\":[\"0x<burner>\",\"latest\"]}"
+```
+
+`0x0`, after that address sent a 15M-gas transaction.
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| `yarn test` can't find `vitest` | `yarn install` from the repo root, and see the note about the stale symlink above. |
+| `yarn check-types` errors only in `*.test.ts` | Same cause — the vitest types are not installed yet. |
+| Harness exits 2 with "Cannot reach the node" | The node isn't running, or `CHECK_RPC_URL` was set in a different terminal (§0). |
+| Harness exits 2 with a chain-id mismatch | `CHECK_CHAIN_ID` and the node disagree; it refuses to run rather than report confusing failures. |
+| `a reverting vote returns decodable custom-error data` SKIPs | `yarn compile` hasn't run — it reads `packages/hardhat/artifacts/.../Voting.json`. |
+| That same check FAILs with "no revert data in the error" | The node is returning a revert without the `data` field. This is a node bug and a serious one: every custom-error message in both the app and the web UI depends on it. Send me the full error object. |
+| `an unfunded burner transacts and is mined` fails with `insufficient funds` | The node is not applying the free-gas policy — check `eth_gasPrice` answers `0x0` and that the transaction really carried `gasPrice: 0`. |
+| The phone shows "Network request failed" everywhere | `localhost` in the env instead of the LAN IP, or the Next.js server is bound to loopback only. Test from the phone's browser first. |
+| Registration fails with "we couldn't verify your eligibility" | The account is not on that division's allowlist, or you selected a different division than the GN enrolled you for. Not a chain problem. |
+| The vote's proof step hangs | The WebView prover, untouched by this milestone (MASTER §6 rule 3). Confirm the same phone works in hardhat mode before investigating. |
+| `git diff packages/mobile` shows more than the M13 files | Check the line endings before the content — the working tree already carries CRLF-only diffs on files no milestone has touched. |
+
+---
+
+## 12. M14 gate, part 1 — the full election (`make e2e`)
+
+The first gate that runs an actual election. Everything earlier proved one
+layer; this drives all of them at once, on a chain it creates and destroys:
+
+```
+fresh node -> yarn deploy --network custom -> admin sets up the election
+-> GN officer allowlists five voters -> each registers a commitment
+-> Merkle path rebuilt from NewLeaf logs -> REAL UltraHonk proof
+-> vote from an UNFUNDED burner -> tally / nullifier / double-vote refused
+-> node restarted, state intact -> cmd/audit replays the whole chain
+```
+
+M14's other deliverables (the swap drill, the docs, `RESULT.md`) come after
+this passes, because their numbers come from this run.
+
+### Before you start
+
+Three things beyond the §1 setup, and the first two are the ones that bite:
+
+**1. `npm install` in `e2e/` again.** M14 adds four dependencies — `@aztec/bb.js`,
+`@noir-lang/noir_js`, `@zk-kit/lean-imt` and `poseidon-lite`. The bb.js
+download is large; expect a minute or two.
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make diff-install
+```
+
+**2. The first proof needs internet access.** bb.js fetches its structured
+reference string from `aztec-ignition.s3.amazonaws.com` and caches it in
+`%USERPROFILE%\.bb-crs`. On the first run this is a few hundred megabytes and
+several minutes; afterwards it is instant and offline. If you see a network
+error naming that host, this is why — it is not a chain problem.
+
+**3. Nothing else may be listening on :9545.** The harness starts its own node
+and refuses to run if the port answers, rather than quietly driving a chain it
+does not control. Stop any `make run` / `make run-dev` first.
+
+It uses its own data directory, `data-e2e/`, which it wipes at the start of
+every run. The `data/` directory that M08 built, M09 audited and M11-M13 read
+from is untouched — deliberately, so this gate cannot destroy the chain those
+gates depend on.
+
+### Phase A — offline
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+
+make vet
+make fmt
+make test
+make e2e-core-test        # raw: cd e2e && node --test lib/election-core.test.mjs
+```
+
+`make e2e-core-test` is new in M14 and takes about a second. It unit-tests the
+election's cryptography and Merkle-path logic with no node, no chain and no
+proving. **Expected: `# pass 45`, `# fail 0`.**
+
+New in M14's Go suite, worth watching for by name in `make test` output. All
+four exist because of one fault the first gate run found — see "Durability"
+below:
+
+| Test | What it proves |
+|---|---|
+| `TestSealedBlocksAreFlushedToDisk` | A sealed transaction block is written **and then flushed**. Before M14 it was only written. |
+| `TestEverySealingPathFlushesToDisk` | All three sealing paths — transaction, empty block, system-op — flush exactly once. A regression that synced only transaction blocks would still lose an `evm_mine` or a `hardhat_setBalance`, and M07 made system-op blocks part of the audited history, so a lost one is a hole in the replay. |
+| `TestASyncFailureFailsTheSeal` | A disk that will not flush fails the seal loudly. Swallowing it would be the worst outcome: the caller gets a receipt, the block is not durable, and nothing says so. |
+| `TestPersistFlushesAfterWritingNotBefore` | The flush comes *after* the write it flushes. A sync in the wrong order guarantees nothing, and a counter alone cannot tell the two apart. |
+
+Two of its suites check against something outside this repo's JavaScript,
+which is what makes them worth having:
+
+| Suite | What it proves |
+|---|---|
+| `against the circuit's own fixture` | The values in `packages/circuits/Prover.toml` — produced independently and accepted by `nargo` — are reproduced exactly: `poseidon1(42)` gives the recorded nullifier hash, and the recorded root recovers index 2. If poseidon-lite, the field, or the path-walking bit order ever diverged from the circuit, this fails. Testing poseidon against poseidon would not. |
+| `against the compiled circuit's ABI` | The witness object has exactly the parameters `circuits.json` declares, with the declared array length of 16. A renamed or reordered circuit input is caught in a second here instead of as an opaque bb.js failure ten minutes into the full gate. |
+
+The `buildMerklePath` suite builds real LeanIMTs of 1, 2, 3, 5, 8 and 9 leaves
+and re-walks each path the way the *circuit* does — little-endian index bits,
+poseidon2 per level — rather than the way LeanIMT does. That is the whole point
+of the brute-forced circuit index, so verifying it any other way would verify
+nothing. The one-leaf case is deliberate: a division with a single registered
+voter has a path with no siblings at all, `depth = 0`, and the root *is* the
+commitment.
+
+### Phase B — the gate
+
+One command, no other terminals:
+
+```
+cd /d D:\Projects\FYP\zk_voting\packages\blockchain
+make e2e
+```
+
+Expect it to take a few minutes — most of it the UltraHonk proof and the
+`yarn deploy` run. Add `E2E_ARGS="--quiet"` (Git Bash / PowerShell only, see
+§0) to suppress the node's own log; from cmd.exe use `node e2e\election.mjs
+--quiet` directly.
+
+> **Do not append a `#` comment to a `make` command line.** `make e2e   # note`
+> is parsed as a second target and stops with `No rule to make target '#'`.
+> The command before it still ran; only the comment fails.
+
+The deploy step runs with hardhat-deploy's `--reset` because the chain is new
+every time — see the troubleshooting table for why that is mandatory rather
+than tidy. It rewrites `packages/hardhat/deployments/custom/`, but the
+addresses are deterministic, so `git diff packages/nextjs/contracts/deployedContracts.ts`
+should stay empty. If it does not, that is worth telling me about.
+
+**Expected:** every line `[PASS]`, a "numbers for the report" block, then
+`PASS`. The checks, in order of what they establish:
+
+| Check | What it establishes |
+|---|---|
+| `the real deploy scripts complete` | This is `yarn deploy --network custom` itself, not a private deployment path. A break in the deploy scripts fails here rather than in front of an examiner. |
+| `the Merkle path rebuilt from NewLeaf logs matches the contract's root` | `eth_getLogs` and `eth_call` agree. A mismatch would reach a voter as `Voting__InvalidRoot` two minutes after their proof started — §11 calls that the hardest failure in the system to diagnose. Here it is one line. |
+| `the path is non-trivial, so the sibling ordering is actually exercised` | A guard on the gate itself. Five voters register, and the one who votes is the middle leaf, so the path has siblings on both sides and the circuit-index search really runs. With a single registered voter the root would simply *be* the commitment, the path would be empty, and the check above would pass while proving nothing. |
+| `a real UltraHonk proof is generated` | Same Noir + Barretenberg (keccak) pipeline as the web UI and the mobile WebView prover. Not a fixture. |
+| `the burner votes without ever being funded` | **THE headline result.** A wallet created seconds earlier, holding 0 wei before and after, sends a 15,000,000-gas transaction and it is mined. This is the problem the custom chain exists to solve. |
+| `the chosen candidate's tally increases by exactly one` | And no other candidate's does. |
+| `replaying the proof from another wallet is rejected` | A valid proof resubmitted by a different burner is refused with the custom error **by name** (`Voting__NullifierHashAlreadyUsed`), which is what the phone's "you have already voted" copy is derived from. |
+| `the rejected vote is not mined into a block` | MASTER §10 pitfall 2. An election audit should not have to explain a transaction that did nothing. |
+| `the chain comes back at the same head after a restart` | M09's property, now over a chain containing a verified ZK proof. |
+| `cmd/audit replays the whole election` | The claim the report rests on: an observer trusting only the block list re-derives every state root, including the one produced by verifying the proof. |
+
+Record the "numbers for the report" block — deploy time, witness time, proof
+time, vote submit-to-receipt latency, and the audit line. Those are the M14
+figures for the FYP report.
+
+### Durability: what the first gate run found
+
+Worth recording in full, because it is the most substantive thing M14 turned up
+and it belongs in the FYP report.
+
+The first run reached the end of the election — real proof, free-gas vote,
+replay refused — and then failed two checks in the durability section: the node
+came back **two blocks short** of where it had been, and the tally read `0/0/0`.
+One of the lost blocks contained the vote, for which a receipt had already been
+returned to the client.
+
+This was not a replay fault and not a consistency fault. M09 made the six
+writes that seal a block atomic, so the database can never be torn — and
+indeed `cmd/audit` passed cleanly on what survived, because a chain that is
+merely *short* is still perfectly self-consistent. What M09 never addressed was
+durability. go-ethereum configures Pebble with `writeOptions: pebble.NoSync`,
+and says so in its own comment: *"recent data may be lost in the event of an
+application-level panic... Geth is expected to handle recovery from an unclean
+shutdown."* For a general-purpose client that is a sound trade — a node missing
+its last few blocks re-syncs them from peers. This chain is the sequencer.
+There are no peers to re-sync from, and the RPC returns a receipt the moment
+the write lands in memory.
+
+`internal/chain/seal.go`'s `persist` now calls `db.SyncKeyValue()` after the
+batch, which writes a no-op WAL record in sync mode and flushes every preceding
+write with it. One fsync per sealed block — and since this chain seals one
+transaction per block, one per transaction. That is a deliberate cost, and a
+small one beside the 2.9 s a vote's proof takes.
+
+Two notes for reading the result:
+
+- **Graceful shutdown was never affected.** §6 Phase C — Ctrl+C, restart,
+  resume at height 787 — worked before this change and works after. The gap was
+  only ever visible on abrupt termination.
+- **The harness kills abruptly on purpose, and on Windows has no choice.**
+  Node.js cannot send a POSIX signal to a child process there; `kill()` is
+  documented as terminating "forcefully and abruptly (similar to SIGKILL)". So
+  the restart check is really a crash test, which is the more useful of the two
+  — and the reason this was found at all.
+
+The `AUDIT OK` line alone did not catch it, which is why there is now a second
+check: the audited height must equal the height the election reached. A green
+tick over a shorter story than the checks above told is not a pass.
+
+### Two things the harness does that are not obvious
+
+**It registers five voters, not one.** A division with a single registered
+voter has a Merkle tree whose root *is* that voter's commitment: the path has
+no siblings, the circuit index is 0, and the sibling ordering and index
+brute-force — the most bug-prone code in the flow — never execute. The voter
+who actually votes is the middle leaf, so the path carries siblings on both
+sides and a left/right ordering bug cannot pass by symmetry. The
+`path is non-trivial` check above exists so that this cannot silently regress.
+
+**It reassigns the GN seat before enrolling anyone.**
+
+### Why the GN separation is not the deploy script's default
+
+`01_deploy_divisions.ts` assigns Kaduwela's GN seat to the deployer, so a demo
+can be driven from one wallet. The harness reassigns it to account #1 before
+enrolling anyone, so the voter is allowlisted by an account that is *not* the
+election authority. Without that, the whole gate would pass with the owner
+quietly doing the GN's job, and the role separation `01-AUTH-DESIGN.md` §4
+describes would be untested.
+
+### What has and has not been run (2026-08-03)
+
+Being precise, as §11 was:
+
+| | Status |
+|---|---|
+| `make e2e-core-test` (44 offline unit tests) | **Run and green** |
+| Every harness phase, against a **mock** JSON-RPC chain | **Run and green** in both modes — free-gas and a paying (Hardhat-like) control. The mock uses the real `Voting`/`ElectionRegistry` ABIs for every encode and decode, recovers the sender from each signed transaction, and enforces the contract's phase and access-control rules — so calldata, event decoding, receipt handling, revert decoding and the free-gas branch are all genuinely exercised |
+| The proof step | **Not run.** bb.js needs to download its SRS; the agent's sandbox has no route to S3. The control run stubs the prover |
+| `make e2e` against the **real node** | **Not run.** No Go toolchain in the agent's sandbox, as with every milestone so far |
+
+So: the harness is proven to execute, encode and parse correctly. Whether the
+*node* executes a Honk verification identically to Hardhat is what your run
+answers — and it is the interesting question, since `HonkVerifier.verify()` is
+the most EVM-sensitive thing this application does.
+
+### If something fails
+
+| Symptom | What it means / what to do |
+|---|---|
+| `something is already serving http://127.0.0.1:9545` | A `make run` / `make run-dev` / `make run-cluster` is still up. Stop it. The harness refuses rather than driving a chain it does not own, because the restart and audit steps would then operate on the wrong data directory. |
+| `packages/hardhat/deployments/localhost does not exist` | §5.1's footgun, now a hard stop instead of a silent one: deploying to `custom` would regenerate `deployedContracts.ts` without the 31337 entry. The message names the fix. `--allow-single-network` overrides it if you really mean to. |
+| ~~`cannot get the transaction for PoseidonT3's previous deployment, please check your node synced status`~~ | **Hit and fixed 2026-08-03, on the first gate run.** Not a sync problem and not a node fault, despite the wording. `hardhat-deploy`'s `fetchIfDifferent` reads the `transactionHash` recorded in `deployments/custom/PoseidonT3.json` and asks the node for that transaction, to decide whether anything changed. This gate creates a brand-new chain every run, so that transaction has never existed on it, the provider returns null, and hardhat-deploy stops. The records were simply describing a chain that no longer exists. The harness now passes hardhat-deploy's own `--reset` whenever it created the chain. Safe precisely here: addresses are deterministic, so a successful run regenerates byte-identical records and `deployedContracts.ts` does not move. |
+| A deploy failure whose exit code is `3221226505` | `0xC0000409`. ts-node's libuv teardown aborting on Windows *after* the real error was already printed (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`). The exit code carries no information; the harness now extracts and prints the meaningful `Error:` line instead. |
+| A network error naming `aztec-ignition.s3.amazonaws.com` | The SRS download. Needs internet on the first run only. |
+| `could not read the compiled circuit` | `packages/nextjs/public/circuits.json` is missing — it comes from `nargo compile` in `packages/circuits`. |
+| `missing contract artifact` | `yarn compile` at the repo root. |
+| `the Merkle path rebuilt from NewLeaf logs matches the contract's root` FAILS | A node bug, not a harness bug: `eth_getLogs` and `eth_call` disagree. Send me the derived root, the contract's root and the division address. |
+| `the vote transaction is mined successfully` fails with a bare `execution reverted` and no data | Suspect gas before suspecting the proof — §5.5 records exactly this, and it was an out-of-gas both times. `Voting.vote()` is the most expensive call in the system. |
+| `the vote transaction is mined successfully` fails with `Voting__InvalidProof` | The interesting failure, and the one this gate exists to find. The proof was accepted by Barretenberg and rejected by the EVM, which means the node's execution of `HonkVerifier.verify()` differs from Hardhat's. Re-run `yarn test:custom` (§5.5) first to see whether the contract suite still passes, then send me both results. |
+| `replaying the proof ... is rejected` reports an error name of `null` | The revert `data` is not reaching us. Every custom-error message in the phone app and the web UI depends on that field (MASTER §10 pitfall 1). Send me the whole error object. |
+| `cmd/audit replays the chain` FAILS | The serious one, exactly as in §6: sealing and replay disagree over a chain that now contains a ZK verification. Send me the block number and the two roots. |
+| `the audited chain is the one the election ran on` FAILS while the audit itself passes | The chain is self-consistent but shorter than the election was — blocks were lost. If the restart check also failed, read the durability section above. If the restart check *passed*, this is new and I want to see it. |
+| ~~The restart loses the last blocks and the tally reads `0/0/0`~~ | **Hit and fixed 2026-08-03, on the first gate run.** Sealed blocks were written but never flushed; an abrupt stop lost them. `persist` now fsyncs. Full account in the durability section above. |
+| `sync block N (0x…) to disk` in the node log | The new durability check failing for real: the write landed but the disk would not flush it. The seal is refused rather than acknowledged, which is correct. Investigate the disk, not the chain. |
+| The run hangs after the last check | Barretenberg's worker threads. `generateVoteProof` destroys the backend in a `finally`; if it still hangs, tell me — the process should exit on its own. |
+| The output ends with `INCOMPLETE` | The run threw before its last phase rather than failing a check — the error is printed immediately below, and the checks above it are the context for reading it. Exit code 2, as opposed to 1 for a genuine check failure. |
+| `every allowlisted voter registers a commitment` fails on voter 3 or 4 | The accounts are mnemonic indices 4–8. If one is not genesis-prefunded the registration cannot pay for itself on a chain that charges gas; on the custom chain it should not matter. Check `internal/state/genesis.go` still prefunds all 20. |
+
+### Re-running
+
+Safe to run repeatedly: `make e2e` wipes `data-e2e/` and redeploys every time.
+It is also idempotent against a chain that already ran an election — the first
+thing it does to a division is `resetElection()` if it is not in Setup — so
+`--no-deploy` against a warm chain works too.
+
+`make reset-e2e` reclaims the disk afterwards.
+
+---
+
+## 13. Runtime divisions and NIC enrolment (fixed 2026-08-03)
+
+Not a gate — a defect found by reading the contracts, fixed, and recorded here
+because the symptom is misleading and the sample data hides it.
+
+### What was wrong
+
+Admin section 7, "Add New Division", called
+`ElectionRegistry.createDivision()` and reported success. GN enrolment goes
+through `NicRegistry.reserveNicHash`, whose first check is
+`require(s_votingContracts[votingContract], "Unregistered division")` — and
+nothing ever called `NicRegistry.setVotingContract` for a division created that
+way. So a hand-made division looked complete, appeared in every picker, and
+then failed at `/gn/register` with a bare revert string.
+
+Three things kept it hidden:
+
+- **The sample divisions are exempt.** `deploy/01_deploy_divisions.ts`
+  authorises Kaduwela, Colombo Central and Gampaha explicitly, so every demo
+  that used them worked.
+- **The contract suite was exempt.** `test/NicRegistry.ts` authorises its
+  division in `beforeEach`, so all five of its tests started from a state the
+  defect cannot reach.
+- **The error named the wrong thing.** `/gn/register` special-cased
+  `NicRegistry__AlreadyUsed` and `Not owner or GN` but not this, so it fell
+  through to the raw revert text, which sounds like the division does not exist.
+
+It affected **both chain modes**. Nothing about it is custom-chain specific.
+
+### Why the fix is in the UI and not the contract
+
+`NicRegistry.setVotingContract` is `onlyOwner`, and the owner is the deployer,
+not `ElectionRegistry` — which holds no reference to `NicRegistry` at all.
+Making `createDivision` self-authorising therefore needs an ownership or
+authorised-factory change to `NicRegistry`, a redeploy, and new addresses. It is
+also out of bounds under MASTER §6 rule 3. The requirement is real and permanent
+and belongs to whoever creates a division, so the caller now meets it.
+
+### What changed
+
+| Change | Where |
+|---|---|
+| Section 7 now sends **two** transactions: `createDivision`, then `setVotingContract` for the address read out of the `DivisionCreated` event | `app/voting/admin/page.tsx` |
+| A partial failure says the division *was* created and points at the repair, instead of reporting a clean error | same |
+| Divisions that are not authorised are listed with an **Authorise** button — this is the repair path for divisions created before the fix | same |
+| `/gn/register` maps "Unregistered division" to an explanation naming section 7 | `app/gn/register/page.tsx` |
+| 10 tests pinning the contract behaviour the fix relies on | `packages/hardhat/test/DivisionEnrolment.ts` |
+| 4 tests pinning the panel's two-transaction behaviour and the repair list | `app/voting/admin/page.test.tsx` |
+
+Authorisation is read from the `VotingContractUpdated` event, because
+`s_votingContracts` is a private mapping with no getter — there is no other way
+for a client to answer the question. `DivisionEnrolment.ts` asserts that event's
+shape so a contract change cannot make the indicator go blind.
+
+### Checking it by hand
+
+Any chain whose divisions were created through the admin panel before this fix
+will show the warning in section 7. Click **Authorise** once per division.
+
+To verify the whole path on a fresh chain, add this to §10's click-through
+table — it is the walkthrough step whose absence let the defect survive:
+
+| # | Step | Expected |
+|---|---|---|
+| 4b | Section 7 → create a division, then sign in as a GN assigned to it and enrol a voter at `/gn/register` | Both `reserveNicHash` and `addVoters` succeed. Before this fix the first one reverted "Unregistered division" |
+
+### What has and has not been run
+
+| | Status |
+|---|---|
+| The defect itself | **Confirmed by reading the contracts**, and by tracing every call site |
+| `DivisionEnrolment.ts`, `page.test.tsx` additions | **Written, not executed.** `packages/nextjs/node_modules` holds Windows-native binaries (`@esbuild/win32-x64`), so vitest cannot start in the agent's Linux sandbox, and there is no Go/Hardhat toolchain either. Both files parse cleanly under TypeScript's own parser; that is a syntax check, not a test run |
+| The fix in a browser | **Not run.** Needs the §10 click-through |
+
+So: run `yarn test` in `packages/nextjs` and `yarn test` in `packages/hardhat`
+before trusting the counts above.
+
+---
+
+## 14. What to send me if a gate fails
 
 Paste the **full terminal output** of the failing command, plus the command you ran.
 For Go build failures, the compiler error with its file:line is enough. For harness

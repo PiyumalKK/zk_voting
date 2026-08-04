@@ -100,9 +100,11 @@ export default function Vote() {
 
       const burner = newBurnerAccount();
       setStep("Preparing anonymous wallet…");
-      await api.fundBurner(burner.address).catch(() => {
-        throw new Error("Could not fund the anonymous wallet (is the local faucet running?)");
-      });
+      // Best-effort: on a zero-gas-price chain the burner needs no balance at
+      // all, so a faucet that is down, disabled for this chain, or absent must
+      // not stop a vote. If the wallet really cannot pay, the transaction below
+      // says so precisely. See `api.tryFundBurner`.
+      await api.tryFundBurner(burner.address);
 
       setStep("Casting your anonymous ballot…");
       await submitVote(division.votingContract, callData, burner.privateKey);

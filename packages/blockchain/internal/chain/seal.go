@@ -193,6 +193,31 @@ func annotateReceipts(block *types.Block, receipts types.Receipts) {
 // crash point at which the head references state that was never written,
 // which is the property internal/state.VerifyHead asserts at every boot and
 // TestChainRecoversFromAPartialWrite exercises directly.
+//
+// *** Durability (M14) ***
+//
+// Consistency is not durability, and until M14's full-election gate ran, this
+// chain had only the first. go-ethereum configures Pebble with
+// `writeOptions: pebble.NoSync` — its own comment says "recent data may be
+// lost in the event of an application-level panic... Geth is expected to
+// handle recovery from an unclean shutdown" — so `batch.Write()` returns as
+// soon as the write is in memory. The batch is atomic, so the database is
+// never torn; it can simply be missing whole recent blocks.
+//
+// For a general-purpose Ethereum client that is a sound trade: a node that
+// loses its last few blocks re-syncs them from peers. This chain has no peers
+// to re-sync from — it is the sequencer, and MASTER §3 makes it the sole
+// source of truth. Worse, the RPC returns a receipt as soon as this function
+// does, so without the sync below a voter could be told their vote was mined,
+// in a block that a power cut then erases. That is the one outcome an election
+// system may not have. M14's gate caught exactly this: killed abruptly, the
+// node came back two blocks short, having already handed out a receipt for
+// one of them.
+//
+// SyncKeyValue writes a no-op WAL record in sync mode, which flushes every
+// preceding write with it (ethdb/pebble). One fsync per sealed block, and
+// this chain seals one transaction per block, so the cost is per transaction —
+// paid deliberately, and cheap next to the 2.9 s a vote's proof takes.
 func persist(db ethdb.Database, block *types.Block, receipts types.Receipts) error {
 	batch := db.NewBatch()
 
@@ -205,6 +230,14 @@ func persist(db ethdb.Database, block *types.Block, receipts types.Receipts) err
 
 	if err := batch.Write(); err != nil {
 		return fmt.Errorf("persist block %d (%s): %w", block.NumberU64(), block.Hash(), err)
+	}
+
+	// Ordered after the batch, never merged into it: the sync has to flush a
+	// write that has already happened. Failing here is a real failure — the
+	// caller must not report the block as mined — so the error is returned
+	// rather than logged.
+	if err := db.SyncKeyValue(); err != nil {
+		return fmt.Errorf("sync block %d (%s) to disk: %w", block.NumberU64(), block.Hash(), err)
 	}
 	return nil
 }

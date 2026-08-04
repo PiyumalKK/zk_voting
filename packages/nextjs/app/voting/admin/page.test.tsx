@@ -37,12 +37,21 @@ const { DIVISION, OWNER, REGISTRY, VOTING_DATA, mocks } = vi.hoisted(() => {
       account: { address: undefined as string | undefined },
       write: vi.fn(),
       readContract: vi.fn(),
+      getLogs: vi.fn(),
+      getTransactionReceipt: vi.fn(),
       refetch: vi.fn(),
       notifyError: vi.fn(),
       notifySuccess: vi.fn(),
+      notifyWarning: vi.fn(),
     },
   };
 });
+
+/** The NicRegistry address the admin panel must authorise divisions against. */
+const NIC_REGISTRY = "0x0000000000000000000000000000000000000dd1";
+
+/** The Voting contract `createDivision` deploys, read back from its receipt. */
+const NEW_DIVISION_ADDRESS = "0x0000000000000000000000000000000000000ee1";
 
 vi.mock("~~/hooks/useElectionAuth", () => ({ useElectionAuth: () => mocks.auth }));
 vi.mock("~~/hooks/useElectionWriter", () => ({ useElectionWriter: () => ({ write: mocks.write }) }));
@@ -57,18 +66,27 @@ vi.mock("~~/hooks/scaffold-eth/useTargetNetwork", () => ({
 vi.mock("wagmi", () => ({ useAccount: () => mocks.account }));
 vi.mock("viem", () => ({
   http: () => ({}),
-  createPublicClient: () => ({ readContract: mocks.readContract }),
+  createPublicClient: () => ({
+    readContract: mocks.readContract,
+    getLogs: mocks.getLogs,
+    getTransactionReceipt: mocks.getTransactionReceipt,
+  }),
+  // Identity stubs: the real parsers need a full ABI/log encoding, and what
+  // these tests care about is which calls the page makes, not viem's decoding.
+  parseAbiItem: (signature: string) => ({ signature }),
+  parseEventLogs: ({ logs }: { logs: unknown[] }) => logs,
 }));
 vi.mock("~~/contracts/deployedContracts", () => ({
   default: {
     9494: {
       Voting: { address: DIVISION.votingContract, abi: [] },
       ElectionRegistry: { address: REGISTRY, abi: [] },
+      NicRegistry: { address: NIC_REGISTRY, abi: [] },
     },
   },
 }));
 vi.mock("~~/utils/scaffold-eth", () => ({
-  notification: { error: mocks.notifyError, success: mocks.notifySuccess },
+  notification: { error: mocks.notifyError, success: mocks.notifySuccess, warning: mocks.notifyWarning },
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 vi.mock("next/link", () => ({
@@ -102,8 +120,17 @@ beforeEach(() => {
   mocks.account = { address: OWNER };
   mocks.write.mockReset().mockResolvedValue("0xdeadbeef");
   mocks.readContract.mockReset();
+  // Default: the sample division is already authorised, which is true of the
+  // three the deploy script creates. Tests that care override this.
+  mocks.getLogs
+    .mockReset()
+    .mockResolvedValue([{ args: { votingContract: DIVISION.votingContract, authorized: true } }]);
+  mocks.getTransactionReceipt
+    .mockReset()
+    .mockResolvedValue({ logs: [{ args: { votingContract: NEW_DIVISION_ADDRESS } }] });
   mocks.notifyError.mockClear();
   mocks.notifySuccess.mockClear();
+  mocks.notifyWarning.mockClear();
   stubReads();
   vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
 });
@@ -249,6 +276,72 @@ describe("admin page — write sites go through the seam", () => {
       functionName: "createDivision",
       args: ["Galle"],
     });
+  });
+
+  /**
+   * The regression tests for a real defect: section 7 used to make only the
+   * `createDivision` call and report success, leaving the division unusable for
+   * GN enrolment because `NicRegistry.reserveNicHash` refuses any contract that
+   * was never passed to `setVotingContract`. The contract behaviour these rely
+   * on is pinned in `packages/hardhat/test/DivisionEnrolment.ts`.
+   */
+  it("also authorises the new division for NIC enrolment", async () => {
+    const user = await renderAsAdmin();
+
+    await user.type(screen.getByPlaceholderText(/Kandy, Matara/), "Galle");
+    await user.click(screen.getByRole("button", { name: /deploy & register division/i }));
+
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(2));
+    expect(mocks.write.mock.calls[1][0]).toMatchObject({
+      address: NIC_REGISTRY,
+      functionName: "setVotingContract",
+      args: [NEW_DIVISION_ADDRESS, true],
+    });
+    expect(mocks.notifySuccess).toHaveBeenCalledWith(expect.stringContaining("authorised"));
+  });
+
+  it("warns rather than claiming success when authorisation fails", async () => {
+    const user = await renderAsAdmin();
+    // The division is created, then the second call fails. Reporting a plain
+    // error would imply nothing happened, which is the opposite of the truth.
+    mocks.write.mockResolvedValueOnce("0xdeadbeef").mockRejectedValueOnce(new Error("relay refused"));
+
+    await user.type(screen.getByPlaceholderText(/Kandy, Matara/), "Galle");
+    await user.click(screen.getByRole("button", { name: /deploy & register division/i }));
+
+    await waitFor(() => expect(mocks.notifyWarning).toHaveBeenCalled());
+    const warning = mocks.notifyWarning.mock.calls[0][0] as string;
+    expect(warning).toContain("was created");
+    expect(warning).toContain("relay refused");
+    expect(mocks.notifySuccess).not.toHaveBeenCalledWith(expect.stringContaining("authorised"));
+  });
+
+  it("lists divisions that were never authorised, and can repair one", async () => {
+    // No VotingContractUpdated events at all: the state of any chain whose
+    // divisions were created by hand before this was wired up.
+    mocks.getLogs.mockResolvedValue([]);
+
+    const user = await renderAsAdmin();
+
+    await waitFor(() => expect(screen.getByText(/cannot be used for GN enrolment yet/i)).toBeDefined());
+    await user.click(screen.getByRole("button", { name: /^authorise$/i }));
+
+    await waitFor(() => expect(mocks.write).toHaveBeenCalled());
+    expect(mocks.write.mock.calls[0][0]).toMatchObject({
+      address: NIC_REGISTRY,
+      functionName: "setVotingContract",
+      args: [DIVISION.votingContract, true],
+    });
+  });
+
+  it("says nothing when every division is already authorised", async () => {
+    // The default stub authorises the sample division, so the warning must not
+    // appear — an indicator that cries wolf on a correctly deployed chain would
+    // be worse than none.
+    await renderAsAdmin();
+
+    await waitFor(() => expect(mocks.getLogs).toHaveBeenCalled());
+    expect(screen.queryByText(/cannot be used for GN enrolment yet/i)).toBeNull();
   });
 
   it("assigns a GN officer on the chosen division contract", async () => {
