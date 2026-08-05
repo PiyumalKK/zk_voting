@@ -1,7 +1,18 @@
-# Runtime data — per-node chain state, keys and TLS certs (node uses data_<NODE_ID>/).
-# NEVER commit these: data_*/keys/admin_private.pem is a secret.
+# Runtime data — per-node chain state (DATA_DIR; also covers legacy
+# data_<NODE_ID>/ layouts from v1).
 data/
 data_*/
+
+# The 3-node cluster's per-node data directories (M10; make run-cluster).
+data-cluster/
+
+# The full-election gate's own chain (M14; make e2e). Separate from data/ so
+# the gate can reset it without destroying the chain M08/M09 built.
+data-e2e/
+
+# mTLS material for P2P (MASTER §7 TLS_CERT/TLS_KEY/TLS_CA; make gen-certs
+# in M10). NEVER commit these — private keys live here.
+certs/
 
 # Go binaries
 *.exe

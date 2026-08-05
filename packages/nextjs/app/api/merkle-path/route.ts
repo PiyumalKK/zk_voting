@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { LeanIMT } from "@zk-kit/lean-imt";
 import { poseidon2 } from "poseidon-lite";
 import { createPublicClient, http, parseAbiItem } from "viem";
+import { serverChainConfig } from "~~/utils/serverChain";
 
 /**
  * GET /api/merkle-path?division=<votingContract>&commitment=<value>
@@ -17,7 +18,7 @@ import { createPublicClient, http, parseAbiItem } from "viem";
  * never nullifiers, secrets or keys.
  */
 
-const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const { rpcUrl: RPC_URL } = serverChainConfig;
 const CIRCUIT_DEPTH = 16;
 
 const VOTING_DATA_ABI = [

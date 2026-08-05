@@ -60,6 +60,26 @@ const config: HardhatUserConfig = {
     localhost: {
       url: "http://127.0.0.1:8545",
     },
+    // The custom Go chain in packages/blockchain (MASTER §7 / M08).
+    //
+    // Unlike `localhost`, `accounts` is specified explicitly and that is not
+    // optional: a `hardhat node` manages keys and exposes them through
+    // eth_accounts, so hardhat-deploy can ask it to sign. Our node holds no
+    // private keys at all and returns an empty eth_accounts (it is a
+    // sequencer, not a wallet — see 01-AUTH-DESIGN.md), so ethers has to sign
+    // locally and submit via eth_sendRawTransaction.
+    //
+    // The mnemonic is Hardhat's public test mnemonic — not a secret, and the
+    // same 20 accounts internal/state/genesis.go prefunds with 10,000 ETH
+    // each. That is what makes signers #0-#3, which the deploy scripts use,
+    // exist and be funded on this chain without any extra setup.
+    custom: {
+      url: process.env.CUSTOM_RPC_URL || "http://127.0.0.1:9545",
+      chainId: Number(process.env.CUSTOM_CHAIN_ID || 9494),
+      accounts: {
+        mnemonic: "test test test test test test test test test test test junk",
+      },
+    },
 
     mainnet: {
       url: "https://mainnet.rpc.buidlguidl.com",

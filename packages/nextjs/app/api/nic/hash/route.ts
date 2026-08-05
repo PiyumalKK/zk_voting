@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, getAddress, http, verifyMessage } from "viem";
 import deployedContracts from "~~/contracts/deployedContracts";
+import { getAccountStore } from "~~/services/auth/accounts";
+import type { GnAccountRecord } from "~~/services/auth/accounts";
+import { authoriseNicHashSession } from "~~/services/auth/nicHashAuth";
+import { loadDivisions } from "~~/services/auth/relayContracts";
+import type { DivisionSummary } from "~~/services/auth/relayContracts";
+import { requireSession } from "~~/services/auth/serverSession";
+import { isCustomChainMode } from "~~/services/auth/session";
 import { canonicalizeNic, hashNic } from "~~/services/nic/nicHash";
+import { serverChainConfig } from "~~/utils/serverChain";
 
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 31337);
-const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const { chainId: CHAIN_ID, rpcUrl: RPC_URL } = serverChainConfig;
 const SIGNATURE_MAX_AGE_MS = 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 20;
@@ -83,6 +90,38 @@ async function isAuthorizedGn(address: `0x${string}`): Promise<boolean> {
   return officers.some(officer => (officer as string).toLowerCase() === address.toLowerCase());
 }
 
+/**
+ * The custom-mode branch: authenticate by session, then hash.
+ *
+ * Rate limiting is keyed by the resolved GN address in both modes, so the same
+ * officer gets the same budget whether they proved themselves with a wallet or
+ * with a cookie.
+ */
+async function sessionAuthorisedHash(canonicalNic: string, pepper: string): Promise<Response> {
+  const auth = await requireSession("gn");
+  if (!auth.ok) return auth.response;
+
+  let account: GnAccountRecord | undefined;
+  let divisions: DivisionSummary[];
+  try {
+    [account, divisions] = await Promise.all([getAccountStore().findByUsername(auth.data.username), loadDivisions()]);
+  } catch (error) {
+    console.error("[nic/hash] could not verify the GN session", error);
+    return NextResponse.json({ error: "Unable to verify GN authorization" }, { status: 503 });
+  }
+
+  const decision = authoriseNicHashSession({ session: auth.data, account, divisions });
+  if (!decision.ok) {
+    return NextResponse.json({ error: decision.error }, { status: decision.status });
+  }
+
+  if (isRateLimited(decision.gnAddress)) {
+    return NextResponse.json({ error: "Too many NIC hash requests. Please wait and try again." }, { status: 429 });
+  }
+
+  return NextResponse.json({ nicHash: hashNic(canonicalNic, pepper) });
+}
+
 export async function POST(req: NextRequest) {
   const pepper = process.env.SERVER_PEPPER;
   if (!pepper) {
@@ -103,6 +142,13 @@ export async function POST(req: NextRequest) {
   const canonicalNic = canonicalizeNic(nic);
   if (!canonicalNic) {
     return NextResponse.json({ error: "Invalid NIC format" }, { status: 400 });
+  }
+
+  // Custom chain: the GN has no wallet, so the session cookie is the proof of
+  // identity and the on-chain officer check is done against the stored account.
+  // See `authoriseNicHashSession` for why a session alone is not sufficient.
+  if (isCustomChainMode()) {
+    return sessionAuthorisedHash(canonicalNic, pepper);
   }
 
   const timestamp = req.headers.get("x-gn-timestamp");

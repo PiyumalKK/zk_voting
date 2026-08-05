@@ -1,8 +1,8 @@
 import { Address } from "@scaffold-ui/components";
 import { QRCodeSVG } from "qrcode.react";
 import { Address as AddressType } from "viem";
-import { hardhat } from "viem/chains";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { isLocalChainId } from "~~/utils/customChain";
 
 type AddressQRCodeModalProps = {
   address: AddressType;
@@ -31,7 +31,7 @@ export const AddressQRCodeModal = ({ address, modalId }: AddressQRCodeModalProps
                   disableAddressLink
                   onlyEnsOrAddress
                   blockExplorerAddressLink={
-                    targetNetwork.id === hardhat.id ? `/blockexplorer/address/${address}` : undefined
+                    isLocalChainId(targetNetwork.id) ? `/blockexplorer/address/${address}` : undefined
                   }
                 />
               </div>

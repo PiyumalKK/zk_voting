@@ -1,8 +1,8 @@
 import { TransactionHash } from "./TransactionHash";
 import { Address } from "@scaffold-ui/components";
 import { formatEther } from "viem";
-import { hardhat } from "viem/chains";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
+import { isLocalChainId } from "~~/utils/customChain";
 import { TransactionWithFunction } from "~~/utils/scaffold-eth";
 import { TransactionsTableProps } from "~~/utils/scaffold-eth/";
 
@@ -50,7 +50,7 @@ export const TransactionsTable = ({ blocks, transactionReceipts }: TransactionsT
                         size="sm"
                         onlyEnsOrAddress
                         blockExplorerAddressLink={
-                          targetNetwork.id === hardhat.id ? `/blockexplorer/address/${tx.from}` : undefined
+                          isLocalChainId(targetNetwork.id) ? `/blockexplorer/address/${tx.from}` : undefined
                         }
                       />
                     </td>
@@ -62,7 +62,7 @@ export const TransactionsTable = ({ blocks, transactionReceipts }: TransactionsT
                             size="sm"
                             onlyEnsOrAddress
                             blockExplorerAddressLink={
-                              targetNetwork.id === hardhat.id ? `/blockexplorer/address/${tx.to}` : undefined
+                              isLocalChainId(targetNetwork.id) ? `/blockexplorer/address/${tx.to}` : undefined
                             }
                           />
                         )
@@ -73,7 +73,7 @@ export const TransactionsTable = ({ blocks, transactionReceipts }: TransactionsT
                             size="sm"
                             onlyEnsOrAddress
                             blockExplorerAddressLink={
-                              targetNetwork.id === hardhat.id
+                              isLocalChainId(targetNetwork.id)
                                 ? `/blockexplorer/address/${receipt.contractAddress}`
                                 : undefined
                             }

@@ -45,7 +45,13 @@ export const FaucetButton = () => {
     }
   };
 
-  // Render only on local chain
+  // Hardhat only, deliberately. This button funds via `eth_sendTransaction`
+  // with an unlocked node account — it needs the node to hold keys and expose
+  // them through `eth_accounts`. The custom Go node does neither (MASTER §9:
+  // `eth_accounts` is a stub, only `eth_sendRawTransaction` is implemented), so
+  // on chain 9494 this would fail rather than fund anything. The custom-chain
+  // path is the server-signed `/api/faucet` route — and with free gas there,
+  // burners need no funding at all.
   if (ConnectedChain?.id !== hardhat.id) {
     return null;
   }

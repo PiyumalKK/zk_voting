@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { Address } from "viem";
-import { hardhat } from "viem/chains";
 import { AddressComponent } from "~~/app/blockexplorer/_components/AddressComponent";
 import deployedContracts from "~~/contracts/deployedContracts";
+import scaffoldConfig from "~~/scaffold.config";
 import { isZeroAddress } from "~~/utils/scaffold-eth/common";
 import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 
@@ -40,7 +40,9 @@ async function fetchByteCodeAndAssembly(buildInfoDirectory: string, contractName
 
 const getContractData = async (address: Address) => {
   const contracts = deployedContracts as GenericContractsDeclaration | null;
-  const chainId = hardhat.id;
+  // Match the address against the chain the app is pointed at; the same contract
+  // has different addresses on 31337 and 9494.
+  const chainId = scaffoldConfig.targetNetworks[0].id;
 
   if (!contracts || !contracts[chainId] || Object.keys(contracts[chainId]).length === 0) {
     return null;

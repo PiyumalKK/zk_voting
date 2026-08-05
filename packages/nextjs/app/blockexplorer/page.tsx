@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { PaginationButton, SearchBar, TransactionsTable } from "./_components";
 import type { NextPage } from "next";
-import { hardhat } from "viem/chains";
 import { useFetchBlocks } from "~~/hooks/scaffold-eth";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
+import { isLocalChainId } from "~~/utils/customChain";
 import { notification } from "~~/utils/scaffold-eth";
 
 const BlockExplorer: NextPage = () => {
@@ -15,13 +15,13 @@ const BlockExplorer: NextPage = () => {
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
-    if (targetNetwork.id !== hardhat.id) {
-      setIsLocalNetwork(false);
-    }
+    // "Local" covers Hardhat and the custom Go node — both are served by a node
+    // this explorer can read directly over JSON-RPC.
+    setIsLocalNetwork(isLocalChainId(targetNetwork.id));
   }, [targetNetwork.id]);
 
   useEffect(() => {
-    if (targetNetwork.id === hardhat.id && error) {
+    if (isLocalChainId(targetNetwork.id) && error) {
       setHasError(true);
     }
   }, [targetNetwork.id, error]);
@@ -58,18 +58,21 @@ const BlockExplorer: NextPage = () => {
     if (hasError) {
       notification.error(
         <>
-          <p className="font-bold mt-0 mb-1">Cannot connect to local provider</p>
+          <p className="font-bold mt-0 mb-1">Cannot connect to {targetNetwork.name}</p>
           <p className="m-0">
-            - Did you forget to run <code className="italic bg-base-300 text-base font-bold">yarn chain</code> ?
+            - Is the node running? <code className="italic bg-base-300 text-base font-bold">yarn chain</code> for
+            Hardhat, <code className="italic bg-base-300 text-base font-bold">make run</code> in{" "}
+            <code className="italic bg-base-300 text-base font-bold">packages/blockchain</code> for the custom chain.
           </p>
           <p className="mt-1 break-normal">
-            - Or you can change <code className="italic bg-base-300 text-base font-bold">targetNetwork</code> in{" "}
-            <code className="italic bg-base-300 text-base font-bold">scaffold.config.ts</code>
+            - Or check <code className="italic bg-base-300 text-base font-bold">NEXT_PUBLIC_CHAIN_BACKEND</code> /{" "}
+            <code className="italic bg-base-300 text-base font-bold">NEXT_PUBLIC_RPC_URL</code> in{" "}
+            <code className="italic bg-base-300 text-base font-bold">.env.local</code>
           </p>
         </>,
       );
     }
-  }, [hasError]);
+  }, [hasError, targetNetwork.name]);
 
   return (
     <div className="container mx-auto my-10">

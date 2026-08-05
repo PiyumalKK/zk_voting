@@ -5,9 +5,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bars3Icon, BugAntIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
+import { ElectionIdentity } from "~~/components/ElectionIdentity";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
-import { isCustomChain } from "~~/services/chain/hooks";
+import { useElectionAuth } from "~~/hooks/useElectionAuth";
+import { isCustomMode } from "~~/utils/chainMode";
 
 type HeaderMenuLink = {
   label: string;
@@ -52,18 +54,15 @@ const adminLink: HeaderMenuLink = {
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
   const isOwner = useIsVotingOwner();
-  // Custom chain: no wallets, so "Debug Contracts" (an EVM/RPC tool) is
-  // replaced by the REST chain explorer. The Admin link is always shown —
-  // the page itself is password-gated (there is no wallet-owner signal to
-  // hide it behind).
-  const menu = isCustomChain
-    ? [
-        ...baseMenuLinks.filter(l => l.href !== "/debug"),
-        { label: "Chain Explorer", href: "/chain-explorer", icon: <BugAntIcon className="h-4 w-4" /> },
-      ]
-    : baseMenuLinks;
-  const showAdmin = isCustomChain ? true : isOwner;
-  const links = showAdmin ? [...menu, adminLink] : menu;
+  const { isAdmin } = useElectionAuth();
+  // Both backends are plain EVM chains reached over JSON-RPC, so the menu is
+  // identical in either mode: /debug and /blockexplorer work against our node
+  // just as they do against Hardhat. Only the Admin link differs, because
+  // "is this person the admin?" is a wallet question on Hardhat and a session
+  // question on the custom chain — `useIsVotingOwner` can never be true there,
+  // so without the second check the link would simply never appear.
+  const showAdminLink = isCustomMode() ? isAdmin : isOwner;
+  const links = showAdminLink ? [...baseMenuLinks, adminLink] : baseMenuLinks;
 
   return (
     <>
@@ -127,8 +126,10 @@ export const Header = () => {
         </ul>
       </div>
       <div className="navbar-end grow mr-4">
-        {/* Wallets only exist on the EVM backend; the custom chain is wallet-free. */}
-        {!isCustomChain && <RainbowKitCustomConnectButton />}
+        {/* Custom chain: the signing keys live on the server, so there is no
+            wallet to connect and the header shows the credential identity
+            instead. Hardhat: unchanged MetaMask flow (MASTER §1). */}
+        {isCustomMode() ? <ElectionIdentity /> : <RainbowKitCustomConnectButton />}
       </div>
     </div>
   );

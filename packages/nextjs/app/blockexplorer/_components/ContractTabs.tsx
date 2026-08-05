@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AddressCodeTab } from "./AddressCodeTab";
 import { AddressLogsTab } from "./AddressLogsTab";
 import { AddressStorageTab } from "./AddressStorageTab";
 import { PaginationButton } from "./PaginationButton";
 import { TransactionsTable } from "./TransactionsTable";
-import { Address, createPublicClient, http } from "viem";
-import { hardhat } from "viem/chains";
+import { Address } from "viem";
 import { useFetchBlocks } from "~~/hooks/scaffold-eth";
+import { createBlockExplorerClient } from "~~/hooks/scaffold-eth/useFetchBlocks";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 
 type AddressCodeTabProps = {
   bytecode: string;
@@ -20,13 +21,10 @@ type PageProps = {
   contractData: AddressCodeTabProps | null;
 };
 
-const publicClient = createPublicClient({
-  chain: hardhat,
-  transport: http(),
-});
-
 export const ContractTabs = ({ address, contractData }: PageProps) => {
   const { blocks, transactionReceipts, currentPage, totalBlocks, setCurrentPage } = useFetchBlocks();
+  const { targetNetwork } = useTargetNetwork();
+  const publicClient = useMemo(() => createBlockExplorerClient(targetNetwork), [targetNetwork]);
   const [activeTab, setActiveTab] = useState("transactions");
   const [isContract, setIsContract] = useState(false);
 
@@ -37,7 +35,7 @@ export const ContractTabs = ({ address, contractData }: PageProps) => {
     };
 
     checkIsContract();
-  }, [address]);
+  }, [address, publicClient]);
 
   const filteredBlocks = blocks.filter(block =>
     block.transactions.some(tx => {

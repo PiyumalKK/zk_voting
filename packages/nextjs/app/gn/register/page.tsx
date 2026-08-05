@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { NextPage } from "next";
-import { createPublicClient, http } from "viem";
-import { hardhat } from "viem/chains";
+import type { Abi } from "viem";
 import { useAccount } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
-import { findDivisionForGN, useDivisions } from "~~/hooks/useDivisions";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
+import { useElectionWriter } from "~~/hooks/useElectionWriter";
+import { useGnDivision } from "~~/hooks/useGnDivision";
 import { wagmiConfig } from "~~/services/web3/wagmiConfig";
+import { getDeployedAddress } from "~~/utils/deployedAddress";
 import { notification } from "~~/utils/scaffold-eth";
-
-const publicClient = createPublicClient({ chain: hardhat, transport: http("http://127.0.0.1:8545") });
 
 const VOTING_ABI = [
   { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -49,7 +50,8 @@ const NIC_REGISTRY_ABI = [
   },
 ] as const;
 
-const NIC_REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS as `0x${string}` | undefined;
+/** Optional override; normally the address comes from the deployment record. */
+const NIC_REGISTRY_ADDRESS_OVERRIDE = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS;
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -62,9 +64,23 @@ const GNRegisterVoter: NextPage = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [scanning, setScanning] = useState(false);
 
-  const { address, isConnected } = useAccount();
-  const { divisions, isLoading } = useDivisions();
-  const myDivision = findDivisionForGN(divisions, address) ?? null;
+  const { address } = useAccount();
+  const { division: myDivision, isLoading, identity, needsSignIn, mode } = useGnDivision();
+  const { write } = useElectionWriter();
+  const isCustom = mode === "custom";
+
+  // Bound to the configured target network, not a hardcoded Hardhat endpoint —
+  // this page must follow the chain the app is pointed at (MASTER §8).
+  const { targetNetwork } = useTargetNetwork();
+
+  // NicRegistry lives at a different address on each chain, so it must be read
+  // from the deployment record for the *current* target network. A single
+  // NEXT_PUBLIC_ address cannot be correct in both modes — it is kept only as an
+  // escape hatch for pointing at a registry deployed outside `yarn deploy`.
+  const nicRegistryAddress = useMemo(
+    () => getDeployedAddress(targetNetwork.id, "NicRegistry", NIC_REGISTRY_ADDRESS_OVERRIDE),
+    [targetNetwork.id],
+  );
 
   // NIC validation (Sri Lankan format)
   const validateNIC = (nic: string): boolean => {
@@ -168,32 +184,46 @@ const GNRegisterVoter: NextPage = () => {
     setStep(3);
   };
 
-  // Submit: call addVoters on the CORRECT division contract via connected wallet
+  /**
+   * Proves to `/api/nic/hash` that this caller is a serving GN officer.
+   *
+   * Hardhat: a wallet signature over the canonical NIC and a timestamp, checked
+   * against the on-chain officer list. Custom chain: the session cookie, which
+   * the route re-checks against the account store and the chain — there is no
+   * wallet to sign with, and the cookie is already same-site strict.
+   */
+  const nicHashHeaders = async (canonicalNic: string): Promise<HeadersInit> => {
+    if (isCustom) return { "Content-Type": "application/json" };
+
+    if (!address) throw new Error("Wallet not connected.");
+    const walletClient = await getWalletClient(wagmiConfig);
+    if (!walletClient) throw new Error("Wallet not connected.");
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = await walletClient.signMessage({
+      account: address,
+      message: `SL Vote NIC hash\n${timestamp}\n${canonicalNic}`,
+    });
+    return {
+      "Content-Type": "application/json",
+      "x-gn-address": address,
+      "x-gn-signature": signature,
+      "x-gn-timestamp": timestamp,
+    };
+  };
+
+  // Submit: reserve the NIC hash, then allowlist the voter on this GN's own
+  // division contract. Both writes go through the seam, so they are signed by
+  // MetaMask on Hardhat and by the relay on the custom chain.
   const handleSubmit = async () => {
-    if (!voterAddress || !voterPhone || !myDivision || !NIC_REGISTRY_ADDRESS || !address) return;
+    if (!voterAddress || !voterPhone || !myDivision || !nicRegistryAddress) return;
 
     setIsSubmitting(true);
     try {
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) {
-        notification.error("Wallet not connected.");
-        return;
-      }
-
       const canonicalNic = voterNIC.trim().toUpperCase();
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const signature = await walletClient.signMessage({
-        account: address,
-        message: `SL Vote NIC hash\n${timestamp}\n${canonicalNic}`,
-      });
       const hashResponse = await fetch("/api/nic/hash", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-gn-address": address,
-          "x-gn-signature": signature,
-          "x-gn-timestamp": timestamp,
-        },
+        credentials: "same-origin",
+        headers: await nicHashHeaders(canonicalNic),
         body: JSON.stringify({ nic: voterNIC }),
       });
       const hashResult = await hashResponse.json();
@@ -201,28 +231,36 @@ const GNRegisterVoter: NextPage = () => {
         throw new Error(hashResult.error || "Unable to hash NIC");
       }
 
-      const reservationHash = await walletClient.writeContract({
-        address: NIC_REGISTRY_ADDRESS,
-        abi: NIC_REGISTRY_ABI,
+      await write({
+        address: nicRegistryAddress,
+        abi: NIC_REGISTRY_ABI as unknown as Abi,
         functionName: "reserveNicHash",
         args: [hashResult.nicHash as `0x${string}`, myDivision.votingContract],
       });
-      await publicClient.waitForTransactionReceipt({ hash: reservationHash });
 
-      const hash = await walletClient.writeContract({
+      await write({
         address: myDivision.votingContract,
-        abi: VOTING_ABI,
+        abi: VOTING_ABI as unknown as Abi,
         functionName: "addVoters",
         args: [[voterAddress as `0x${string}`], [true]],
       });
 
-      await publicClient.waitForTransactionReceipt({ hash });
       notification.success(`✅ Voter added to ${myDivision.name}!`);
       setStep(4);
     } catch (error: any) {
       const msg = error?.shortMessage || error?.message || "Transaction failed";
       if (msg.includes("NicRegistry__AlreadyUsed")) {
         notification.error("This NIC is already registered to another voter");
+      } else if (msg.includes("Unregistered division")) {
+        // Not a permissions problem, and the raw revert string does not say so.
+        // The division exists and this officer is assigned to it, but it was
+        // never authorised in the NIC Registry — which only an admin can do, in
+        // section 7 of the admin panel. Divisions created by hand before that
+        // step was automatic land here.
+        notification.error(
+          "This division has not been authorised for voter enrolment yet. " +
+            "Ask the Election Authority to authorise it in section 7 of the admin panel, then try again.",
+        );
       } else if (msg.includes("Not owner or GN")) {
         notification.error("You are not authorized as GN for this division.");
       } else if (
@@ -250,9 +288,23 @@ const GNRegisterVoter: NextPage = () => {
     return () => stopCamera();
   }, []);
 
-  // Access gate: must be connected + must be a GN
-  if (!isConnected) {
-    return <CenterMessage icon="🔒" title="Connect Wallet" subtitle="Connect your wallet to access the GN portal." />;
+  // Access gate: must be identified (wallet on Hardhat, session on the custom
+  // chain) and must be the GN for a registered division.
+  if (needsSignIn) {
+    return isCustom ? (
+      <CenterMessage
+        icon="🔒"
+        title="Sign in required"
+        subtitle="Sign in with your officer credentials to enrol voters."
+        action={
+          <Link href="/login?next=%2Fgn%2Fregister" className="btn btn-primary btn-sm">
+            Sign in
+          </Link>
+        }
+      />
+    ) : (
+      <CenterMessage icon="🔒" title="Connect Wallet" subtitle="Connect your wallet to access the GN portal." />
+    );
   }
   if (isLoading) {
     return <CenterMessage icon="⏳" title="Checking authorization" subtitle="Reading your GN status from chain…" />;
@@ -262,16 +314,20 @@ const GNRegisterVoter: NextPage = () => {
       <CenterMessage
         icon="🚫"
         title="Not Authorized"
-        subtitle={`Your address (${address?.slice(0, 10)}...) is not assigned as GN for any division.`}
+        subtitle={
+          isCustom
+            ? `Your account (${identity}) is not scoped to a registered division.`
+            : `Your address (${identity?.slice(0, 10)}...) is not assigned as GN for any division.`
+        }
       />
     );
   }
-  if (!NIC_REGISTRY_ADDRESS) {
+  if (!nicRegistryAddress) {
     return (
       <CenterMessage
         icon="⚠️"
-        title="NIC Registry Not Configured"
-        subtitle="Set NEXT_PUBLIC_NIC_REGISTRY_ADDRESS to enable GN registration."
+        title="NIC Registry Not Deployed"
+        subtitle={`No NicRegistry in the deployment record for chain ${targetNetwork.id}. Run the deploy for this chain, or set NEXT_PUBLIC_NIC_REGISTRY_ADDRESS to override.`}
       />
     );
   }
@@ -419,10 +475,21 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-const CenterMessage = ({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) => (
+const CenterMessage = ({
+  icon,
+  title,
+  subtitle,
+  action,
+}: {
+  icon: string;
+  title: string;
+  subtitle: string;
+  action?: React.ReactNode;
+}) => (
   <div className="flex flex-col items-center grow pt-16 px-4 text-center">
     <div className="text-5xl mb-4">{icon}</div>
     <h1 className="text-2xl font-bold mb-2">{title}</h1>
     <p className="opacity-60 max-w-md">{subtitle}</p>
+    {action && <div className="mt-4">{action}</div>}
   </div>
 );

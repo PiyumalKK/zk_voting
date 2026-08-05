@@ -1,15 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Address, createPublicClient, http, toHex } from "viem";
-import { hardhat } from "viem/chains";
-
-const publicClient = createPublicClient({
-  chain: hardhat,
-  transport: http(),
-});
+import { useEffect, useMemo, useState } from "react";
+import { Address, toHex } from "viem";
+import { createBlockExplorerClient } from "~~/hooks/scaffold-eth/useFetchBlocks";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 
 export const AddressStorageTab = ({ address }: { address: Address }) => {
+  const { targetNetwork } = useTargetNetwork();
+  const publicClient = useMemo(() => createBlockExplorerClient(targetNetwork), [targetNetwork]);
   const [storage, setStorage] = useState<string[]>([]);
 
   useEffect(() => {
@@ -39,7 +37,7 @@ export const AddressStorageTab = ({ address }: { address: Address }) => {
     };
 
     fetchStorage();
-  }, [address]);
+  }, [address, publicClient]);
 
   return (
     <div className="flex flex-col gap-3 p-4">

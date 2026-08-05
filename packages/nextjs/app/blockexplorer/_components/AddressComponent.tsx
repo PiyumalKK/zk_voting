@@ -4,8 +4,8 @@ import { BackButton } from "./BackButton";
 import { ContractTabs } from "./ContractTabs";
 import { Address, Balance } from "@scaffold-ui/components";
 import { Address as AddressType } from "viem";
-import { hardhat } from "viem/chains";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth";
+import { isLocalChainId } from "~~/utils/customChain";
 
 export const AddressComponent = ({
   address,
@@ -30,7 +30,7 @@ export const AddressComponent = ({
                   format="long"
                   onlyEnsOrAddress
                   blockExplorerAddressLink={
-                    targetNetwork.id === hardhat.id ? `/blockexplorer/address/${address}` : undefined
+                    isLocalChainId(targetNetwork.id) ? `/blockexplorer/address/${address}` : undefined
                   }
                 />
                 <div className="flex gap-1 items-center">

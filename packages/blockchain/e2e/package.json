@@ -1,0 +1,30 @@
+{
+  "name": "zk-blockchain-e2e",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "End-to-end and differential test harnesses for the custom chain. Single dependency root for the whole e2e tree: Node resolves node_modules by walking up, so diff/*.mjs, lib/*.mjs and the top-level harnesses all share this install. Run `make diff-install` from packages/blockchain once.",
+  "scripts": {
+    "diff": "node diff/diff.mjs",
+    "diff:write": "node diff/write.mjs",
+    "diff:logs": "node diff/logs.mjs",
+    "diff:dev": "node diff/dev.mjs",
+    "smoke": "node smoke-deploy.mjs",
+    "probe:build": "node diff/contracts/build.mjs",
+    "cluster": "node cluster.mjs",
+    "cluster:test": "node cluster-test.mjs",
+    "block-rlp:test": "node lib/block-rlp.test.mjs",
+    "election": "node election.mjs",
+    "election:core-test": "node --test lib/election-core.test.mjs"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "0.82.0",
+    "@noir-lang/noir_js": "1.0.0-beta.3",
+    "@zk-kit/lean-imt": "^2.2.4",
+    "poseidon-lite": "^0.3.0",
+    "viem": "2.39.0"
+  },
+  "devDependencies": {
+    "solc": "0.8.30"
+  }
+}

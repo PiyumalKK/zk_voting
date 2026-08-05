@@ -8,12 +8,14 @@ import {
   walletConnectWallet,
 } from "@rainbow-me/rainbowkit/wallets";
 import { rainbowkitBurnerWallet } from "burner-connector";
-import * as chains from "viem/chains";
 import scaffoldConfig, { type ScaffoldConfig } from "~~/scaffold.config";
+import { isLocalChainId } from "~~/utils/customChain";
 
 const { burnerWalletMode, targetNetworks } = scaffoldConfig as ScaffoldConfig;
 
-const hasOnlyLocalTargetNetworks = targetNetworks.every(network => network.id === (chains.hardhat as chains.Chain).id);
+// "local" now means Hardhat *or* the custom Go node — both are development
+// chains with prefunded accounts, so the burner wallet is equally valid on each.
+const hasOnlyLocalTargetNetworks = targetNetworks.every(network => isLocalChainId(network.id));
 const showBurnerWallet =
   burnerWalletMode !== "disabled" && (burnerWalletMode === "allNetworks" || hasOnlyLocalTargetNetworks);
 

@@ -6,7 +6,10 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "chain-check": "node e2e/mobile-chain-check.mjs"
   },
   "dependencies": {
     "@zk-kit/lean-imt": "^2.2.4",
@@ -36,7 +39,8 @@
     "@babel/core": "^7.24.0",
     "@types/react": "~19.1.10",
     "@types/react-dom": "^19",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "~4.1.10"
   },
   "private": true
 }

@@ -35,4 +35,8 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+# M12 no-wallet auth: GN account store (encrypted signing keys, bcrypt hashes)
+# and the relay audit log. Operational state, never source — see 01-AUTH-DESIGN.md.
+/data/
 ipfs-upload.config.json

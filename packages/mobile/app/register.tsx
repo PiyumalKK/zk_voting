@@ -83,7 +83,11 @@ export default function Register() {
       setCurrentStep(2);
       const voterAddress = await getAddress();
       if (!voterAddress) throw new Error("No voting identity on this device");
-      await api.fundBurner(voterAddress);
+      // Best-effort, as in `vote.tsx`: the custom chain charges no gas, so a
+      // faucet failure must not be reported to the voter as a failed
+      // registration. An unpayable transaction fails at submission with a
+      // message that names the real cause.
+      await api.tryFundBurner(voterAddress);
 
       // Step 3: Submit on-chain
       failedStep = "submit registration";
