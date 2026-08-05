@@ -1,19 +1,72 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AddressInput } from "@scaffold-ui/components";
-import { createPublicClient, http } from "viem";
+import { createPublicClient, http, parseAbiItem, parseEventLogs } from "viem";
+import type { Abi } from "viem";
 import { useAccount } from "wagmi";
-import { getWalletClient } from "wagmi/actions";
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { GnAccountsSection } from "~~/app/voting/admin/_components/GnAccountsSection";
+import { Section } from "~~/app/voting/admin/_components/Section";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
-import { wagmiConfig } from "~~/services/web3/wagmiConfig";
+import { useElectionAuth } from "~~/hooks/useElectionAuth";
+import { useElectionWriter } from "~~/hooks/useElectionWriter";
+import { getDeployedAddress } from "~~/utils/deployedAddress";
+import { PHASE_LABELS } from "~~/utils/electionPhase";
 import { notification } from "~~/utils/scaffold-eth";
 
-const PHASE_LABELS = ["Setup", "Registration", "Voting", "Ended"] as const;
+/**
+ * Minimal ABI for the one function the GN management panel calls.
+ *
+ * Kept narrow deliberately: the hardhat path encodes calldata from whatever ABI
+ * it is handed, so a smaller surface is a smaller mistake. The custom path
+ * ignores it entirely and uses the deployed ABI server-side.
+ */
+const SET_GN_OFFICER_ABI = [
+  {
+    name: "setGNOfficer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_gnOfficer", type: "address" }],
+    outputs: [],
+  },
+] as const;
+
+/**
+ * Authorises a division's Voting contract for NIC enrolment.
+ *
+ * `NicRegistry.reserveNicHash` refuses any contract that was never passed to
+ * this function ("Unregistered division"), and `ElectionRegistry.createDivision`
+ * cannot call it — the registry holds no reference to `NicRegistry`, and this is
+ * owner-only. So a division created at runtime needs this as a second step, and
+ * section 7 makes it. See `packages/hardhat/test/DivisionEnrolment.ts`.
+ */
+const SET_VOTING_CONTRACT_ABI = [
+  {
+    name: "setVotingContract",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "_votingContract", type: "address" },
+      { name: "_authorized", type: "bool" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** Emitted by `setVotingContract` — the only way to read authorisation back. */
+const VOTING_CONTRACT_UPDATED_EVENT = parseAbiItem(
+  "event VotingContractUpdated(address indexed votingContract, bool authorized)",
+);
+
+/** Emitted by `createDivision`, and how section 7 learns the new address. */
+const DIVISION_CREATED_EVENT = parseAbiItem(
+  "event DivisionCreated(uint256 indexed divisionId, string name, address votingContract)",
+);
 
 type VoterEntry = { address: string; status: boolean };
 
@@ -39,6 +92,9 @@ function parseDurationToSeconds(raw: string): bigint | null {
 const AdminPage = () => {
   const router = useRouter();
   const { address: connected } = useAccount();
+  const { mode, isAdmin, isLoading: authLoading } = useElectionAuth();
+  const { write } = useElectionWriter();
+  const isCustom = mode === "custom";
   const { targetNetwork } = useTargetNetwork();
   const { divisions, isLoading: divisionsLoading } = useDivisions();
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -97,33 +153,33 @@ const AdminPage = () => {
     refetchDivision();
   }, [refetchDivision]);
 
-  // Every division contract is owned by the Election Authority (deployer). Treat the
-  // page as accessible while ownership is still loading; block only if confirmed not-owner.
-  const isOwner = ownerAddr ? connected?.toLowerCase() === ownerAddr.toLowerCase() : true;
+  // Who may use this page.
+  //
+  // Hardhat: every division contract is owned by the Election Authority
+  // (deployer), so the connected wallet must be that owner. The page stays
+  // accessible while ownership is still loading and blocks only on a confirmed
+  // mismatch.
+  //
+  // Custom chain: the admin session is the credential. `ADMIN_RELAY_PRIVATE_KEY`
+  // is defined to be the owner's key and the relay whitelist is the real
+  // boundary, so a comparison against a wallet address that does not exist here
+  // would only ever produce a false negative.
+  const isOwner = isCustom ? isAdmin : ownerAddr ? connected?.toLowerCase() === ownerAddr.toLowerCase() : true;
 
   // Division-targeting write: routes every admin action to the SELECTED division contract.
   const writeContractAsync = useCallback(
-    async ({ functionName, args }: { functionName: string; args?: unknown[] }) => {
+    ({ functionName, args }: { functionName: string; args?: unknown[] }) => {
       if (!selectedDiv) throw new Error("No division selected");
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) throw new Error("No wallet connected");
-      const hash = await walletClient.writeContract({
-        address: selectedDiv.votingContract,
-        abi: VOTING_ABI,
-        functionName,
-        args: args ?? [],
-      });
-      await publicClient.waitForTransactionReceipt({ hash });
-      return hash;
+      return write({ address: selectedDiv.votingContract, abi: VOTING_ABI, functionName, args });
     },
-    [selectedDiv, publicClient, VOTING_ABI],
+    [selectedDiv, write, VOTING_ABI],
   );
 
   const question = (votingData?.[0] as string | undefined) ?? "";
   const phase = Number(votingData?.[2] ?? 0);
   const registrationEnd = Number(votingData?.[3] ?? 0);
   const votingEnd = Number(votingData?.[4] ?? 0);
-  const candList = (candidates as readonly string[] | undefined) ?? [];
+  const candList = useMemo(() => (candidates as readonly string[] | undefined) ?? [], [candidates]);
 
   const phaseLabel = PHASE_LABELS[phase] ?? "Unknown";
   const inSetup = phase === 0;
@@ -157,10 +213,28 @@ const AdminPage = () => {
   }, []);
 
   // Access gate.
-  if (!connected) {
+  if (isCustom && authLoading) {
     return (
       <Wrapper>
-        <p className="text-center opacity-70">Connect a wallet to view this page.</p>
+        <div className="flex justify-center py-8">
+          <span className="loading loading-spinner" />
+        </div>
+      </Wrapper>
+    );
+  }
+  if (isCustom ? !isAdmin : !connected) {
+    return (
+      <Wrapper>
+        {isCustom ? (
+          <div className="text-center space-y-4">
+            <p className="opacity-70">Sign in as the Election Authority to use this page.</p>
+            <Link href="/login?next=%2Fvoting%2Fadmin" className="btn btn-primary btn-sm">
+              Sign in
+            </Link>
+          </div>
+        ) : (
+          <p className="text-center opacity-70">Connect a wallet to view this page.</p>
+        )}
       </Wrapper>
     );
   }
@@ -244,17 +318,12 @@ const AdminPage = () => {
   const handleEndElection = () => run("endElection", () => writeContractAsync({ functionName: "endElection" }));
 
   // --- Apply a phase change to EVERY division at once (national control) ---
-  const writeToDivision = async (contract: `0x${string}`, functionName: string, args?: unknown[]) => {
-    const walletClient = await getWalletClient(wagmiConfig);
-    if (!walletClient) throw new Error("No wallet connected");
-    const hash = await walletClient.writeContract({
-      address: contract,
-      abi: VOTING_ABI,
-      functionName,
-      args: args ?? [],
-    });
-    await publicClient.waitForTransactionReceipt({ hash });
-  };
+  //
+  // One transaction per division, sequentially. On the custom chain that means
+  // one relay call each, which the relay's 30/minute budget comfortably covers
+  // for a realistic division count.
+  const writeToDivision = (contract: `0x${string}`, functionName: string, args?: unknown[]) =>
+    write({ address: contract, abi: VOTING_ABI, functionName, args });
 
   const runAll = async (label: string, functionName: string, argsFor: () => unknown[] | null, verb: string) => {
     const args = argsFor();
@@ -441,79 +510,106 @@ const AdminPage = () => {
 
       <Section
         title="3. Allowlist voters"
-        disabled={!inSetup && !inRegistration}
-        hint="Editable during Setup and Registration phases."
+        disabled={isCustom || (!inSetup && !inRegistration)}
+        hint={
+          isCustom
+            ? "Voter enrolment happens in the GN portal on the custom chain."
+            : "Editable during Setup and Registration phases."
+        }
       >
-        <div className="space-y-2">
-          {voterDrafts.map((v, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
-              <div className="flex-1 min-w-[260px]">
-                <AddressInput
-                  placeholder="0x..."
-                  value={v.address}
-                  onChange={val => {
-                    const next = voterDrafts.slice();
-                    next[i] = { ...next[i], address: val as string };
-                    setVoterDrafts(next);
-                  }}
-                />
-              </div>
-              <label className="label cursor-pointer gap-2">
-                <span className="label-text text-sm">Allow</span>
-                <input
-                  type="radio"
-                  name={`vstatus-${i}`}
-                  className="radio radio-sm radio-success"
-                  checked={v.status}
-                  onChange={() => {
-                    const next = voterDrafts.slice();
-                    next[i] = { ...next[i], status: true };
-                    setVoterDrafts(next);
-                  }}
-                  disabled={!inSetup && !inRegistration}
-                />
-              </label>
-              <label className="label cursor-pointer gap-2">
-                <span className="label-text text-sm">Revoke</span>
-                <input
-                  type="radio"
-                  name={`vstatus-${i}`}
-                  className="radio radio-sm radio-error"
-                  checked={!v.status}
-                  onChange={() => {
-                    const next = voterDrafts.slice();
-                    next[i] = { ...next[i], status: false };
-                    setVoterDrafts(next);
-                  }}
-                  disabled={!inSetup && !inRegistration}
-                />
-              </label>
+        {isCustom ? (
+          // `addVoters` is a GN-only function in the relay whitelist
+          // (`01-AUTH-DESIGN.md` §4). The contract would accept it from the
+          // owner — `onlyOwnerOrGN` — but the relay deliberately will not sign
+          // it, because enrolling a voter without the matching
+          // `reserveNicHash` call would bypass the duplicate-NIC check. Showing
+          // the form here would only produce a 403 the operator cannot act on.
+          <div className="text-sm opacity-70 space-y-2">
+            <p>
+              On the custom chain, voters are enrolled by their Grama Niladhari officer in the{" "}
+              <Link href="/gn" className="link link-primary">
+                GN portal
+              </Link>
+              , where the NIC is reserved and the address allowlisted in one step.
+            </p>
+            <p className="text-xs opacity-60">
+              Create officer accounts in section 8, and assign them to divisions in section 6.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {voterDrafts.map((v, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
+                  <div className="flex-1 min-w-[260px]">
+                    <AddressInput
+                      placeholder="0x..."
+                      value={v.address}
+                      onChange={val => {
+                        const next = voterDrafts.slice();
+                        next[i] = { ...next[i], address: val as string };
+                        setVoterDrafts(next);
+                      }}
+                    />
+                  </div>
+                  <label className="label cursor-pointer gap-2">
+                    <span className="label-text text-sm">Allow</span>
+                    <input
+                      type="radio"
+                      name={`vstatus-${i}`}
+                      className="radio radio-sm radio-success"
+                      checked={v.status}
+                      onChange={() => {
+                        const next = voterDrafts.slice();
+                        next[i] = { ...next[i], status: true };
+                        setVoterDrafts(next);
+                      }}
+                      disabled={!inSetup && !inRegistration}
+                    />
+                  </label>
+                  <label className="label cursor-pointer gap-2">
+                    <span className="label-text text-sm">Revoke</span>
+                    <input
+                      type="radio"
+                      name={`vstatus-${i}`}
+                      className="radio radio-sm radio-error"
+                      checked={!v.status}
+                      onChange={() => {
+                        const next = voterDrafts.slice();
+                        next[i] = { ...next[i], status: false };
+                        setVoterDrafts(next);
+                      }}
+                      disabled={!inSetup && !inRegistration}
+                    />
+                  </label>
+                  <button
+                    className="btn btn-ghost btn-square"
+                    disabled={(!inSetup && !inRegistration) || voterDrafts.length <= 1}
+                    onClick={() => setVoterDrafts(voterDrafts.filter((_, j) => j !== i))}
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
               <button
-                className="btn btn-ghost btn-square"
-                disabled={(!inSetup && !inRegistration) || voterDrafts.length <= 1}
-                onClick={() => setVoterDrafts(voterDrafts.filter((_, j) => j !== i))}
+                className="btn btn-outline btn-sm gap-2"
+                disabled={!inSetup && !inRegistration}
+                onClick={() => setVoterDrafts([...voterDrafts, { address: "", status: true }])}
               >
-                <TrashIcon className="h-4 w-4" />
+                <PlusIcon className="h-4 w-4" /> Add row
               </button>
             </div>
-          ))}
-          <button
-            className="btn btn-outline btn-sm gap-2"
-            disabled={!inSetup && !inRegistration}
-            onClick={() => setVoterDrafts([...voterDrafts, { address: "", status: true }])}
-          >
-            <PlusIcon className="h-4 w-4" /> Add row
-          </button>
-        </div>
-        <div className="flex justify-end">
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={(!inSetup && !inRegistration) || busy === "voters"}
-            onClick={handleAddVoters}
-          >
-            {busy === "voters" ? "Saving..." : "Submit allowlist"}
-          </button>
-        </div>
+            <div className="flex justify-end">
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={(!inSetup && !inRegistration) || busy === "voters"}
+                onClick={handleAddVoters}
+              >
+                {busy === "voters" ? "Saving..." : "Submit allowlist"}
+              </button>
+            </div>
+          </>
+        )}
       </Section>
 
       <Section
@@ -606,6 +702,10 @@ const AdminPage = () => {
       <AddDivisionSection />
 
       <GNManagementSection />
+
+      {/* Custom chain only: GN officers have credentials instead of wallets, so
+          the Election Authority creates their accounts here. */}
+      {isCustom && <GnAccountsSection />}
     </Wrapper>
   );
 };
@@ -668,28 +768,6 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
-const Section = ({
-  title,
-  hint,
-  children,
-  disabled,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-  disabled?: boolean;
-}) => (
-  <div
-    className={`bg-base-100/60 backdrop-blur-xl shadow-2xl rounded-3xl p-8 space-y-6 border border-base-300/50 hover:border-primary/30 transition-all duration-500 relative overflow-hidden ${disabled ? "opacity-70" : ""}`}
-  >
-    <div>
-      <h2 className="text-xl font-bold">{title}</h2>
-      {hint && <p className="text-xs opacity-60 mt-1">{hint}</p>}
-    </div>
-    {children}
-  </div>
-);
-
 const PhaseHeader = ({
   phaseLabel,
   phase,
@@ -725,6 +803,7 @@ const GNManagementSection = () => {
   const [gnAddress, setGnAddress] = useState("");
   const [selectedDivision, setSelectedDivision] = useState(0);
   const { divisions, isLoading: divisionsLoading, error: divisionsError, refetch } = useDivisions();
+  const { write } = useElectionWriter();
 
   // Keep selection valid as divisions load in.
   useEffect(() => {
@@ -744,37 +823,13 @@ const GNManagementSection = () => {
       return;
     }
     try {
-      const { createPublicClient, http } = await import("viem");
-      const { hardhat } = await import("viem/chains");
-      const { getWalletClient } = await import("wagmi/actions");
-      const { wagmiConfig } = await import("~~/services/web3/wagmiConfig");
-
-      // Get the currently connected wallet from wagmi (RainbowKit)
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) {
-        notification.error("No wallet connected. Connect your wallet first.");
-        return;
-      }
-
-      const abi = [
-        {
-          name: "setGNOfficer",
-          type: "function",
-          stateMutability: "nonpayable",
-          inputs: [{ name: "_gnOfficer", type: "address" }],
-          outputs: [],
-        },
-      ] as const;
-
-      const hash = await walletClient.writeContract({
+      await write({
         address: div.votingContract,
-        abi,
+        abi: SET_GN_OFFICER_ABI,
         functionName: "setGNOfficer",
         args: [gnAddress as `0x${string}`],
       });
 
-      const publicClient = createPublicClient({ chain: hardhat, transport: http("http://127.0.0.1:8545") });
-      await publicClient.waitForTransactionReceipt({ hash });
       notification.success(`✅ GN assigned to ${div.name}!`);
       setGnAddress("");
       refetch();
@@ -903,8 +958,20 @@ const GNManagementSection = () => {
 const AddDivisionSection = () => {
   const [divisionName, setDivisionName] = useState("");
   const [isDeploying, setIsDeploying] = useState(false);
-  const { refetch } = useDivisions();
+  const [authorising, setAuthorising] = useState<string | null>(null);
+  /**
+   * Lower-cased addresses only, never the division objects.
+   *
+   * Storing objects here would make this state a fresh array on every refresh,
+   * which re-renders, which re-runs the effect below, which refreshes again —
+   * an unbounded loop as soon as `useDivisions` returns a new array identity per
+   * render. Addresses compare cheaply, so the setter below can return the
+   * previous value unchanged and stop the cycle at its source.
+   */
+  const [unauthorisedAddresses, setUnauthorisedAddresses] = useState<string[]>([]);
+  const { divisions, refetch } = useDivisions();
   const { targetNetwork } = useTargetNetwork();
+  const { write } = useElectionWriter();
 
   const REGISTRY_ABI = useMemo(
     () => (deployedContracts as Record<number, any>)[targetNetwork.id]?.ElectionRegistry?.abi ?? [],
@@ -917,12 +984,119 @@ const AddDivisionSection = () => {
         | undefined,
     [targetNetwork.id],
   );
+  const NIC_REGISTRY_ADDRESS = useMemo(() => getDeployedAddress(targetNetwork.id, "NicRegistry"), [targetNetwork.id]);
 
   const publicClient = useMemo(
     () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
     [targetNetwork],
   );
 
+  /**
+   * Which divisions may not yet be used for GN enrolment.
+   *
+   * `NicRegistry.s_votingContracts` is a private mapping with no getter, so
+   * authorisation cannot be read directly. `setVotingContract` emits
+   * `VotingContractUpdated(address indexed votingContract, bool authorized)`
+   * on every change, so the last event for an address is its current state —
+   * and an address with no event was never authorised at all. That is the only
+   * way a client can answer this question; `test/DivisionEnrolment.ts` pins the
+   * event so a contract change cannot make this indicator quietly go blind.
+   */
+  const refreshAuthorisation = useCallback(async () => {
+    if (!NIC_REGISTRY_ADDRESS || divisions.length === 0) {
+      setUnauthorisedAddresses(prev => (prev.length === 0 ? prev : []));
+      return;
+    }
+    try {
+      const logs = await publicClient.getLogs({
+        address: NIC_REGISTRY_ADDRESS,
+        event: VOTING_CONTRACT_UPDATED_EVENT,
+        fromBlock: 0n,
+        toBlock: "latest",
+      });
+
+      // Last event wins: authorisation can be granted and revoked, and the
+      // current state is whatever the most recent event said.
+      const authorised = new Map<string, boolean>();
+      for (const log of logs) {
+        const target = (log.args as { votingContract?: string }).votingContract;
+        const flag = (log.args as { authorized?: boolean }).authorized;
+        if (target) authorised.set(target.toLowerCase(), Boolean(flag));
+      }
+
+      const next = divisions.map(d => d.votingContract.toLowerCase()).filter(address => !authorised.get(address));
+
+      setUnauthorisedAddresses(prev =>
+        prev.length === next.length && prev.every((address, i) => address === next[i]) ? prev : next,
+      );
+    } catch {
+      // A read failure must not be reported as "everything is fine": clearing
+      // the list would hide exactly the state this exists to surface. Keep the
+      // last known answer and stay quiet — this is a repair tool, not a monitor.
+    }
+  }, [NIC_REGISTRY_ADDRESS, divisions, publicClient]);
+
+  useEffect(() => {
+    refreshAuthorisation();
+  }, [refreshAuthorisation]);
+
+  const unauthorised = useMemo(
+    () => divisions.filter(d => unauthorisedAddresses.includes(d.votingContract.toLowerCase())),
+    [divisions, unauthorisedAddresses],
+  );
+
+  /**
+   * Authorise one division for NIC enrolment.
+   *
+   * Separated from creation so it can also repair divisions made before this
+   * was wired up — of which there may be several on any chain that has been
+   * used for a demo.
+   */
+  const authoriseDivision = useCallback(
+    async (votingContract: `0x${string}`) => {
+      if (!NIC_REGISTRY_ADDRESS) {
+        notification.error("NicRegistry contract not found.");
+        return false;
+      }
+      await write({
+        address: NIC_REGISTRY_ADDRESS,
+        abi: SET_VOTING_CONTRACT_ABI as unknown as Abi,
+        functionName: "setVotingContract",
+        args: [votingContract, true],
+      });
+      return true;
+    },
+    [NIC_REGISTRY_ADDRESS, write],
+  );
+
+  const handleAuthorise = async (division: LiveDivision) => {
+    setAuthorising(division.votingContract);
+    try {
+      await authoriseDivision(division.votingContract as `0x${string}`);
+      notification.success(`✅ "${division.name}" can now be used for GN enrolment.`);
+      await refreshAuthorisation();
+    } catch (e: any) {
+      notification.error(e?.shortMessage || e?.message || "Failed to authorise division");
+    } finally {
+      setAuthorising(null);
+    }
+  };
+
+  /**
+   * Create a division and finish setting it up.
+   *
+   * Two transactions, not one. `createDivision` deploys the `Voting` contract
+   * and registers it, but GN enrolment additionally requires the division to be
+   * authorised in `NicRegistry` — and `ElectionRegistry` cannot do that itself:
+   * it holds no reference to `NicRegistry`, and `setVotingContract` is
+   * owner-only. Before this, section 7 made only the first call and reported
+   * success, so a hand-made division looked complete and then failed at the GN
+   * portal with the bare revert string "Unregistered division".
+   *
+   * If the second call fails the division still exists, so this says so plainly
+   * rather than reporting a clean failure — and the list below offers the
+   * repair.
+   */
   const handleCreateDivision = async () => {
     const name = divisionName.trim();
     if (!name) {
@@ -935,21 +1109,47 @@ const AddDivisionSection = () => {
     }
     setIsDeploying(true);
     try {
-      const walletClient = await getWalletClient(wagmiConfig);
-      if (!walletClient) {
-        notification.error("No wallet connected.");
-        return;
-      }
-      const hash = await walletClient.writeContract({
+      const hash = await write({
         address: REGISTRY_ADDRESS,
         abi: REGISTRY_ABI,
         functionName: "createDivision",
         args: [name],
       });
-      await publicClient.waitForTransactionReceipt({ hash });
-      notification.success(`✅ Division "${name}" deployed & registered!`);
+
+      // The new contract's address comes from the receipt rather than from
+      // re-reading the division list: reading back the "last" division would be
+      // wrong if two admins created one at the same time, and this is exact.
+      let votingContract: `0x${string}` | undefined;
+      try {
+        const receipt = await publicClient.getTransactionReceipt({ hash });
+        const created = parseEventLogs({
+          abi: [DIVISION_CREATED_EVENT],
+          logs: receipt.logs,
+        }) as unknown as { args: { votingContract: `0x${string}` } }[];
+        votingContract = created[0]?.args?.votingContract;
+      } catch {
+        votingContract = undefined;
+      }
+
+      if (!votingContract) {
+        notification.warning(
+          `Division "${name}" was created, but its address could not be read back, so it was not authorised for GN enrolment. Use the list below.`,
+        );
+      } else {
+        try {
+          await authoriseDivision(votingContract);
+          notification.success(`✅ Division "${name}" deployed, registered & authorised for enrolment!`);
+        } catch (e: any) {
+          notification.warning(
+            `Division "${name}" was created, but authorising it for GN enrolment failed: ` +
+              `${e?.shortMessage || e?.message || "unknown error"}. Use the list below to retry.`,
+          );
+        }
+      }
+
       setDivisionName("");
       refetch();
+      await refreshAuthorisation();
     } catch (e: any) {
       const msg = e?.shortMessage || e?.message || "Failed to create division";
       notification.error(msg);
@@ -961,7 +1161,7 @@ const AddDivisionSection = () => {
   return (
     <Section
       title="7. Add New Division"
-      hint="Deploy a new Voting contract and register it as a polling division. You can assign a GN officer afterwards using section 6."
+      hint="Deploy a new Voting contract, register it as a polling division, and authorise it for NIC enrolment. Assign a GN officer afterwards using section 6."
     >
       <div className="space-y-4">
         <div className="form-control">
@@ -978,8 +1178,9 @@ const AddDivisionSection = () => {
           />
         </div>
         <p className="text-xs opacity-50">
-          This deploys a fresh Voting contract on-chain via the ElectionRegistry factory. The new division starts in the
-          Setup phase with no question, candidates, or voters. Configure it using the division picker above.
+          This deploys a fresh Voting contract on-chain via the ElectionRegistry factory, then authorises it in the NIC
+          Registry so GN officers can enrol voters into it. Two transactions. The new division starts in the Setup phase
+          with no question, candidates, or voters. Configure it using the division picker above.
         </p>
         <div className="flex justify-end">
           <button
@@ -990,6 +1191,38 @@ const AddDivisionSection = () => {
             {isDeploying ? "Deploying..." : "➕ Deploy & Register Division"}
           </button>
         </div>
+
+        {unauthorised.length > 0 && (
+          <div className="alert alert-warning flex-col items-stretch gap-2 text-sm">
+            <div>
+              <span className="font-bold">
+                {unauthorised.length} division{unauthorised.length === 1 ? "" : "s"} cannot be used for GN enrolment
+                yet.
+              </span>
+              <p className="text-xs opacity-80 mt-1">
+                A division must be authorised in the NIC Registry before a GN officer can enrol voters into it.
+                Divisions created before this step was automatic need it applied once. Without it, the GN portal fails
+                with &quot;Unregistered division&quot;.
+              </p>
+            </div>
+            <ul className="space-y-1">
+              {unauthorised.map(division => (
+                <li key={division.votingContract} className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs truncate">
+                    {division.name} — {division.votingContract}
+                  </span>
+                  <button
+                    className={`btn btn-xs btn-primary ${authorising === division.votingContract ? "loading" : ""}`}
+                    disabled={authorising !== null}
+                    onClick={() => handleAuthorise(division)}
+                  >
+                    Authorise
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </Section>
   );

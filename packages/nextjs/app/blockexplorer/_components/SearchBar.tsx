@@ -3,14 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { isAddress, isHex } from "viem";
-import { hardhat } from "viem/chains";
 import { usePublicClient } from "wagmi";
+import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 
 export const SearchBar = () => {
   const [searchInput, setSearchInput] = useState("");
   const router = useRouter();
 
-  const client = usePublicClient({ chainId: hardhat.id });
+  // Ask for the *target* network's client. Requesting hardhat's would return
+  // undefined in custom mode, since wagmi is only configured with 9494 there.
+  const { targetNetwork } = useTargetNetwork();
+  const client = usePublicClient({ chainId: targetNetwork.id });
 
   const handleSearch = async (event: React.FormEvent) => {
     event.preventDefault();

@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZK Voting — Run a Simple Election (Custom Chain Mode)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#141821; --ink-soft:#3a4353; --muted:#606b7d; --line:#dbe1ea;
+  --bg:#ffffff; --bg-soft:#f4f6fb; --bg-code:#1e2433; --code-ink:#e7ecf8;
+  --primary:#4a38c0; --primary-d:#3a2bb0; --primary-l:#eeeaff;
+
+  /* role colors */
+  --admin:#7c3aed; --admin-l:#f2ebfe; --admin-d:#5b21b6;
+  --gn:#0a7d8c; --gn-l:#e0f7fa; --gn-d:#075e69;
+  --voter:#16a34a; --voter-l:#e6f9ed; --voter-d:#0d7a3a;
+  --system:#475569; --system-l:#eef1f5; --system-d:#334155;
+
+  /* phase colors, mirroring the app's own badges */
+  --p-setup:#6b7280; --p-setup-l:#f1f2f4;
+  --p-reg:#2563eb; --p-reg-l:#dbeafe;
+  --p-vote:#16a34a; --p-vote-l:#dcfce7;
+  --p-end:#1f2937; --p-end-l:#e5e7eb;
+
+  --warn:#b45309; --warn-l:#fef3e0; --warn-b:#f0b429;
+  --danger:#c02a5e; --danger-l:#fbe2ec;
+  --key:#0a6f7d; --key-l:#e0f7fa;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg-soft);color:var(--ink);
+  font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  font-size:15px;line-height:1.62;
+}
+main{max-width:980px;margin:0 auto;background:var(--bg);box-shadow:0 0 0 1px var(--line);}
+h1,h2,h3,h4{font-family:'Space Grotesk','Inter',sans-serif;line-height:1.2;color:var(--ink);}
+p{margin:9px 0}
+a{color:var(--primary-d);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.87em;
+  background:var(--primary-l);color:var(--primary-d);padding:1px 6px;border-radius:5px;}
+
+/* ---------- cover ---------- */
+.cover{padding:64px 60px 50px;background:
+    radial-gradient(1000px 460px at 92% -10%, #eeeaff, transparent 60%),
+    radial-gradient(820px 460px at -6% 110%, #e2f5f8, transparent 55%),
+    #ffffff;border-bottom:1px solid var(--line)}
+.cover .tag{font-family:'Space Grotesk';letter-spacing:.28em;text-transform:uppercase;
+  font-size:12px;color:var(--primary);font-weight:700}
+.cover h1{font-size:44px;margin:14px 0 8px;letter-spacing:-.02em;line-height:1.08}
+.cover h1 span{color:var(--primary-d)}
+.cover .sub{font-size:17px;color:var(--ink-soft);max-width:700px}
+.cover .meta{margin-top:30px;display:flex;gap:30px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.cover .meta b{display:block;color:var(--ink);font-size:14.5px;font-family:'Space Grotesk';font-weight:600;margin-top:2px}
+.cover .chips{margin-top:22px;display:flex;gap:9px;flex-wrap:wrap}
+.cover .chips span{border:1px solid var(--line);border-radius:999px;
+  padding:5px 13px;font-size:12px;color:var(--ink-soft);font-weight:600;background:var(--bg-soft)}
+
+/* ---------- generic section ---------- */
+section.page{padding:38px 60px 46px;border-bottom:1px solid var(--line);}
+.kicker{font-family:'Space Grotesk';text-transform:uppercase;letter-spacing:.16em;
+  font-size:11px;font-weight:700;color:var(--primary);margin-bottom:6px}
+section.page h2{font-size:24px;margin:0 0 4px;letter-spacing:-.01em}
+section.page h3{font-size:17px;margin:26px 0 8px}
+.lead{font-size:15px;color:var(--ink-soft)}
+
+/* ---------- role legend ---------- */
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+.legend .item{display:flex;align-items:center;gap:8px;border:1px solid var(--line);
+  border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;background:var(--bg-soft)}
+.legend .dot{width:11px;height:11px;border-radius:50%}
+
+/* ---------- role tag on step cards ---------- */
+.role{display:inline-flex;align-items:center;gap:6px;font-family:'Space Grotesk';
+  font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  padding:4px 10px;border-radius:999px;margin-bottom:10px}
+.role.admin{background:var(--admin-l);color:var(--admin-d)}
+.role.gn{background:var(--gn-l);color:var(--gn-d)}
+.role.voter{background:var(--voter-l);color:var(--voter-d)}
+.role.system{background:var(--system-l);color:var(--system-d)}
+
+/* ---------- phase badge ---------- */
+.phase{display:inline-flex;align-items:center;gap:5px;font-family:'Space Grotesk';
+  font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;margin-left:8px}
+.phase.setup{background:var(--p-setup-l);color:var(--p-setup)}
+.phase.reg{background:var(--p-reg-l);color:var(--p-reg)}
+.phase.vote{background:var(--p-vote-l);color:var(--p-vote)}
+.phase.end{background:var(--p-end-l);color:var(--p-end)}
+
+/* ---------- step card ---------- */
+.step{border:1px solid var(--line);border-left-width:5px;border-radius:0 12px 12px 0;
+  padding:18px 22px;margin:16px 0;background:#fff;position:relative}
+.step.admin{border-left-color:var(--admin)}
+.step.gn{border-left-color:var(--gn)}
+.step.voter{border-left-color:var(--voter)}
+.step.system{border-left-color:var(--system)}
+.step .stepno{position:absolute;top:16px;right:18px;font-family:'Space Grotesk';
+  font-weight:800;font-size:12px;color:var(--muted)}
+.step h4{font-size:16px;margin:0 0 4px;font-family:'Space Grotesk'}
+.step .where{font-size:12px;color:var(--muted);margin-bottom:10px;font-weight:600}
+.step .where code{background:transparent;color:var(--muted);padding:0}
+
+/* ---------- code block ---------- */
+.code{margin:14px 0;border-radius:10px;overflow:hidden;border:1px solid #2a3145}
+.code .fname{background:#161b28;color:#8891ab;font-family:'JetBrains Mono',monospace;
+  font-size:11px;padding:7px 13px;border-bottom:1px solid #2a3145;font-weight:600;letter-spacing:.03em}
+.code pre{margin:0;background:var(--bg-code);color:var(--code-ink);
+  padding:14px 16px;overflow-x:auto;font-family:'JetBrains Mono',monospace;
+  font-size:12.5px;line-height:1.7;white-space:pre}
+.code pre .c{color:#7d8bab;font-style:italic}
+
+/* ---------- callouts ---------- */
+.call{border-left:4px solid var(--primary);background:var(--primary-l);
+  padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0;font-size:13.8px}
+.call.key{border-color:var(--key);background:var(--key-l)}
+.call.warn{border-color:var(--warn-b);background:var(--warn-l)}
+.call.danger{border-color:var(--danger);background:var(--danger-l)}
+.call b.lbl{font-family:'Space Grotesk';text-transform:uppercase;letter-spacing:.07em;
+  font-size:11px;display:block;margin-bottom:3px;color:var(--primary-d)}
+.call.key b.lbl{color:var(--key)} .call.warn b.lbl{color:var(--warn)} .call.danger b.lbl{color:var(--danger)}
+
+/* ---------- tables ---------- */
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--bg-soft);font-family:'Space Grotesk';font-weight:700;font-size:11px;
+  text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)}
+tr:last-child td{border-bottom:none}
+td code{font-size:.9em}
+
+/* checklist */
+ul.check{list-style:none;padding:0;margin:14px 0}
+ul.check li{padding:8px 0 8px 32px;position:relative;border-bottom:1px dashed var(--line);font-size:14px}
+ul.check li:last-child{border-bottom:none}
+ul.check li::before{content:"☐";position:absolute;left:0;top:7px;color:var(--primary);font-size:17px}
+
+ul.tight{margin:8px 0;padding-left:20px} ul.tight li{margin:4px 0}
+
+/* toc */
+.toc{display:grid;grid-template-columns:1fr 1fr;gap:6px 30px;margin-top:10px}
+.toc a{display:flex;gap:9px;padding:5px 0;color:var(--ink);font-size:13.5px}
+.toc a b{font-family:'Space Grotesk';color:var(--primary);min-width:20px}
+
+.pill{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;
+  font-family:'Space Grotesk';letter-spacing:.03em}
+.pill.done{background:#dcfce7;color:#0f7a35}
+.pill.partial{background:#fef3e0;color:#a3670a}
+.pill.pending{background:#fbe2ec;color:#a3184c}
+
+.foot{color:var(--muted);font-size:11.5px;text-align:center;padding:26px 0}
+.diff-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+  color:#a3184c;background:#fbe2ec;padding:3px 9px;border-radius:999px;margin-left:6px;font-family:'Space Grotesk'}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ================= COVER ================= -->
+<section class="cover">
+  <div class="tag">ZK Voting · Operator Runbook</div>
+  <h1>Running a <span>simple election</span><br>on the custom chain</h1>
+  <p class="sub">A start-to-finish walkthrough for setting up and running a real election — 4
+    candidates, 1 division, 1 voter (you) — on the custom Go blockchain, playing all three
+    roles yourself: <b>Election Authority (Admin)</b>, <b>GN Officer</b>, and <b>Voter</b>.</p>
+  <div class="meta">
+    <div>Prepared<b>3 August 2026</b></div>
+    <div>Chain mode<b>Custom (chain id 9494)</b></div>
+    <div>Candidates<b>4</b></div>
+    <div>Voters<b>1 (you, on your phone)</b></div>
+  </div>
+  <div class="chips">
+    <span>🟣 Admin steps</span><span>🔵 GN Officer steps</span><span>🟢 Voter / phone steps</span>
+    <span>⚪ Setup / terminal steps</span>
+  </div>
+</section>
+
+<!-- ================= TOC ================= -->
+<section class="page">
+  <div class="kicker">Contents</div>
+  <h2>What's in this guide</h2>
+  <div class="toc">
+    <a href="#status"><b>0</b> Is everything actually finished?</a>
+    <a href="#roles"><b>1</b> The three hats you'll wear</a>
+    <a href="#diff"><b>2</b> How this differs from Hardhat mode</a>
+    <a href="#prereq"><b>3</b> One-time checks before you start</a>
+    <a href="#chain"><b>4</b> Start the chain &amp; deploy contracts</a>
+    <a href="#envweb"><b>5</b> Configure the web app for custom mode</a>
+    <a href="#startweb"><b>6</b> Start the web app</a>
+    <a href="#admin-setup"><b>7</b> Admin: create the division, question &amp; 4 candidates</a>
+    <a href="#gn-account"><b>8</b> Admin: create your GN officer account + open Registration</a>
+    <a href="#mobile-setup"><b>9</b> Configure &amp; start the phone app</a>
+    <a href="#voter-identity"><b>10</b> Voter: create your voting identity</a>
+    <a href="#gn-enrol"><b>11</b> GN: enrol yourself as a voter</a>
+    <a href="#voter-register"><b>12</b> Voter: register on-chain</a>
+    <a href="#admin-voting"><b>13</b> Admin: open Voting</a>
+    <a href="#voter-vote"><b>14</b> Voter: cast your vote</a>
+    <a href="#voter-verify"><b>15</b> Voter: verify your vote</a>
+    <a href="#results"><b>16</b> Everyone: watch the results / audit / explorer</a>
+    <a href="#end"><b>17</b> Admin: end the election</a>
+    <a href="#trouble"><b>18</b> Troubleshooting quick-reference</a>
+    <a href="#reset"><b>19</b> Running it again</a>
+  </div>
+</section>
+
+<!-- ================= 0. STATUS ================= -->
+<section class="page" id="status">
+  <div class="kicker">Part 0 — Project status</div>
+  <h2>Is every milestone actually finished?</h2>
+  <p class="lead">Short answer: <b>all the code is done</b> (M01–M14). What's left is
+    <b>manual verification</b> — a human clicking through the browser and a phone — which
+    no agent in this project's sandbox has ever had access to (no Go toolchain, no phone). Running
+    this guide end-to-end <em>is</em> that manual verification, so treat any snag you hit as a real
+    finding worth recording, not just a demo hiccup.</p>
+
+  <table>
+    <thead><tr><th>Milestone</th><th>What it built</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>M01–M04</td><td>Node skeleton, storage/genesis, tx execution, read RPC</td><td><span class="pill done">Done</span></td></tr>
+      <tr><td>M05</td><td><code>eth_sendRawTransaction</code>, revert errors</td><td><span class="pill partial">Code complete · gate not re-confirmed</span></td></tr>
+      <tr><td>M06</td><td><code>eth_getLogs</code></td><td><span class="pill partial">Code complete · gate not re-confirmed</span></td></tr>
+      <tr><td>M07–M10</td><td>Dev/compat methods, deploy integration, persistence + audit, replication</td><td><span class="pill done">Done</span></td></tr>
+      <tr><td>M11</td><td>Next.js swap-switch, v1 code removed</td><td><span class="pill partial">Harness green · browser walkthrough outstanding</span></td></tr>
+      <tr><td>M12</td><td>No-wallet login + server relay for Admin/GN</td><td><span class="pill partial">Code complete · click-through walkthrough outstanding</span></td></tr>
+      <tr><td>M13</td><td>Mobile app on the custom chain, gasless vote</td><td><span class="pill partial">Code + harness green · device walkthrough outstanding</span></td></tr>
+      <tr><td>M14</td><td>Full election e2e, swap drill, docs, final report numbers</td><td><span class="pill partial">Core e2e code complete · full gate + report deliverables pending</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="call key">
+    <b class="lbl">Why this matters for you</b>
+    Sections&nbsp;7–17 below are, almost line for line, the outstanding manual gates for
+    M11 (§8), M12 pass&nbsp;2 (§10), M13 (§11) and M14 (§12) in <code>RUNNING-GATES.md</code>
+    (those section numbers are <code>RUNNING-GATES.md</code>'s own, not this guide's).
+    If everything below works, you can honestly mark those walkthroughs as done. If something
+    doesn't, you've found a real bug worth fixing before the viva — see §18.
+  </div>
+
+  <div class="call">
+    <b class="lbl">What I could and couldn't check directly</b>
+    I don't have a Go toolchain or a phone in this environment, so I can't run
+    <code>go test</code>, <code>make e2e</code>, or the device flow myself. I <em>did</em> check
+    your actual project folder: the node binaries are already built
+    (<code>packages/blockchain/bin/</code>), a chain has already been run and has data in it,
+    and <code>packages/hardhat/deployments/custom/</code> was regenerated today — so your machine
+    clearly has a working toolchain and has exercised this before. That's why §3 below is a quick
+    checklist rather than a from-scratch install guide.
+  </div>
+</section>
+
+<!-- ================= 1. ROLES ================= -->
+<section class="page" id="roles">
+  <div class="kicker">Part 1 — Mental model</div>
+  <h2>The three hats you'll wear</h2>
+  <p class="lead">A real election has three separate people. For this solo test, you play
+    all three — just through different logins / devices. Every step below is tagged with
+    which hat you have on, and where you do it.</p>
+  <div class="legend">
+    <div class="item"><span class="dot" style="background:var(--admin)"></span>Admin — signed in at <code>/voting/admin</code> in a browser</div>
+    <div class="item"><span class="dot" style="background:var(--gn)"></span>GN Officer — signed in at <code>/gn</code> in a browser</div>
+    <div class="item"><span class="dot" style="background:var(--voter)"></span>Voter — on your phone, in the SL&nbsp;Vote app</div>
+    <div class="item"><span class="dot" style="background:var(--system)"></span>System — a terminal, not a person</div>
+  </div>
+  <p>Admin and GN Officer can't be signed in at the same time in one browser (one session
+    cookie). You'll sign out and back in between roles — that's expected, not a bug.</p>
+</section>
+
+<!-- ================= 2. DIFFERENCES ================= -->
+<section class="page" id="diff">
+  <div class="kicker">Part 2 — Reference</div>
+  <h2>How Custom mode differs from Hardhat mode</h2>
+  <p class="lead">Keep this table open as a reference — steps below call it out with a
+    <span class="diff-badge">🔀 differs</span> badge wherever the two modes genuinely diverge.</p>
+  <table>
+    <thead><tr><th>Aspect</th><th>Hardhat mode</th><th>Custom mode (this guide)</th></tr></thead>
+    <tbody>
+      <tr><td>Chain / RPC</td><td><code>yarn chain</code> → <code>127.0.0.1:8545</code>, id <code>31337</code></td><td><code>make run</code> (Go node) → <code>127.0.0.1:9545</code>, id <code>9494</code></td></tr>
+      <tr><td>Deploy</td><td><code>yarn deploy</code></td><td><code>yarn deploy --network custom</code></td></tr>
+      <tr><td>Gas</td><td>Normal EVM gas — accounts need funded ETH</td><td><b>Free.</b> <code>gasPrice = 0</code> always accepted; a brand-new burner wallet with 0 balance can vote</td></tr>
+      <tr><td>Admin / GN sign-in</td><td>MetaMask — connect a wallet, sign with it</td><td><b>Username + password</b> at <code>/login</code>. No wallet extension installed at all. A server-side "relay" holds the signing keys and signs on your behalf</td></tr>
+      <tr><td>Visiting <code>/voting/admin</code> signed out</td><td>Shows "Connect a wallet"</td><td>Redirects to <code>/login</code></td></tr>
+      <tr><td>Admin → "3. Allowlist voters"</td><td>A real form — owner can allowlist addresses directly</td><td>Hidden. Replaced by a note pointing at the GN portal — the relay refuses to sign <code>addVoters</code> for the admin role by design (see <code>01-AUTH-DESIGN.md</code> §4)</td></tr>
+      <tr><td>GN identity</td><td>A real wallet address (e.g. Hardhat account #1/#2/#3) assigned with <code>setGNOfficer</code></td><td>A <b>credential account</b> you create in admin section&nbsp;8 — a server-held encrypted key signs for them, no wallet needed</td></tr>
+      <tr><td>Dev faucet button (next to wallet)</td><td>Visible — funds test ETH</td><td>Not shown — gas is free, so there's nothing to fund. <code>/api/faucet</code> still exists as a convenience but voting never needs it</td></tr>
+      <tr><td>Phase timers (<code>evm_increaseTime</code>)</td><td>Can fast-forward time for testing</td><td>Real wall-clock time only — a "1 hour" duration really takes an hour unless you manually advance the phase early</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ================= 3. PREREQ ================= -->
+<section class="page" id="prereq">
+  <div class="kicker">Part 3</div>
+  <h2>One-time checks before you start</h2>
+  <p class="lead">Your project already has a built node, compiled contracts and a compiled
+    circuit, so this is a <em>verification</em> pass, not a fresh install. Run each check;
+    only act on the fix if it actually fails.</p>
+
+  <div class="step system">
+    <span class="stepno">CHECK</span>
+    <span class="role system">System</span>
+    <h4>Go toolchain (1.25+)</h4>
+    <div class="where">any terminal</div>
+    <div class="code"><div class="fname">PowerShell</div><pre>go version
+<span class="c"># want: go1.25.x or newer. If missing, install from https://go.dev/dl/ then reopen the terminal.</span></pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">CHECK</span>
+    <span class="role system">System</span>
+    <h4>Node.js, Yarn, and the repo's dependencies</h4>
+    <div class="where"><code>D:\Projects\FYP\zk_voting</code></div>
+    <div class="code"><div class="fname">PowerShell</div><pre>node --version   <span class="c"># want >= 20.18.3</span>
+yarn --version   <span class="c"># want 4.13.0</span>
+cd D:\Projects\FYP\zk_voting
+yarn install     <span class="c"># safe to re-run; only installs what's missing/changed</span></pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">CHECK</span>
+    <span class="role system">System</span>
+    <h4>Contracts compiled</h4>
+    <div class="where"><code>D:\Projects\FYP\zk_voting</code></div>
+    <div class="code"><div class="fname">PowerShell</div><pre>yarn compile
+<span class="c"># regenerates packages/hardhat/artifacts. Safe to re-run; fast if nothing changed.</span></pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">CHECK</span>
+    <span class="role system">System</span>
+    <h4>ZK circuit compiled</h4>
+    <div class="where"><code>packages\nextjs\public\circuits.json</code></div>
+    <p style="margin:6px 0 10px">This file already exists in your checkout, so the circuit is compiled
+      and you can skip this. Only redo it if you've changed anything under
+      <code>packages/circuits</code>:</p>
+    <div class="code"><div class="fname">WSL (Ubuntu)</div><pre><span class="c"># only if circuits.json is missing or stale</span>
+cd packages/circuits
+nargo compile
+<span class="c"># then copy/regenerate packages/nextjs/public/circuits.json per packages/circuits/README</span></pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">CHECK</span>
+    <span class="role system">System</span>
+    <h4>Go module dependencies downloaded</h4>
+    <div class="where"><code>packages\blockchain</code></div>
+    <div class="code"><div class="fname">PowerShell</div><pre>cd D:\Projects\FYP\zk_voting\packages\blockchain
+go mod download
+<span class="c"># fast / no-op if already done, which yours already appears to be (bin\ has built binaries)</span></pre></div>
+  </div>
+
+  <div class="call warn">
+    <b class="lbl">Leftover file to remove</b>
+    If <code>packages\blockchain\.env</code> exists, delete it — it's a leftover from the old v1 node
+    and can make <code>make run</code> try (and fail) to open a peer-to-peer port.
+    <div class="code"><div class="fname">PowerShell</div><pre>Remove-Item D:\Projects\FYP\zk_voting\packages\blockchain\.env -ErrorAction SilentlyContinue</pre></div>
+  </div>
+</section>
+
+<!-- ================= 4. START CHAIN ================= -->
+<section class="page" id="chain">
+  <div class="kicker">Part 4</div>
+  <h2>Start the chain &amp; deploy contracts</h2>
+  <p class="lead">Your <code>packages\blockchain\data</code> folder already has old test data in it
+    (from earlier milestone gates). Wipe it so this election starts from a clean chain —
+    otherwise you'll be staring at three unrelated test divisions from a previous run.</p>
+
+  <div class="step system">
+    <span class="stepno">1</span>
+    <span class="role system">System</span>
+    <h4>Terminal 1 — wipe old data and start the node</h4>
+    <div class="where"><code>packages\blockchain</code> · leave this terminal running the whole time</div>
+    <div class="code"><div class="fname">PowerShell</div><pre>cd D:\Projects\FYP\zk_voting\packages\blockchain
+Remove-Item -Recurse -Force .\data -ErrorAction SilentlyContinue
+make run
+<span class="c"># no `make`? raw form:
+#   go build -o bin\zk-blockchain-node.exe .\cmd\node
+#   .\bin\zk-blockchain-node.exe</span></pre></div>
+    <p style="margin-top:8px">You should see a log line like <code>listening addr=:9545</code>.
+      That's your custom chain, live at <code>http://127.0.0.1:9545</code>.</p>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">2</span>
+    <span class="role system">System</span>
+    <h4>Terminal 2 — deploy the contracts</h4>
+    <div class="where"><code>D:\Projects\FYP\zk_voting</code></div>
+    <div class="code"><div class="fname">PowerShell</div><pre>cd D:\Projects\FYP\zk_voting
+yarn deploy --network custom --reset</pre></div>
+    <div class="call key">
+      <b class="lbl">Why <code>--reset</code></b>
+      The chain is brand-new every time you wipe <code>data\</code>, but
+      <code>packages\hardhat\deployments\custom\</code> still remembers the <em>previous</em>
+      run's addresses. Without <code>--reset</code>, hardhat-deploy tries to look up an old
+      transaction that no longer exists and stops with a confusing sync error.
+    </div>
+    <p>It prints something like this — you won't usually need to note anything down from it, since
+      §7 handles division authorisation automatically now:</p>
+    <div class="code"><div class="fname">deploy output (example)</div><pre>🇱🇰 Multi-division election deployed:
+   Registry: 0xA51...
+   NicRegistry: 0x9fE...
+   Divisions: 3
+   ...</pre></div>
+  </div>
+</section>
+
+<!-- ================= 5. ENV WEB ================= -->
+<section class="page" id="envweb">
+  <div class="kicker">Part 5</div>
+  <h2>Configure the web app for custom mode <span class="diff-badge">🔀 differs from Hardhat</span></h2>
+  <p class="lead">Generate three secrets, then edit one file. This is the no-wallet login system —
+    there is no equivalent step in Hardhat mode at all.</p>
+
+  <div class="step system">
+    <span class="stepno">1</span>
+    <span class="role system">System</span>
+    <h4>Generate a session secret</h4>
+    <div class="code"><div class="fname">PowerShell — run anywhere</div><pre>node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"</pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">2</span>
+    <span class="role system">System</span>
+    <h4>Pick an admin password and hash it</h4>
+    <div class="where"><code>packages\nextjs</code> (needs <code>bcryptjs</code> from <code>node_modules</code>)</div>
+    <div class="code"><div class="fname">PowerShell</div><pre>cd D:\Projects\FYP\zk_voting\packages\nextjs
+node -e 'import("bcryptjs").then(b=>b.hash(process.argv[1],12)).then(h=>console.log(h.replace(/\$/g,"\\$")))' "choose-a-password"</pre></div>
+    <p>Copy the printed value into the env file, never the plain password. This command's output has
+      already had every <code>$</code> escaped as <code>\$</code> — required because Next.js's env
+      loader otherwise reads a bare <code>$</code> in <code>.env.local</code> as a reference to another
+      variable, and a plain bcrypt hash is silently mangled into an empty string. Paste the output
+      exactly as printed.</p>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">3</span>
+    <span class="role system">System</span>
+    <h4>Generate the GN key-encryption key</h4>
+    <div class="code"><div class="fname">PowerShell — run anywhere</div><pre>node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"</pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">4</span>
+    <span class="role system">System</span>
+    <h4>Edit <code>packages\nextjs\.env.local</code></h4>
+    <p>It currently has the <b>Hardhat</b> column set. Change the three chain-selector lines
+      to Custom, and add the five auth lines below them (create them if they're not already
+      there as comments):</p>
+    <div class="code"><div class="fname">packages\nextjs\.env.local</div><pre>NEXT_PUBLIC_CHAIN_BACKEND=custom
+NEXT_PUBLIC_CHAIN_ID=9494
+NEXT_PUBLIC_RPC_URL=http://127.0.0.1:9545
+
+SESSION_SECRET=&lt;paste from step 1&gt;
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD_HASH=&lt;paste step 2's output exactly&gt;
+ADMIN_RELAY_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+GN_KEY_ENCRYPTION_KEY=&lt;paste from step 3&gt;</pre></div>
+    <div class="call warn">
+      <b class="lbl">Why that exact private key</b>
+      <code>ADMIN_RELAY_PRIVATE_KEY</code> must belong to whoever deployed the contracts (they own
+      every division, per <code>onlyOwner</code>). The custom network's deploy account is Hardhat's
+      public test mnemonic account&nbsp;#0 — this is <em>the</em> well-known, publicly documented test
+      key, correct for local development, and never appropriate for a real deployment.
+    </div>
+  </div>
+</section>
+
+<!-- ================= 6. START WEB ================= -->
+<section class="page" id="startweb">
+  <div class="kicker">Part 6</div>
+  <h2>Start the web app</h2>
+  <div class="step system">
+    <span class="stepno">1</span>
+    <span class="role system">System</span>
+    <h4>Terminal 3 — the Next.js app</h4>
+    <div class="where"><code>D:\Projects\FYP\zk_voting</code> · leave running</div>
+    <div class="code"><div class="fname">PowerShell</div><pre>cd D:\Projects\FYP\zk_voting
+yarn start
+<span class="c"># binds to 0.0.0.0:3000 automatically — reachable from your phone too, later</span></pre></div>
+    <p>Open <a href="http://localhost:3000">http://localhost:3000</a>. The header should show a
+      "Sign in" control rather than a Connect Wallet button — that's the custom-mode tell.</p>
+  </div>
+</section>
+
+<!-- ================= 7. ADMIN SETUP ================= -->
+<section class="page" id="admin-setup">
+  <div class="kicker">Part 7</div>
+  <h2>Admin: create the division, question &amp; 4 candidates <span class="phase setup">Setup</span></h2>
+
+  <div class="step admin">
+    <span class="stepno">1</span>
+    <span class="role admin">Admin</span>
+    <h4>Sign in</h4>
+    <div class="where">browser → <code>http://localhost:3000/voting/admin</code></div>
+    <p>You'll be redirected to <code>/login</code>. Sign in with <code>admin</code> / the password
+      you hashed in §5. Five wrong attempts locks the account for 15 minutes (restart
+      <code>yarn start</code> to clear the lock if you need to).</p>
+  </div>
+
+  <div class="step admin">
+    <span class="stepno">2</span>
+    <span class="role admin">Admin</span>
+    <h4>Add a new division</h4>
+    <div class="where">Admin page → section <b>7. Add New Division</b> (bottom of the page)</div>
+    <p>Type a name — e.g. <code>Test Precinct</code> — and click <b>➕ Deploy &amp; Register
+      Division</b>. This now runs <b>two transactions automatically</b>: it deploys a brand-new
+      <code>Voting</code> contract on-chain, then authorises it in <code>NicRegistry</code> so the GN
+      portal can enrol voters into it later (§11). Watch <code>/blockexplorer</code> in another tab if
+      you want to see both land.</p>
+    <p style="margin-top:4px">If the second transaction fails, section 7 shows a warning panel with an
+      <b>Authorise</b> button for that division — click it and you're done.</p>
+  </div>
+
+  <div class="step admin">
+    <span class="stepno">3</span>
+    <span class="role admin">Admin</span>
+    <h4>Select it</h4>
+    <div class="where">Top of the admin page, the <b>🏛️ Configuring division</b> dropdown</div>
+    <p>Pick your new division. Every control below the dropdown now targets that division only.</p>
+  </div>
+
+  <div class="step admin">
+    <span class="stepno">4</span>
+    <span class="role admin">Admin</span>
+    <h4>Set the ballot question</h4>
+    <div class="where">section <b>1. Ballot question</b></div>
+    <p>Type your question (e.g. <i>"Who should be the next class representative?"</i>) → <b>Save
+      question</b>.</p>
+  </div>
+
+  <div class="step admin">
+    <span class="stepno">5</span>
+    <span class="role admin">Admin</span>
+    <h4>Add exactly 4 candidates</h4>
+    <div class="where">section <b>2. Candidates</b></div>
+    <p>The form starts with 2 empty rows. Click <b>+ Add candidate</b> twice more to get 4 rows,
+      fill in 4 names, then click <b>Save candidates</b>.</p>
+  </div>
+
+  <div class="call">
+    <b class="lbl">Note</b>
+    Question and candidates are only editable during the <span class="phase setup">Setup</span>
+    phase — do this <em>before</em> starting Registration in §8.
+  </div>
+</section>
+
+<!-- ================= 8. GN ACCOUNT ================= -->
+<section class="page" id="gn-account">
+  <div class="kicker">Part 8</div>
+  <h2>Admin: create your GN officer account + open Registration</h2>
+
+  <div class="step admin">
+    <span class="stepno">1</span>
+    <span class="role admin">Admin</span>
+    <h4>Create your officer account</h4>
+    <div class="where">Admin page → section <b>8. GN Officer Accounts</b></div>
+    <p>Username e.g. <code>gn.myself</code>, division = the one you created, click
+      <b>Create officer</b>. <b>Copy the one-time password shown</b> — it's never shown again.
+      The row should show <span class="pill done">Assigned</span> in the "On chain" column;
+      if it shows "Not assigned" instead, go to section <b>6. GN Officer Management</b> and assign
+      the printed address manually.</p>
+  </div>
+
+  <div class="step admin">
+    <span class="stepno">2</span>
+    <span class="role admin">Admin</span>
+    <h4>Open the Registration phase</h4>
+    <div class="where">section <b>4. Phase controls</b></div>
+    <p>Set a generous <b>Registration duration</b> — e.g. <code>01:00:00</code> (1 hour) —
+      then click <b>Start registration phase</b>.</p>
+  </div>
+
+  <div class="call warn">
+    <b class="lbl">Don't set the duration too short</b>
+    If the registration deadline passes before you manually advance to Voting, the contract
+    auto-closes the division straight to <span class="phase end">Ended</span> the next time
+    anyone reads or writes to it — mid-election, with no warning dialog. If that happens, use
+    section <b>5. Start a new election</b> to reset and redo §7–this step. You do <em>not</em>
+    need to wait for the timer to reach zero to move on — the "Start voting phase" button in §13
+    works immediately, any time during Registration.
+  </div>
+</section>
+
+<!-- ================= 10. MOBILE SETUP ================= -->
+<section class="page" id="mobile-setup">
+  <div class="kicker">Part 9</div>
+  <h2>Configure &amp; start the phone app <span class="diff-badge">🔀 differs from Hardhat</span></h2>
+
+  <div class="step system">
+    <span class="stepno">1</span>
+    <span class="role system">System</span>
+    <h4>Find your PC's LAN IP</h4>
+    <p>Your phone can't reach <code>localhost</code> — it resolves to the phone itself. Use your
+      PC's Wi-Fi IP instead (the same one <code>expo start</code> normally prints).</p>
+    <div class="code"><div class="fname">PowerShell</div><pre>ipconfig
+<span class="c"># look for "IPv4 Address" under your active Wi-Fi adapter, e.g. 192.168.1.23</span></pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">2</span>
+    <span class="role system">System</span>
+    <h4>Point the app at the custom chain</h4>
+    <div class="where"><code>packages\mobile\.env</code> (create it if it doesn't exist)</div>
+    <div class="code"><div class="fname">packages\mobile\.env</div><pre>EXPO_PUBLIC_API_URL=http://&lt;your-LAN-IP&gt;:3000
+EXPO_PUBLIC_RPC_URL=http://&lt;your-LAN-IP&gt;:9545
+EXPO_PUBLIC_CHAIN_ID=9494</pre></div>
+  </div>
+
+  <div class="step system">
+    <span class="stepno">3</span>
+    <span class="role system">System</span>
+    <h4>Terminal 4 — start Expo</h4>
+    <div class="where"><code>packages\mobile</code></div>
+    <div class="code"><div class="fname">PowerShell</div><pre>cd D:\Projects\FYP\zk_voting\packages\mobile
+npx expo start</pre></div>
+    <p>Open it on your phone the same way you have before (Expo Go / your dev build), on the
+      <b>same Wi-Fi network</b> as this PC.</p>
+  </div>
+
+  <div class="call">
+    <b class="lbl">Quick sanity check</b>
+    Before opening the app, load <code>http://&lt;your-LAN-IP&gt;:3000/api/election</code> in your
+    <b>phone's</b> browser. If that doesn't load, fix networking first — Windows Firewall
+    blocking the connection is the usual culprit — before touching the app itself.
+  </div>
+</section>
+
+<!-- ================= 11. VOTER IDENTITY ================= -->
+<section class="page" id="voter-identity">
+  <div class="kicker">Part 10</div>
+  <h2>Voter: create your voting identity <span class="phase reg">Registration</span></h2>
+  <div class="step voter">
+    <span class="stepno">1</span>
+    <span class="role voter">Voter</span>
+    <h4>On your phone</h4>
+    <div class="where">SL Vote app → Onboarding screen</div>
+    <p>Tap <b>Create my voting identity</b>. This generates a private key inside the phone
+      (never leaves it) locked behind your fingerprint/Face/passcode. You'll land on a screen
+      showing a QR code and your address.</p>
+  </div>
+  <div class="step voter">
+    <span class="stepno">2</span>
+    <span class="role voter">Voter</span>
+    <h4>Copy the address</h4>
+    <p>Tap <b>📋 Copy address</b>. You'll paste this in the GN portal next (§11) — or you can
+      scan the QR code straight off the phone screen with the GN portal's camera instead.</p>
+  </div>
+</section>
+
+<!-- ================= 12. GN ENROL ================= -->
+<section class="page" id="gn-enrol">
+  <div class="kicker">Part 11</div>
+  <h2>GN: enrol yourself as a voter</h2>
+
+  <div class="step gn">
+    <span class="stepno">1</span>
+    <span class="role gn">GN Officer</span>
+    <h4>Sign out of Admin, sign in as the officer</h4>
+    <div class="where">browser header → <b>Sign out</b>, then <code>/login</code></div>
+    <p>Sign in with the <code>gn.myself</code> username and the one-time password from §8.
+      You'll land on <code>/gn</code>, scoped to your one division.</p>
+  </div>
+
+  <div class="step gn">
+    <span class="stepno">2</span>
+    <span class="role gn">GN Officer</span>
+    <h4>Go to Register Voter</h4>
+    <div class="where"><code>/gn/register</code></div>
+    <p><b>Step 1 — NIC.</b> Any syntactically valid Sri Lankan NIC works for a test — e.g.
+      <code>200012345678</code> (12 digits) or <code>912345678V</code> (old format) — it just
+      can't have been used before on this chain. → <b>Verify NIC</b>.</p>
+    <p><b>Step 2 — Address.</b> Paste the address you copied in §10 (or tap <b>Open Camera</b>
+      and point it at your phone's QR code). → <b>Use Address</b>.</p>
+    <p><b>Step 3 — Confirm.</b> Enter any phone number, review, and submit. This does two writes:
+      <code>reserveNicHash</code> then <code>addVoters</code>.</p>
+  </div>
+
+  <div class="call">
+    <b class="lbl">If this fails with "Unregistered division"</b>
+    Go to admin section 7, find the division in the warning panel, and click <b>Authorise</b>,
+    then retry.
+  </div>
+</section>
+
+<!-- ================= 12. VOTER REGISTER ================= -->
+<section class="page" id="voter-register">
+  <div class="kicker">Part 12</div>
+  <h2>Voter: register on-chain <span class="phase reg">Registration</span></h2>
+  <div class="step voter">
+    <span class="stepno">1</span>
+    <span class="role voter">Voter</span>
+    <h4>Back on the phone</h4>
+    <div class="where">Home screen — pull down to refresh</div>
+    <p>The <b>Register to vote</b> button becomes enabled now that the GN has allowlisted you.
+      Tap it, authenticate with biometrics/passcode, and wait through: Authenticate →
+      Commitment → Fund (best-effort, irrelevant here since gas is free) → Submit. You'll land
+      on "You're registered!".</p>
+  </div>
+  <div class="call key">
+    <b class="lbl">What just happened</b>
+    Your phone generated a private commitment and submitted it to the on-chain Merkle tree —
+    from a wallet that has never held a single wei and never will. That's the whole point of
+    this custom chain: free gas means no wallet funding, no MetaMask, no faucet dependency.
+  </div>
+</section>
+
+<!-- ================= 14. ADMIN VOTING ================= -->
+<section class="page" id="admin-voting">
+  <div class="kicker">Part 13</div>
+  <h2>Admin: open Voting</h2>
+  <div class="step admin">
+    <span class="stepno">1</span>
+    <span class="role admin">Admin</span>
+    <h4>Sign back in as admin</h4>
+    <div class="where">Sign out of the GN session → <code>/login</code> → admin credentials</div>
+  </div>
+  <div class="step admin">
+    <span class="stepno">2</span>
+    <span class="role admin">Admin</span>
+    <h4>Start the Voting phase</h4>
+    <div class="where">section <b>4. Phase controls</b></div>
+    <p>Set a <b>Voting duration</b> (e.g. <code>01:00:00</code>) → <b>Start voting phase</b>.
+      Works immediately — you don't need to wait for the Registration timer.</p>
+  </div>
+</section>
+
+<!-- ================= 15. VOTER VOTE ================= -->
+<section class="page" id="voter-vote">
+  <div class="kicker">Part 14</div>
+  <h2>Voter: cast your vote <span class="phase vote">Voting</span></h2>
+  <div class="step voter">
+    <span class="stepno">1</span>
+    <span class="role voter">Voter</span>
+    <h4>On the phone</h4>
+    <div class="where">Home screen (refresh) → <b>Cast your vote</b></div>
+    <p>Authenticate again, pick one of your 4 candidates, tap <b>Vote for &lt;name&gt;</b>, then
+      confirm on the warning screen ("this is irreversible"). The app then: unlocks your
+      secrets → fetches your Merkle path → <b>generates a real zero-knowledge proof on the
+      phone</b> → prepares a brand-new burner wallet → casts the vote.</p>
+  </div>
+  <div class="call warn">
+    <b class="lbl">The proof step takes a while — that's normal</b>
+    Generating the proof can take roughly 1–3 minutes on a phone. The very first proof ever
+    generated on a device also needs internet access to download the proving key (a few hundred
+    MB, from Aztec's public CDN) — after that it's cached and works offline. Don't close the app
+    while it says "Please don't close the app".
+  </div>
+  <div class="call key">
+    <b class="lbl">The headline result</b>
+    Check the burner's balance afterwards — it's still exactly <code>0</code>. A wallet that
+    never held a wei just sent a 15,000,000-gas transaction and it was mined. That's the number
+    to quote as this project's core result.
+  </div>
+</section>
+
+<!-- ================= 16. VERIFY ================= -->
+<section class="page" id="voter-verify">
+  <div class="kicker">Part 15</div>
+  <h2>Voter: verify your vote</h2>
+  <div class="step voter">
+    <span class="stepno">1</span>
+    <span class="role voter">Voter</span>
+    <h4>On the phone</h4>
+    <div class="where">Home screen → <b>🔍 Verify my vote</b></div>
+    <p>Authenticate once more. The app derives your anonymous receipt locally and asks the chain
+      whether a matching vote exists — without ever revealing who you are. You should see
+      "Your vote was counted!" with a block number.</p>
+  </div>
+</section>
+
+<!-- ================= 17. RESULTS ================= -->
+<section class="page" id="results">
+  <div class="kicker">Part 16</div>
+  <h2>Everyone: watch the results / audit / explorer</h2>
+  <table>
+    <thead><tr><th>Page</th><th>What it shows</th></tr></thead>
+    <tbody>
+      <tr><td><a href="http://localhost:3000/results">/results</a></td><td>Live per-candidate bar chart for every division, including yours — your chosen candidate should read <b>1</b>, the rest <b>0</b></td></tr>
+      <tr><td><a href="http://localhost:3000/audit">/audit</a></td><td>Independent replay/verification view over the on-chain event log</td></tr>
+      <tr><td><a href="http://localhost:3000/blockexplorer">/blockexplorer</a></td><td>Every block and transaction on the custom chain — one transaction per block, exactly as this node was designed</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ================= 18. END ================= -->
+<section class="page" id="end">
+  <div class="kicker">Part 17</div>
+  <h2>Admin: end the election <span class="phase end">Ended</span></h2>
+  <div class="step admin">
+    <span class="stepno">1</span>
+    <span class="role admin">Admin</span>
+    <h4>Optional — freeze the result</h4>
+    <div class="where">section <b>4. Phase controls</b> → <b>End election now</b></div>
+    <p>Not required — voting also auto-closes at the deadline you set in §13. Ending it early
+      just freezes <code>/results</code> immediately.</p>
+  </div>
+</section>
+
+<!-- ================= 19. TROUBLESHOOTING ================= -->
+<section class="page" id="trouble">
+  <div class="kicker">Part 18</div>
+  <h2>Troubleshooting quick-reference</h2>
+  <table>
+    <thead><tr><th>Symptom</th><th>What it means / fix</th></tr></thead>
+    <tbody>
+      <tr><td>Any auth route → 503 <code>Authentication is not configured</code></td><td><code>SESSION_SECRET</code> missing or under 32 chars — check §5</td></tr>
+      <tr><td>Sign-in → 503 <code>Admin login is not configured on this server</code></td><td>The <code>$</code> characters in <code>ADMIN_PASSWORD_HASH</code> weren't escaped — Next.js's env loader expanded them away to an empty string. Re-paste the hash with <code>\$</code> in place of every <code>$</code> — see the warning in §5</td></tr>
+      <tr><td>Admin action reverts <code>OwnableUnauthorizedAccount</code></td><td><code>ADMIN_RELAY_PRIVATE_KEY</code> isn't the deploying account — should be exactly the value in §5</td></tr>
+      <tr><td>GN enrol fails <code>"Unregistered division"</code></td><td>Go to admin section 7's warning panel and click <b>Authorise</b> next to the division, then retry</td></tr>
+      <tr><td>GN enrol fails <code>"not the on-chain GN officer"</code></td><td>The account exists but <code>setGNOfficer</code> never landed — go to admin section 6 and assign the address shown in section 8's table</td></tr>
+      <tr><td>Division jumped straight to <span class="phase end">Ended</span></td><td>A phase timer expired before you manually advanced it (see the warning in §8). Use section 5 "Start a new election" and redo §7 onward</td></tr>
+      <tr><td>Phone: "Network request failed" everywhere</td><td><code>localhost</code> is in the mobile env instead of your LAN IP, or Windows Firewall is blocking the connection. Test the LAN URL from the phone's own browser first</td></tr>
+      <tr><td>Phone: "we couldn't verify your eligibility"</td><td>You're registering for a different division than the one the GN enrolled you for — check the division picker on the phone's home screen</td></tr>
+      <tr><td>Phone: vote / proof step hangs indefinitely</td><td>Usually the first-run proving-key download stalling — check internet access. If it also fails in Hardhat mode, it's unrelated to this guide</td></tr>
+      <tr><td><code>/blockexplorer</code> is empty</td><td>The Go node isn't running, or <code>NEXT_PUBLIC_RPC_URL</code> points elsewhere. Restart <code>yarn start</code> after fixing <code>.env.local</code></td></tr>
+      <tr><td>Contract reads return nothing / division picker empty</td><td><code>deployedContracts.ts</code> has no entry for chain 9494 — redo §4's deploy step</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ================= 20. RESET ================= -->
+<section class="page" id="reset">
+  <div class="kicker">Part 19</div>
+  <h2>Running it again</h2>
+  <table>
+    <thead><tr><th>What you want</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Re-run the same division from scratch (new question/candidates/voters, same address)</td><td>Admin section <b>5. Start a new election</b> — resets that division only, no redeploy needed</td></tr>
+      <tr><td>A completely fresh chain (wipes everything, all divisions)</td><td>Stop Terminal 1, <code>Remove-Item -Recurse -Force data</code>, <code>make run</code> again, then redo §4's <code>yarn deploy --network custom --reset</code> and §7–8 for a new division — §7's "Deploy &amp; Register Division" re-authorises the new address in NicRegistry automatically, no separate step needed</td></tr>
+      <tr><td>Your phone thinks it's already registered/voted</td><td>Only relevant if you reused the exact same division address — Settings → "Erase identity from this device" wipes the local flags (and the on-device key)</td></tr>
+      <tr><td>Switch back to Hardhat mode afterwards</td><td><code>yarn chain</code> + <code>yarn deploy</code>, restore the Hardhat column in <code>.env.local</code>, restart <code>yarn start</code> — see the table in §2</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="foot">ZK Voting — custom-chain election runbook · generated from the project's own milestone docs, contracts and RUNNING-GATES.md · 3 August 2026</div>
+
+</main>
+</body>
+</html>

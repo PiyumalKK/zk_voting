@@ -1,28 +1,33 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  Block,
-  Hash,
-  Transaction,
-  TransactionReceipt,
-  createTestClient,
-  publicActions,
-  walletActions,
-  webSocket,
-} from "viem";
-import { hardhat } from "viem/chains";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTargetNetwork } from "./useTargetNetwork";
+import { Block, Chain, Hash, Transaction, TransactionReceipt, createPublicClient, http } from "viem";
 import { decodeTransactionData } from "~~/utils/scaffold-eth";
 
 const BLOCKS_PER_PAGE = 20;
+/** How often to check for a new block, in ms. Local chains seal on demand. */
+const BLOCK_POLLING_INTERVAL = 1_000;
 
-export const testClient = createTestClient({
-  chain: hardhat,
-  mode: "hardhat",
-  transport: webSocket("ws://127.0.0.1:8545"),
-})
-  .extend(publicActions)
-  .extend(walletActions);
+/**
+ * Builds the block explorer's RPC client for a given chain.
+ *
+ * **HTTP, not WebSocket.** This used to be a `createTestClient` over
+ * `ws://127.0.0.1:8545`, which hardcoded both the transport and the chain. The
+ * custom Go node deliberately implements no `eth_subscribe` (MASTER §9 — every
+ * consumer in this app polls), so a WebSocket client cannot reach it at all.
+ * Polling over HTTP works identically against Hardhat and against our node, and
+ * `watchBlocks({ poll: true })` gives the same live-tail behaviour the
+ * subscription did.
+ */
+export const createBlockExplorerClient = (chain: Chain) =>
+  createPublicClient({
+    chain,
+    transport: http(chain.rpcUrls.default.http[0]),
+  });
 
 export const useFetchBlocks = () => {
+  const { targetNetwork } = useTargetNetwork();
+  const client = useMemo(() => createBlockExplorerClient(targetNetwork), [targetNetwork]);
+
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [transactionReceipts, setTransactionReceipts] = useState<{
     [key: string]: TransactionReceipt;
@@ -35,7 +40,7 @@ export const useFetchBlocks = () => {
     setError(null);
 
     try {
-      const blockNumber = await testClient.getBlockNumber();
+      const blockNumber = await client.getBlockNumber();
       setTotalBlocks(blockNumber);
 
       const startingBlock = blockNumber - BigInt(currentPage * BLOCKS_PER_PAGE);
@@ -46,7 +51,7 @@ export const useFetchBlocks = () => {
 
       const blocksWithTransactions = blockNumbersToFetch.map(async blockNumber => {
         try {
-          return testClient.getBlock({ blockNumber, includeTransactions: true });
+          return client.getBlock({ blockNumber, includeTransactions: true });
         } catch (err) {
           setError(err instanceof Error ? err : new Error("An error occurred."));
           throw err;
@@ -62,7 +67,7 @@ export const useFetchBlocks = () => {
         fetchedBlocks.flatMap(block =>
           block.transactions.map(async tx => {
             try {
-              const receipt = await testClient.getTransactionReceipt({ hash: (tx as Transaction).hash });
+              const receipt = await client.getTransactionReceipt({ hash: (tx as Transaction).hash });
               return { [(tx as Transaction).hash]: receipt };
             } catch (err) {
               setError(err instanceof Error ? err : new Error("An error occurred."));
@@ -77,7 +82,7 @@ export const useFetchBlocks = () => {
     } catch (err) {
       setError(err instanceof Error ? err : new Error("An error occurred."));
     }
-  }, [currentPage]);
+  }, [client, currentPage]);
 
   useEffect(() => {
     fetchBlocks();
@@ -89,7 +94,7 @@ export const useFetchBlocks = () => {
         if (currentPage === 0) {
           if (newBlock.transactions.length > 0) {
             const transactionsDetails = await Promise.all(
-              newBlock.transactions.map((txHash: string) => testClient.getTransaction({ hash: txHash as Hash })),
+              newBlock.transactions.map((txHash: string) => client.getTransaction({ hash: txHash as Hash })),
             );
             newBlock.transactions = transactionsDetails;
           }
@@ -99,7 +104,7 @@ export const useFetchBlocks = () => {
           const receipts = await Promise.all(
             newBlock.transactions.map(async (tx: Transaction) => {
               try {
-                const receipt = await testClient.getTransactionReceipt({ hash: (tx as Transaction).hash });
+                const receipt = await client.getTransactionReceipt({ hash: (tx as Transaction).hash });
                 return { [(tx as Transaction).hash]: receipt };
               } catch (err) {
                 setError(err instanceof Error ? err : new Error("An error occurred fetching receipt."));
@@ -119,8 +124,13 @@ export const useFetchBlocks = () => {
       }
     };
 
-    return testClient.watchBlocks({ onBlock: handleNewBlock, includeTransactions: true });
-  }, [currentPage]);
+    return client.watchBlocks({
+      onBlock: handleNewBlock,
+      includeTransactions: true,
+      poll: true,
+      pollingInterval: BLOCK_POLLING_INTERVAL,
+    });
+  }, [client, currentPage]);
 
   return {
     blocks,

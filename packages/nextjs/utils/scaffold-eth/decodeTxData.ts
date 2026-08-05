@@ -1,14 +1,17 @@
 import { TransactionWithFunction } from "./block";
 import { GenericContractsDeclaration } from "./contract";
 import { Abi, AbiFunction, decodeFunctionData, getAbiItem } from "viem";
-import { hardhat } from "viem/chains";
 import contractData from "~~/contracts/deployedContracts";
+import scaffoldConfig from "~~/scaffold.config";
 
 type ContractsInterfaces = Record<string, Abi>;
 type TransactionType = TransactionWithFunction | null;
 
 const deployedContracts = contractData as GenericContractsDeclaration | null;
-const chainMetaData = deployedContracts?.[hardhat.id];
+// Decode against the chain the app is actually pointed at, not a hardcoded
+// 31337 — otherwise the block explorer shows "⚠️ Unknown" for every call on the
+// custom chain, whose contracts live under the 9494 key.
+const chainMetaData = deployedContracts?.[scaffoldConfig.targetNetworks[0].id];
 const interfaces = chainMetaData
   ? Object.entries(chainMetaData).reduce((finalInterfacesObj, [contractName, contract]) => {
       finalInterfacesObj[contractName] = contract.abi;

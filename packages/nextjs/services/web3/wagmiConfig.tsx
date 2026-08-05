@@ -1,8 +1,9 @@
 import { wagmiConnectors } from "./wagmiConnectors";
 import { Chain, createClient, fallback, http } from "viem";
-import { hardhat, mainnet } from "viem/chains";
+import { mainnet } from "viem/chains";
 import { createConfig } from "wagmi";
 import scaffoldConfig, { DEFAULT_ALCHEMY_API_KEY, ScaffoldConfig } from "~~/scaffold.config";
+import { isLocalChainId } from "~~/utils/customChain";
 import { getAlchemyHttpUrl } from "~~/utils/scaffold-eth";
 
 const { targetNetworks } = scaffoldConfig;
@@ -34,7 +35,9 @@ export const wagmiConfig = createConfig({
     return createClient({
       chain,
       transport: fallback(rpcFallbacks),
-      ...(chain.id !== (hardhat as Chain).id ? { pollingInterval: scaffoldConfig.pollingInterval } : {}),
+      // Local nodes mine on demand, so wagmi's default (fast) polling is fine;
+      // remote chains get the configured, slower interval.
+      ...(isLocalChainId(chain.id) ? {} : { pollingInterval: scaffoldConfig.pollingInterval }),
     });
   },
 });

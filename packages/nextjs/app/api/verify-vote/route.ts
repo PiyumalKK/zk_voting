@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, http, parseAbiItem } from "viem";
+import { serverChainConfig } from "~~/utils/serverChain";
 
 /**
  * GET /api/verify-vote?division=0x...&nullifierHash=0x...
@@ -13,7 +14,7 @@ import { createPublicClient, http, parseAbiItem } from "viem";
  * identity.
  */
 
-const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
+const { rpcUrl: RPC_URL } = serverChainConfig;
 
 const IS_NULLIFIER_USED_ABI = [
   {

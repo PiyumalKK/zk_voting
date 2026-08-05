@@ -4,16 +4,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { NextPage } from "next";
 import { createPublicClient, http, parseAbiItem } from "viem";
-import { useAccount } from "wagmi";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
-import { PHASE_LABELS, findDivisionForGN, useDivisions } from "~~/hooks/useDivisions";
+import { useGnDivision } from "~~/hooks/useGnDivision";
+import { PHASE_LABELS } from "~~/utils/electionPhase";
 
 const GNDashboard: NextPage = () => {
-  const { address, isConnected } = useAccount();
   const { targetNetwork } = useTargetNetwork();
-  const { divisions, isLoading, error } = useDivisions();
+  // Which division this officer runs comes from the wallet on Hardhat and from
+  // the session cookie on the custom chain — `useGnDivision` owns that split so
+  // the rest of this page never has to know which backend it is on.
+  const { division: myDivision, divisions, isLoading, error, identity, needsSignIn, mode } = useGnDivision();
 
-  const myDivision = findDivisionForGN(divisions, address) ?? null;
   const isAuthorized = !!myDivision;
   const phase = myDivision?.phase ?? 0;
   const treeSize = myDivision?.treeSize ?? 0;
@@ -80,13 +81,22 @@ const GNDashboard: NextPage = () => {
     };
   }, [divisionContract, targetNetwork, treeSize]);
 
-  if (!isConnected) {
+  if (needsSignIn) {
     return (
       <div className="flex flex-col items-center grow pt-16 px-4">
         <div className="text-center">
           <div className="text-5xl mb-4">👨‍💼</div>
           <h1 className="text-2xl font-bold mb-2">GN Portal</h1>
-          <p className="opacity-60">Connect your wallet to access the GN dashboard.</p>
+          {mode === "custom" ? (
+            <>
+              <p className="opacity-60 mb-4">Sign in with your officer credentials to access the GN dashboard.</p>
+              <Link href="/login?next=%2Fgn" className="btn btn-primary btn-sm">
+                Sign in
+              </Link>
+            </>
+          ) : (
+            <p className="opacity-60">Connect your wallet to access the GN dashboard.</p>
+          )}
         </div>
       </div>
     );
@@ -122,8 +132,12 @@ const GNDashboard: NextPage = () => {
         <div className="text-center max-w-md">
           <div className="text-5xl mb-4">🚫</div>
           <h1 className="text-2xl font-bold mb-2">Not a GN Officer</h1>
-          <p className="opacity-60 mb-2">This connected wallet is not assigned as GN for any division:</p>
-          <code className="block text-xs bg-base-200 rounded-lg px-3 py-2 mb-4 break-all">{address}</code>
+          <p className="opacity-60 mb-2">
+            {mode === "custom"
+              ? "This account is not scoped to a registered division:"
+              : "This connected wallet is not assigned as GN for any division:"}
+          </p>
+          <code className="block text-xs bg-base-200 rounded-lg px-3 py-2 mb-4 break-all">{identity}</code>
           <div className="text-left text-sm bg-base-200/50 rounded-lg p-3 mb-4">
             <p className="font-semibold mb-1 opacity-70">Registered GN officers:</p>
             {divisions.map(d => (
@@ -136,8 +150,9 @@ const GNDashboard: NextPage = () => {
             ))}
           </div>
           <p className="text-sm opacity-40">
-            If your address should be listed above, switch your wallet to the correct account. Otherwise ask the
-            Election Authority to assign you via the Admin panel.
+            {mode === "custom"
+              ? "Ask the Election Authority to create your officer account against a division in the Admin panel."
+              : "If your address should be listed above, switch your wallet to the correct account. Otherwise ask the Election Authority to assign you via the Admin panel."}
           </p>
         </div>
       </div>
