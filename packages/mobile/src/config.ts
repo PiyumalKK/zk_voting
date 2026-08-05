@@ -19,9 +19,9 @@
  * one `expo start` prints) so the phone can reach the API and the node.
  */
 
-// Production defaults — override via EXPO_PUBLIC_* env vars for local dev
-const DEV_HOST = "http://zk-voting-alb-712299694.ap-south-1.elb.amazonaws.com";
-const DEV_RPC = "http://zk-voting-alb-712299694.ap-south-1.elb.amazonaws.com/chain-api";
+// Dev fallbacks — set EXPO_PUBLIC_* env vars for production (ALB URL) or local dev (LAN IP)
+const DEV_HOST = "http://192.168.43.186:3000";
+const DEV_RPC = "http://192.168.43.186:9545";
 const DEV_CHAIN_ID = 9494;
 
 function envUrl(value: string | undefined, fallback: string): string {
