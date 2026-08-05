@@ -23,6 +23,39 @@ describe("resolveServerChainConfig", () => {
     });
   });
 
+  /**
+   * The regression this pair exists for.
+   *
+   * The browser (`utils/customChain.ts`) defaults to 9494/:9545 as soon as the
+   * backend switch says `custom`. The server used to default to Hardhat no
+   * matter what, so flipping only `NEXT_PUBLIC_CHAIN_BACKEND` split the two
+   * halves of the app across different chains — and because `deployedContracts`
+   * need not carry 31337 at all, every relay call died on "ElectionRegistry is
+   * not deployed on chain 31337" while the pages rendered fine.
+   */
+  it("follows the backend switch when the chain id is not set", () => {
+    expect(resolveServerChainConfig({ backend: "custom" })).toEqual({
+      chainId: 9494,
+      rpcUrl: "http://127.0.0.1:9545",
+    });
+  });
+
+  it("still honours an explicit chain id and RPC over the backend's defaults", () => {
+    expect(
+      resolveServerChainConfig({ backend: "custom", chainId: "4242", publicRpcUrl: "http://elsewhere:1234" }),
+    ).toEqual({
+      chainId: 4242,
+      rpcUrl: "http://elsewhere:1234",
+    });
+  });
+
+  it.each(["hardhat", "", "  ", "HARDHAT-ish", undefined])("keeps the Hardhat defaults for backend %p", backend => {
+    expect(resolveServerChainConfig({ backend })).toEqual({
+      chainId: DEFAULT_SERVER_CHAIN_ID,
+      rpcUrl: DEFAULT_SERVER_RPC_URL,
+    });
+  });
+
   it("prefers the server-only RPC_URL over the public one", () => {
     expect(
       resolveServerChainConfig({

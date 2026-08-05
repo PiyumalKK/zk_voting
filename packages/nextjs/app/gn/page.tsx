@@ -83,7 +83,7 @@ const GNDashboard: NextPage = () => {
 
   if (needsSignIn) {
     return (
-      <div className="flex flex-col items-center grow pt-16 px-4">
+      <div className="flex flex-col items-center justify-center grow p-6 lg:p-8">
         <div className="text-center">
           <div className="text-5xl mb-4">👨‍💼</div>
           <h1 className="text-2xl font-bold mb-2">GN Portal</h1>
@@ -104,7 +104,7 @@ const GNDashboard: NextPage = () => {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center grow pt-16 px-4">
+      <div className="flex flex-col items-center justify-center grow p-6 lg:p-8">
         <div className="text-center max-w-md">
           <div className="text-5xl mb-4">⚠️</div>
           <h1 className="text-2xl font-bold mb-2">Cannot reach the election chain</h1>
@@ -117,7 +117,7 @@ const GNDashboard: NextPage = () => {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center grow pt-16 px-4">
+      <div className="flex flex-col items-center justify-center grow p-6 lg:p-8">
         <div className="text-center">
           <span className="loading loading-spinner loading-lg text-primary" />
           <p className="opacity-60 mt-4">Checking your GN authorization on-chain…</p>
@@ -128,7 +128,7 @@ const GNDashboard: NextPage = () => {
 
   if (!myDivision) {
     return (
-      <div className="flex flex-col items-center grow pt-16 px-4">
+      <div className="flex flex-col items-center justify-center grow p-6 lg:p-8">
         <div className="text-center max-w-md">
           <div className="text-5xl mb-4">🚫</div>
           <h1 className="text-2xl font-bold mb-2">Not a GN Officer</h1>
@@ -160,14 +160,14 @@ const GNDashboard: NextPage = () => {
   }
 
   return (
-    <div className="flex flex-col items-center grow pt-8 px-4">
+    <div className="flex flex-col items-center grow p-6 lg:p-8">
       <div className="w-full max-w-4xl">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="text-4xl mb-2">👨‍💼</div>
-          <h1 className="text-3xl font-extrabold text-base-content">GN Portal</h1>
-          <p className="text-lg font-semibold text-primary mt-1">{myDivision.name} Division</p>
-          <p className="text-xs opacity-50 mt-1 font-mono">{myDivision.votingContract}</p>
+        {/* Header — the shell's top bar already names the route, so this
+            identifies the division rather than repeating the page title. */}
+        <div className="dash-card p-6 mb-6">
+          <h1 className="text-lg font-bold text-base-content">GN Portal</h1>
+          <p className="text-sm font-semibold text-primary mt-1">{myDivision.name} Division</p>
+          <p className="text-xs opacity-50 mt-2 font-mono break-all">{myDivision.votingContract}</p>
         </div>
 
         {/* Authorization status */}

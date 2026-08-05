@@ -333,7 +333,7 @@ const GNRegisterVoter: NextPage = () => {
   }
 
   return (
-    <div className="flex flex-col items-center grow pt-8 px-4">
+    <div className="flex flex-col items-center grow p-6 lg:p-8">
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-6">
@@ -486,7 +486,7 @@ const CenterMessage = ({
   subtitle: string;
   action?: React.ReactNode;
 }) => (
-  <div className="flex flex-col items-center grow pt-16 px-4 text-center">
+  <div className="flex flex-col items-center justify-center grow p-6 lg:p-8 text-center">
     <div className="text-5xl mb-4">{icon}</div>
     <h1 className="text-2xl font-bold mb-2">{title}</h1>
     <p className="opacity-60 max-w-md">{subtitle}</p>
