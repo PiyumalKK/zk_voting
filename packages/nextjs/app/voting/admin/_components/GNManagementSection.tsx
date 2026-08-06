@@ -29,7 +29,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const GNManagementSection = () => {
   const [gnAddress, setGnAddress] = useState("");
   const [selectedDivision, setSelectedDivision] = useState(0);
-  const { divisions, isLoading: divisionsLoading, error: divisionsError, refetch } = useDivisions();
+  const { divisions, isLoading: divisionsLoading, error: divisionsError, refetch, toggleHidden } = useDivisions();
   const { write } = useElectionWriter();
 
   // From the provider, not `isCustomMode()` directly: every other panel in the
@@ -73,10 +73,13 @@ export const GNManagementSection = () => {
   };
 
   const orphaned = divisions.filter(
-    division => isUsableOfficer(division.gnOfficer) === false && division.gnOfficer !== ZERO_ADDRESS,
+    division =>
+      !division.hidden && isUsableOfficer(division.gnOfficer) === false && division.gnOfficer !== ZERO_ADDRESS,
   );
 
-  const unassigned = divisions.filter(division => !division.gnOfficer || division.gnOfficer === ZERO_ADDRESS);
+  const unassigned = divisions.filter(
+    division => !division.hidden && (!division.gnOfficer || division.gnOfficer === ZERO_ADDRESS),
+  );
 
   // Keep selection valid as divisions load in.
   useEffect(() => {
@@ -93,6 +96,10 @@ export const GNManagementSection = () => {
     const div = divisions[selectedDivision];
     if (!div) {
       notification.error("No division selected.");
+      return;
+    }
+    if (div.hidden) {
+      notification.error("Cannot assign a GN officer to a hidden division.");
       return;
     }
     try {
@@ -172,7 +179,8 @@ export const GNManagementSection = () => {
               onChange={e => setSelectedDivision(Number(e.target.value))}
             >
               {divisions.map((div, idx) => (
-                <option key={div.votingContract} value={idx}>
+                <option key={div.votingContract} value={idx} disabled={div.hidden}>
+                  {div.hidden ? "[HIDDEN] " : ""}
                   {div.name} — {div.votingContract.slice(0, 10)}...
                 </option>
               ))}
@@ -217,6 +225,7 @@ export const GNManagementSection = () => {
                   <th>Division</th>
                   <th>GN Officer</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -225,8 +234,14 @@ export const GNManagementSection = () => {
                   const assigned = gn && gn !== ZERO_ADDRESS;
                   const usable = isUsableOfficer(gn);
                   return (
-                    <tr key={div.votingContract} className={selectedDivision === idx ? "bg-primary/10" : ""}>
-                      <td className="font-bold">{div.name}</td>
+                    <tr
+                      key={div.votingContract}
+                      className={`${selectedDivision === idx ? "bg-primary/10" : ""} ${div.hidden ? "opacity-40 grayscale" : ""}`}
+                    >
+                      <td className="font-bold">
+                        {div.name}{" "}
+                        {div.hidden && <span className="text-xs font-normal text-base-content/60 ml-1">(Hidden)</span>}
+                      </td>
                       <td className="font-mono text-xs">
                         <span className={assigned && usable === false ? "line-through opacity-70" : ""}>
                           {assigned ? `${gn.slice(0, 10)}...${gn.slice(-4)}` : "—"}
@@ -245,6 +260,14 @@ export const GNManagementSection = () => {
                         ) : (
                           <span className="badge badge-success badge-xs">Assigned</span>
                         )}
+                      </td>
+                      <td>
+                        <button
+                          className={`btn btn-xs ${div.hidden ? "btn-outline" : "btn-ghost text-error"}`}
+                          onClick={() => toggleHidden?.(div.id)}
+                        >
+                          {div.hidden ? "Show" : "Hide"}
+                        </button>
                       </td>
                     </tr>
                   );

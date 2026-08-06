@@ -25,6 +25,7 @@ export interface LiveDivision {
   phase: number;
   treeSize: number;
   root: bigint;
+  hidden?: boolean;
 }
 
 const VOTING_READ_ABI = [
@@ -180,11 +181,33 @@ export const useDivisions = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const [hiddenIds, setHiddenIds] = useState<number[]>([]);
+
+  // Load initial hidden state from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("hiddenDivisions");
+      if (stored) setHiddenIds(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  // Sync hidden state to localStorage when it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem("hiddenDivisions", JSON.stringify(hiddenIds));
+    } catch {}
+  }, [hiddenIds]);
+
+  const toggleHidden = (id: number) => {
+    setHiddenIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
   return {
-    divisions,
+    divisions: divisions.map(d => ({ ...d, hidden: hiddenIds.includes(d.id) })),
     isLoading: isLoading || registryLoading,
     error,
     refetch: () => setRefreshTick(t => t + 1),
+    toggleHidden,
   };
 };
 
