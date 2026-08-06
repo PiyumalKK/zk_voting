@@ -10,10 +10,10 @@ import {
 } from "../src/components/ui";
 import {
   getAddress,
-  getSelectedDivision,
   hasIdentity,
   hasRegisteredLocally,
   hasVoted,
+  resolveSelectedDivision,
   setSelectedDivision,
 } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
@@ -42,11 +42,7 @@ export default function Home() {
       const election = await api.getElection();
       setAllDivisions(election.divisions);
 
-      const chosen = await getSelectedDivision();
-      const div =
-        election.divisions.find(d => d.votingContract.toLowerCase() === chosen?.toLowerCase()) ??
-        election.divisions[0] ??
-        null;
+      const div = await resolveSelectedDivision(election.divisions);
       setDivision(div);
       if (div) setVoted(await hasVoted(div.votingContract));
     } catch (e: any) {

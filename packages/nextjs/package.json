@@ -39,6 +39,7 @@
     "next-themes": "~0.3.0",
     "permissionless": "^0.3.5",
     "poseidon-lite": "^0.3.0",
+    "qr": "~0",
     "qrcode.react": "~4.0.1",
     "react": "~19.2.3",
     "react-dom": "~19.2.3",

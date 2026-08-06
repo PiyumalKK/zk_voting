@@ -47,6 +47,9 @@ Root folder eke idan me command eka run karanna.
 
 ```bash
 yarn start
+or
+yarn next:build
+yarn next:serve
 ```
 
 Eeta passe browser eke `http://localhost:3000` ekata yanna!
