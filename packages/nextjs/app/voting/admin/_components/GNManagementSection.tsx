@@ -56,6 +56,8 @@ export const GNManagementSection = () => {
 
   useEffect(() => {
     loadAccounts();
+    const interval = setInterval(loadAccounts, 4000);
+    return () => clearInterval(interval);
   }, [loadAccounts]);
 
   /**
@@ -73,6 +75,8 @@ export const GNManagementSection = () => {
   const orphaned = divisions.filter(
     division => isUsableOfficer(division.gnOfficer) === false && division.gnOfficer !== ZERO_ADDRESS,
   );
+
+  const unassigned = divisions.filter(division => !division.gnOfficer || division.gnOfficer === ZERO_ADDRESS);
 
   // Keep selection valid as divisions load in.
   useEffect(() => {
@@ -121,15 +125,30 @@ export const GNManagementSection = () => {
       )}
 
       {orphaned.length > 0 && (
-        <div className="alert alert-warning flex-col items-start gap-1 text-sm">
+        <div className="alert alert-warning flex-col items-start gap-1 text-sm mb-4">
           <span className="font-bold">
             {orphaned.length} division{orphaned.length === 1 ? "" : "s"} cannot enrol voters.
           </span>
           <p className="text-xs opacity-80">
-            {orphaned.map(division => division.name).join(", ")} name an on-chain officer with no credential account, so
-            nobody can sign for {orphaned.length === 1 ? "it" : "them"}. This is what a chain deployed with wallet-mode
-            defaults looks like. Create the officer in <strong>GN Officer Accounts</strong> below — that generates the
-            signing key and rebinds the division.
+            {orphaned.map(division => division.name).join(", ")} name{orphaned.length === 1 ? "s" : ""} an on-chain
+            officer with no credential account, so nobody can sign for {orphaned.length === 1 ? "it" : "them"}. This can
+            happen if the chain was deployed with wallet-mode defaults, or if an officer&apos;s credential account was
+            deleted. Create a new officer in <strong>GN Officer Accounts</strong> below to generate a new signing key
+            and rebind the division, or assign the zero address (0x000...000) to clear it.
+          </p>
+        </div>
+      )}
+
+      {unassigned.length > 0 && (
+        <div className="alert alert-info flex-col items-start gap-1 text-sm mb-4">
+          <span className="font-bold">
+            {unassigned.length} division{unassigned.length === 1 ? "" : "s"} lack{unassigned.length === 1 ? "s" : ""} an
+            assigned officer.
+          </span>
+          <p className="text-xs opacity-80">
+            {unassigned.map(division => division.name).join(", ")} {unassigned.length === 1 ? "has" : "have"} no GN
+            officer assigned, so nobody can enrol voters for {unassigned.length === 1 ? "it" : "them"}. Assign an
+            officer to enable voter enrolment.
           </p>
         </div>
       )}
@@ -165,11 +184,20 @@ export const GNManagementSection = () => {
             <div className="text-xs opacity-60 mb-1">
               Current GN for <strong>{selected?.name}</strong>
             </div>
-            <div className="font-mono text-sm">
+            <div className="font-mono text-sm flex items-center gap-2">
               {!isZeroAddr ? (
-                <span className={isUsableOfficer(currentDivGN) === false ? "text-warning" : "text-success"}>
-                  {currentDivGN}
-                </span>
+                <>
+                  <span
+                    className={
+                      isUsableOfficer(currentDivGN) === false ? "text-warning line-through opacity-70" : "text-success"
+                    }
+                  >
+                    {currentDivGN}
+                  </span>
+                  {isUsableOfficer(currentDivGN) === false && (
+                    <span className="badge badge-error badge-outline badge-xs font-sans">No Account</span>
+                  )}
+                </>
               ) : (
                 <span className="opacity-40">None assigned</span>
               )}
@@ -199,7 +227,11 @@ export const GNManagementSection = () => {
                   return (
                     <tr key={div.votingContract} className={selectedDivision === idx ? "bg-primary/10" : ""}>
                       <td className="font-bold">{div.name}</td>
-                      <td className="font-mono text-xs">{assigned ? `${gn.slice(0, 10)}...${gn.slice(-4)}` : "—"}</td>
+                      <td className="font-mono text-xs">
+                        <span className={assigned && usable === false ? "line-through opacity-70" : ""}>
+                          {assigned ? `${gn.slice(0, 10)}...${gn.slice(-4)}` : "—"}
+                        </span>
+                      </td>
                       <td>
                         {!assigned ? (
                           <span className="badge badge-ghost badge-xs">Empty</span>

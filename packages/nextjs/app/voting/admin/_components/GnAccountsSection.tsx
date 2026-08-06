@@ -56,6 +56,8 @@ export const GnAccountsSection = () => {
 
   useEffect(() => {
     void load();
+    const interval = setInterval(load, 4000);
+    return () => clearInterval(interval);
   }, [load]);
 
   // Keep the division selector pointed at something that exists.
@@ -130,6 +132,7 @@ export const GnAccountsSection = () => {
         method: "DELETE",
       });
       await load();
+      setCreated(prev => (prev?.username === account.username ? null : prev));
     } catch (error) {
       notification.error(error instanceof Error ? error.message : "Could not delete the account.");
     }
