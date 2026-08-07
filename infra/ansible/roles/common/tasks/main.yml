@@ -1,0 +1,42 @@
+---
+- name: Update apt
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install base packages
+  apt:
+    name: [git, curl, build-essential, openssl]
+    state: present
+
+- name: Install Go via snap
+  snap:
+    name: go
+    classic: yes
+
+- name: Install Node.js 20
+  shell: |
+    if ! node --version 2>/dev/null | grep -q "v20"; then
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+      apt-get install -y nodejs
+    fi
+  args:
+    creates: /usr/bin/node
+
+- name: Install PM2 and Yarn globally
+  npm:
+    name: "{{ item }}"
+    global: yes
+  loop: [pm2, yarn]
+
+- name: Set swapfile (1 GB — helps t3.micro survive builds)
+  shell: |
+    if [ ! -f /swapfile ]; then
+      fallocate -l 1G /swapfile
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+  args:
+    creates: /swapfile

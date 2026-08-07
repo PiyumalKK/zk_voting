@@ -1,0 +1,25 @@
+---
+- name: Setup all servers
+  hosts: all
+  become: true
+  roles:
+    - common
+
+- name: Deploy blockchain nodes
+  hosts: nodes
+  become: true
+  roles:
+    - blockchain
+
+# certs must run after blockchain so data_3001/certs/ exists (blockchain removes /opt/zk-voting on deploy)
+- name: Generate mTLS certs for P2P
+  hosts: nodes
+  become: true
+  roles:
+    - certs
+
+- name: Deploy web application
+  hosts: web
+  become: true
+  roles:
+    - web

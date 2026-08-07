@@ -1,0 +1,106 @@
+---
+- name: Remove old checkout
+  file:
+    path: /opt/zk-voting
+    state: absent
+
+- name: Clone repo
+  git:
+    repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
+    dest: /opt/zk-voting
+    version: "{{ branch | default('Piyumal') }}"
+
+- name: Own by ubuntu
+  file:
+    path: /opt/zk-voting
+    owner: ubuntu
+    group: ubuntu
+    recurse: yes
+
+- name: Create .env.local
+  template:
+    src: env.local.j2
+    dest: /opt/zk-voting/packages/nextjs/.env.local
+    owner: ubuntu
+
+- name: Install yarn dependencies (root workspace)
+  shell: yarn install
+  args:
+    chdir: /opt/zk-voting
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    NODE_OPTIONS: "--max-old-space-size=3000"
+
+- name: Build Next.js (standalone output)
+  shell: yarn build
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    NODE_OPTIONS: "--max-old-space-size=3000"
+  async: 900
+  poll: 20
+
+- name: Copy public assets into standalone dir
+  shell: |
+    cp -r public .next/standalone/packages/nextjs/public 2>/dev/null || true
+    cp -r .next/static .next/standalone/packages/nextjs/.next/static 2>/dev/null || true
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+
+- name: Start Next.js standalone with PM2
+  shell: |
+    pm2 delete zk-web 2>/dev/null || true
+    PORT=3000 pm2 start .next/standalone/packages/nextjs/server.js --name zk-web
+    pm2 save
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Configure nginx (web proxy with fast health endpoint)
+  copy:
+    dest: /etc/nginx/sites-available/web
+    content: |
+      server {
+          listen 80;
+          proxy_read_timeout 120s;
+          proxy_connect_timeout 10s;
+          location = /nginx-health {
+              return 200 '{"status":"ok"}';
+              add_header Content-Type application/json;
+          }
+          location / {
+              proxy_pass http://127.0.0.1:3000;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
+              proxy_set_header Host $host;
+          }
+      }
+
+- name: Enable nginx site
+  file:
+    src: /etc/nginx/sites-available/web
+    dest: /etc/nginx/sites-enabled/web
+    state: link
+
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Reload nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: Setup PM2 auto-start on boot
+  shell: env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu | grep sudo | bash
+  ignore_errors: yes

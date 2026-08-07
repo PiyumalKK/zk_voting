@@ -1,0 +1,17 @@
+[Unit]
+Description=ZK Voting Node {{ node_id }}
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/zk-voting/packages/blockchain
+Environment=NODE_ID=3001
+Environment=PEERS={{ peers | default('') }}
+Environment=ALLOWED_ORIGIN={{ allowed_origin | default('*') }}
+ExecStart=/opt/zk-voting/packages/blockchain/bin/zk-node
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
