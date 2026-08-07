@@ -277,9 +277,7 @@ export const AddDivisionSection = () => {
             <ul className="space-y-1">
               {unauthorised.map(division => (
                 <li key={division.votingContract} className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs truncate">
-                    {division.name} — {division.votingContract}
-                  </span>
+                  <span className="text-xs font-semibold truncate">{division.name}</span>
                   <button
                     className={`btn btn-xs btn-primary ${authorising === division.votingContract ? "loading" : ""}`}
                     disabled={authorising !== null}

@@ -144,11 +144,16 @@ const AdminOperationsPage = () => {
       <Section
         title="Start a new election"
         tone="danger"
-        hint="Clears the current question, candidates, voters, registrations and votes, then returns to Setup. Use this to run another election without redeploying."
+        hint="Wipes the whole deployment back to empty: every division, GN officer account and NIC enrolment record, along with all ballots, voters and votes. Use this to run another election without redeploying."
       >
+        <ul className="text-xs opacity-70 list-disc list-inside space-y-1">
+          <li>All divisions are removed from the registry — you will create them again from scratch.</li>
+          <li>All GN officer accounts are deleted, including their sign-in credentials.</li>
+          <li>All NIC enrolment records are released, so previous voters can be enrolled again.</li>
+        </ul>
         {ended ? (
           <p className="text-xs opacity-70">
-            The election has ended. Start a new one to reset the contract back to a clean Setup phase.
+            The election has ended. Start a new one to return the whole deployment to a clean, empty state.
           </p>
         ) : (
           <p className="text-xs opacity-70 text-warning">

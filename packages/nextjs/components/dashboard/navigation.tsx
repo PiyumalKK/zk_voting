@@ -2,8 +2,8 @@
 
 import React from "react";
 import {
-  ArrowDownTrayIcon,
-  BugAntIcon,
+  // ArrowDownTrayIcon, // restore with the "Download App" link below
+  // BugAntIcon, // restore with the "Debug" link below
   ChartBarIcon,
   Cog6ToothIcon,
   HomeIcon,
@@ -41,12 +41,15 @@ export const baseMenuLinks: HeaderMenuLink[] = [
     icon: <HomeIcon className={ICON_CLASS} />,
     description: "Project overview",
   },
-  {
-    label: "Download App",
-    href: "/voting",
-    icon: <ArrowDownTrayIcon className={ICON_CLASS} />,
-    description: "SL Vote mobile app",
-  },
+  // Hidden from the sidebar for now. The `/voting` route itself still works and
+  // keeps its entry in ROUTE_LABELS below, so anyone who follows a direct link
+  // still gets a titled page and a correct breadcrumb.
+  // {
+  //   label: "Download App",
+  //   href: "/voting",
+  //   icon: <ArrowDownTrayIcon className={ICON_CLASS} />,
+  //   description: "SL Vote mobile app",
+  // },
   {
     label: "GN Portal",
     href: "/gn",
@@ -65,12 +68,14 @@ export const baseMenuLinks: HeaderMenuLink[] = [
     icon: <MagnifyingGlassIcon className={ICON_CLASS} />,
     description: "Verify every ballot",
   },
-  {
-    label: "Debug",
-    href: "/debug",
-    icon: <BugAntIcon className={ICON_CLASS} />,
-    description: "Contract playground",
-  },
+  // Hidden from the sidebar for now, on the same terms as "Download App" above:
+  // the route still works and keeps its ROUTE_LABELS entry.
+  // {
+  //   label: "Debug",
+  //   href: "/debug",
+  //   icon: <BugAntIcon className={ICON_CLASS} />,
+  //   description: "Contract playground",
+  // },
 ];
 
 export const adminLink: HeaderMenuLink = {

@@ -159,6 +159,20 @@ export async function DELETE(req: NextRequest) {
   const auth = await requireSession("admin");
   if (!auth.ok) return auth.response;
 
+  // `?all=true` wipes the store. Reserved for "start a new election", which
+  // clears the division registry the accounts' `divisionId` indexes into —
+  // leaving them behind would strand every officer on a division that no longer
+  // exists. Spelled as an explicit flag so a missing `username` can never fall
+  // through to a mass delete.
+  if (req.nextUrl.searchParams.get("all") === "true") {
+    try {
+      return NextResponse.json({ ok: true, removed: await getAccountStore().clear() });
+    } catch (error) {
+      console.error("[gn-accounts] clear failed", error);
+      return NextResponse.json({ error: "Could not clear the account store." }, { status: 503 });
+    }
+  }
+
   const username = normaliseUsername(req.nextUrl.searchParams.get("username") ?? "");
   if (!username) return NextResponse.json({ error: "`username` is required." }, { status: 400 });
 

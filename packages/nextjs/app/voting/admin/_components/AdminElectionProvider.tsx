@@ -4,14 +4,21 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPublicClient, http } from "viem";
+import type { Abi } from "viem";
 import { useAccount } from "wagmi";
 import { AdminTabs } from "~~/app/voting/admin/_components/AdminTabs";
-import { VoterEntry, parseDurationToSeconds } from "~~/app/voting/admin/_components/adminContracts";
+import {
+  CLEAR_DIVISIONS_ABI,
+  CLEAR_NIC_HASHES_ABI,
+  VoterEntry,
+  parseDurationToSeconds,
+} from "~~/app/voting/admin/_components/adminContracts";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
 import { useElectionAuth } from "~~/hooks/useElectionAuth";
 import { useElectionWriter } from "~~/hooks/useElectionWriter";
+import { getDeployedAddress } from "~~/utils/deployedAddress";
 import { PHASE_LABELS } from "~~/utils/electionPhase";
 import { notification } from "~~/utils/scaffold-eth";
 
@@ -115,6 +122,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     () => (deployedContracts as Record<number, any>)[targetNetwork.id]?.Voting?.abi ?? [],
     [targetNetwork.id],
   );
+
+  // The two shared registries. Only the "start a new election" path writes to
+  // them from here; everything else in this provider targets a division.
+  const registryAddress = useMemo(() => getDeployedAddress(targetNetwork.id, "ElectionRegistry"), [targetNetwork.id]);
+  const nicRegistryAddress = useMemo(() => getDeployedAddress(targetNetwork.id, "NicRegistry"), [targetNetwork.id]);
 
   const publicClient = useMemo(
     () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
@@ -463,19 +475,103 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
 
   const handleEndAll = () => runAll("all-end", "endElection", () => [], "Ended");
 
+  /**
+   * Start a new election: wipe everything the previous one produced.
+   *
+   * "Reset" used to mean `Voting.resetElection()` on the *selected* division —
+   * which left every other division untouched, left the division list itself
+   * intact, left the GN officer accounts signed in against those divisions, and
+   * left every enrolled NIC permanently reserved. The result looked like a fresh
+   * election and behaved like a half-finished one.
+   *
+   * A new election therefore clears four things, in an order chosen so a failure
+   * part-way through leaves the least confusing state:
+   *
+   *   1. Each division's ballot (`resetElection`), so an old Voting contract
+   *      that somehow stays referenced is not sitting on a live tally.
+   *   2. The division registry, which is what makes divisions exist at all.
+   *   3. Reserved NIC hashes, without which no previous voter could enrol again.
+   *   4. The GN officer accounts, whose `divisionId` indexes a list that step 2
+   *      just emptied.
+   *
+   * Steps 1 and 4 are best-effort: neither can undo the registry clear, and
+   * stopping on them would leave an election that is already gone looking like
+   * it might come back.
+   */
   const handleResetElection = () => {
     const ok = window.confirm(
-      "Start a NEW election?\n\nThis permanently clears the current question, candidates, voter allowlist, " +
-        "registrations and votes, and returns the contract to the Setup phase. This cannot be undone.",
+      `Start a NEW election?\n\nThis permanently deletes EVERYTHING from the current election:\n` +
+        `  • all ${divisions.length} division(s) and their ballots, voters and votes\n` +
+        `  • every GN officer account and their sign-in credentials\n` +
+        `  • every NIC enrolment record\n\n` +
+        `You will need to create the divisions and GN officers again from scratch. This cannot be undone.`,
     );
     if (!ok) return;
+
     return run("resetElection", async () => {
-      await writeContractAsync({ functionName: "resetElection" });
+      // 1. Blank each division's ballot before it stops being listed.
+      for (const d of divisions) {
+        try {
+          await writeToDivision(d.votingContract, "resetElection", []);
+        } catch (e) {
+          console.error("resetElection on division", d.name, e);
+        }
+      }
+
+      // 2. The registry itself. This is the step that actually removes the
+      //    divisions, so a failure here must abort — everything after it is
+      //    cleanup that only makes sense once the list is gone.
+      if (!registryAddress) throw new Error("ElectionRegistry is not deployed on this chain.");
+      await write({
+        address: registryAddress,
+        abi: CLEAR_DIVISIONS_ABI as unknown as Abi,
+        functionName: "clearDivisions",
+      });
+
+      // 3. NIC reservations, so the same citizens can enrol again.
+      if (nicRegistryAddress) {
+        try {
+          await write({
+            address: nicRegistryAddress,
+            abi: CLEAR_NIC_HASHES_ABI as unknown as Abi,
+            functionName: "clearNicHashes",
+          });
+        } catch (e) {
+          console.error("clearNicHashes", e);
+          notification.warning("Divisions were cleared, but NIC enrolment records could not be released.");
+        }
+      }
+
+      // 4. GN officer accounts (custom chain only — in hardhat mode an officer
+      //    is a wallet the server never held).
+      if (isCustom) {
+        try {
+          const response = await fetch("/api/gn-accounts?all=true", {
+            method: "DELETE",
+            credentials: "same-origin",
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch (e) {
+          console.error("clear gn accounts", e);
+          notification.warning("Divisions were cleared, but the GN officer accounts could not be deleted.");
+        }
+      }
+
+      // Local-only leftovers: hidden-division ids point at indices that no
+      // longer exist, so keeping them would hide whichever divisions are
+      // created next.
+      try {
+        localStorage.removeItem("hiddenDivisions");
+      } catch {}
+
+      setSelectedIdx(0);
       setQuestionDraft("");
       setCandidateDrafts(["", ""]);
       setVoterDrafts([{ address: "", status: true }]);
       setRegistrationDuration("01:00:00");
       setVotingDuration("01:00:00");
+
+      notification.success("New election started — all previous data cleared. Create your divisions to begin.");
     });
   };
 

@@ -101,6 +101,7 @@ const NIC_REGISTRY_ABI = [
     ],
     outputs: [],
   },
+  { type: "function", name: "clearNicHashes", stateMutability: "nonpayable", inputs: [], outputs: [] },
 ] as const satisfies Abi;
 
 const ELECTION_REGISTRY_ABI = [
@@ -121,6 +122,7 @@ const ELECTION_REGISTRY_ABI = [
     ],
     outputs: [],
   },
+  { type: "function", name: "clearDivisions", stateMutability: "nonpayable", inputs: [], outputs: [] },
 ] as const satisfies Abi;
 
 const KNOWN: KnownContract[] = [
@@ -162,6 +164,11 @@ describe("admin whitelist", () => {
     expect(asAdmin(REGISTRY, "createDivision", ["Kandy"]).ok).toBe(true);
     expect(asAdmin(REGISTRY, "addDivision", ["Kandy", DIVISION_1]).ok).toBe(true);
     expect(asAdmin(NIC_REGISTRY, "setVotingContract", [DIVISION_0, true]).ok).toBe(true);
+  });
+
+  it("permits the wipes that starting a new election performs", () => {
+    expect(asAdmin(REGISTRY, "clearDivisions").ok).toBe(true);
+    expect(asAdmin(NIC_REGISTRY, "clearNicHashes").ok).toBe(true);
   });
 
   it("refuses voter functions — those must never pass through the server", () => {
@@ -231,6 +238,9 @@ describe("GN scoping", () => {
     expect(statusOf(asGn(DIVISION_0, "startVoting", [3600]))).toBe(403);
     expect(statusOf(asGn(DIVISION_0, "setGNOfficer", [VOTER]))).toBe(403);
     expect(statusOf(asGn(REGISTRY, "createDivision", ["Kandy"]))).toBe(403);
+    // An officer must not be able to delete the election they staff.
+    expect(statusOf(asGn(REGISTRY, "clearDivisions"))).toBe(403);
+    expect(statusOf(asGn(NIC_REGISTRY, "clearNicHashes"))).toBe(403);
   });
 
   it("refuses everything when the session carries no division", () => {

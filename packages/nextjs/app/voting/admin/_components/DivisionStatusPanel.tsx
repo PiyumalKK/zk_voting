@@ -60,7 +60,7 @@ export const DivisionPicker = ({
       >
         {divisions.map((d, i) => (
           <option key={d.votingContract} value={i}>
-            {d.name} — {PHASE_LABELS[d.phase]} — {d.votingContract.slice(0, 10)}…
+            {d.name} — {PHASE_LABELS[d.phase]}
           </option>
         ))}
       </select>
@@ -144,10 +144,6 @@ export const DivisionStatusPanel = () => {
             tone={remaining !== null ? "font-mono text-primary" : "opacity-40"}
           />
         </div>
-      </div>
-
-      <div className="text-xs font-mono opacity-50 break-all">
-        {selectedDiv ? selectedDiv.votingContract : "No division selected"}
       </div>
     </div>
   );

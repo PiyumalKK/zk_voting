@@ -42,6 +42,29 @@ export const SET_VOTING_CONTRACT_ABI = [
   },
 ] as const;
 
+/**
+ * Empties the division registry.
+ *
+ * Half of "start a new election": `Voting.resetElection` clears one division's
+ * ballot, but the registry is what makes a division *exist* anywhere in the app,
+ * so a genuinely fresh election has to drop the list itself. The old Voting
+ * contracts stay deployed and simply stop being referenced.
+ */
+export const CLEAR_DIVISIONS_ABI = [
+  { name: "clearDivisions", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+] as const;
+
+/**
+ * Releases every reserved NIC hash.
+ *
+ * The other half: `NicRegistry` refuses a NIC that has already been enrolled,
+ * and that record outlives the divisions. Without this, a new election would
+ * reject every citizen who voted in the previous one.
+ */
+export const CLEAR_NIC_HASHES_ABI = [
+  { name: "clearNicHashes", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+] as const;
+
 /** Emitted by `setVotingContract` — the only way to read authorisation back. */
 export const VOTING_CONTRACT_UPDATED_EVENT = parseAbiItem(
   "event VotingContractUpdated(address indexed votingContract, bool authorized)",

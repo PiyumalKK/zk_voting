@@ -56,22 +56,33 @@ const GNDashboard: NextPage = () => {
         });
         const unique = [...new Set(logs.map(l => l.args.voter as string).filter(Boolean))];
         const roll = await Promise.all(
-          unique.map(async (addr): Promise<RollEntry> => {
+          unique.map(async (addr): Promise<RollEntry & { allowlisted: boolean }> => {
             try {
-              const data = await client.readContract({
+              const data = (await client.readContract({
                 address: divisionContract,
                 abi: [GET_VOTER_DATA],
                 functionName: "getVoterData",
                 args: [addr as `0x${string}`],
-              });
-              return { address: addr, registered: Boolean((data as readonly boolean[])[1]) };
+              })) as readonly boolean[];
+              return { address: addr, allowlisted: Boolean(data[0]), registered: Boolean(data[1]) };
             } catch {
-              return { address: addr, registered: false };
+              // Unknown, not "gone": an RPC blip must not silently empty the
+              // roll. Keeping the address over-reports for one refresh, which
+              // is the safer direction for a page an officer works from.
+              return { address: addr, allowlisted: true, registered: false };
             }
           }),
         );
         // Keep only addresses still on the allowlist (voter flag true).
-        if (!cancelled) setVoterRoll(roll);
+        //
+        // The events are permanent but the allowlist is not: `s_voters` is keyed
+        // by election id, so `resetElection` clears it while every historical
+        // `VoterAdded` stays in the logs forever. The live `voter` flag is
+        // therefore the only thing that answers "is this address still on the
+        // roll?" — reading the event alone would keep showing the previous
+        // election's voters after a reset. This filter used to be described here
+        // but never applied.
+        if (!cancelled) setVoterRoll(roll.filter(entry => entry.allowlisted));
       } catch {
         if (!cancelled) setVoterRoll(null);
       }
@@ -167,7 +178,6 @@ const GNDashboard: NextPage = () => {
         <div className="dash-card p-6 mb-6">
           <h1 className="text-lg font-bold text-base-content">GN Portal</h1>
           <p className="text-sm font-semibold text-primary mt-1">{myDivision.name} Division</p>
-          <p className="text-xs opacity-50 mt-2 font-mono break-all">{myDivision.votingContract}</p>
         </div>
 
         {/* Authorization status */}
@@ -293,12 +303,7 @@ const GNDashboard: NextPage = () => {
             <div className="text-2xl mb-3">📋</div>
             <h3 className="font-bold text-lg">Division Info</h3>
             <div className="text-sm opacity-60 mt-2 space-y-1">
-              <div>
-                Contract: <code className="text-xs">{myDivision.votingContract.slice(0, 14)}...</code>
-              </div>
-              <div>
-                GN: <code className="text-xs">{myDivision.gnOfficer.slice(0, 14)}...</code>
-              </div>
+              <div>Division: {myDivision.name}</div>
               <div>
                 Allowlisted: {allowlistCount ?? "…"} · Registered: {treeSize}
               </div>

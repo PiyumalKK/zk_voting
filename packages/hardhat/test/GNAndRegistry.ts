@@ -137,5 +137,33 @@ describe("GN Officer & ElectionRegistry", function () {
       const div = await registry.divisions(0);
       expect(div.gnOfficer).to.equal(nonGN.address);
     });
+
+    it("owner can clear every division", async function () {
+      await registry.addDivision("Kaduwela", await voting.getAddress(), gn.address);
+      await registry.addDivision("Colombo", await voting.getAddress(), gn.address);
+
+      await expect(registry.clearDivisions()).to.emit(registry, "DivisionsCleared").withArgs(2);
+
+      expect(await registry.getDivisionCount()).to.equal(0);
+      expect(await registry.getAllDivisions()).to.have.length(0);
+    });
+
+    it("restarts division ids at zero after clearing", async function () {
+      await registry.addDivision("Kaduwela", await voting.getAddress(), gn.address);
+      await registry.clearDivisions();
+
+      await expect(registry.addDivision("Matara", await voting.getAddress(), gn.address))
+        .to.emit(registry, "DivisionAdded")
+        .withArgs(0, "Matara", await voting.getAddress(), gn.address);
+    });
+
+    it("non-owner cannot clear divisions", async function () {
+      await registry.addDivision("Kaduwela", await voting.getAddress(), gn.address);
+      await expect(registry.connect(gn).clearDivisions()).to.be.revertedWithCustomError(
+        registry,
+        "OwnableUnauthorizedAccount",
+      );
+      expect(await registry.getDivisionCount()).to.equal(1);
+    });
   });
 });
