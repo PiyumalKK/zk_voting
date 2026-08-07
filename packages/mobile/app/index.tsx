@@ -1,28 +1,22 @@
 import { useCallback, useState } from "react";
 import { ActivityIndicator, RefreshControl, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { api, DivisionState } from "../src/services/api";
+import { DivisionState } from "../src/services/api";
 import {
   FadeIn,
   GlassCard,
   GradientButton,
   StatusBadge,
 } from "../src/components/ui";
-import {
-  getAddress,
-  getSelectedDivision,
-  hasIdentity,
-  hasRegisteredLocally,
-  hasVoted,
-  setSelectedDivision,
-} from "../src/services/keystore";
+import { loadVoterDivision } from "../src/services/division";
+import { getAddress, hasIdentity, hasRegisteredLocally, hasVoted } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
 
 export default function Home() {
   const [loading, setLoading] = useState(true);
   const [address, setAddress] = useState<string | null>(null);
-  const [allDivisions, setAllDivisions] = useState<DivisionState[]>([]);
   const [division, setDivision] = useState<DivisionState | null>(null);
+  const [notEnrolled, setNotEnrolled] = useState(false);
   const [registeredLocal, setRegisteredLocal] = useState(false);
   const [voted, setVoted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,15 +33,9 @@ export default function Home() {
       setAddress(addr);
       setRegisteredLocal(await hasRegisteredLocally());
 
-      const election = await api.getElection();
-      setAllDivisions(election.divisions);
-
-      const chosen = await getSelectedDivision();
-      const div =
-        election.divisions.find(d => d.votingContract.toLowerCase() === chosen?.toLowerCase()) ??
-        election.divisions[0] ??
-        null;
+      const { division: div, notEnrolled: none } = await loadVoterDivision();
       setDivision(div);
+      setNotEnrolled(none);
       if (div) setVoted(await hasVoted(div.votingContract));
     } catch (e: any) {
       setError(e?.message ?? "Could not reach the election service");
@@ -55,12 +43,6 @@ export default function Home() {
       setLoading(false);
     }
   }, []);
-
-  const pickDivision = async (div: DivisionState) => {
-    await setSelectedDivision(div.votingContract);
-    setDivision(div);
-    setVoted(await hasVoted(div.votingContract));
-  };
 
   useFocusEffect(
     useCallback(() => {
@@ -78,8 +60,10 @@ export default function Home() {
   }
 
   const phase = division?.phase ?? 0;
-  const canRegister = phase === 1 && !registeredLocal;
-  const canVote = phase === 2 && registeredLocal && !voted;
+  // Without a division there is nothing to register or vote on — the voter's
+  // GN officer has not added them to an allowlist yet.
+  const canRegister = !!division && phase === 1 && !registeredLocal;
+  const canVote = !!division && phase === 2 && registeredLocal && !voted;
 
   // Journey steps
   const journeySteps = [
@@ -177,44 +161,30 @@ export default function Home() {
         </GlassCard>
       </FadeIn>
 
-      {/* Division Picker */}
+      {/* Division — derived from the GN officer's enrolment, never chosen here */}
       <FadeIn delay={150}>
-        <GlassCard>
+        <GlassCard glow={notEnrolled} glowColor={colors.warning}>
           <Text style={styles.label}>Your division</Text>
-          <Text style={[styles.cardText, { marginBottom: 12 }]}>
-            Pick the division your GN officer registered you in.
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {allDivisions.map(d => {
-              const active = division?.votingContract === d.votingContract;
-              return (
-                <TouchableOpacity
-                  key={d.votingContract}
-                  onPress={() => pickDivision(d)}
-                  activeOpacity={0.7}
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 11,
-                    borderRadius: 12,
-                    borderWidth: 1.5,
-                    borderColor: active ? colors.primary : colors.cardBorder,
-                    backgroundColor: active ? colors.primary + "15" : "transparent",
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: active ? colors.primaryLight : colors.textSecondary,
-                      fontWeight: active ? "700" : "500",
-                      fontSize: 14,
-                    }}
-                  >
-                    {active ? "● " : ""}
-                    {d.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          {division ? (
+            <>
+              <Text style={[styles.cardTitle, { marginTop: 4 }]}>🏛️ {division.name}</Text>
+              <Text style={[styles.cardText, { marginTop: 6 }]}>
+                Set automatically from the division your GN officer enrolled you in.
+              </Text>
+            </>
+          ) : notEnrolled ? (
+            <>
+              <Text style={[styles.cardTitle, { marginTop: 4 }]}>⏳ Not enrolled yet</Text>
+              <Text style={[styles.cardText, { marginTop: 6 }]}>
+                Your GN officer has not added you to a division yet. Show them the QR code above,
+                then pull down to refresh.
+              </Text>
+            </>
+          ) : (
+            <Text style={[styles.cardText, { marginTop: 6 }]}>
+              Could not check your enrolment. Pull down to refresh.
+            </Text>
+          )}
         </GlassCard>
       </FadeIn>
 
@@ -256,7 +226,9 @@ export default function Home() {
           <Text style={styles.cardText}>
             {registeredLocal
               ? "Your secure registration is saved on your phone."
-              : "You are not registered yet. Please register during the Registration phase."}
+              : notEnrolled
+                ? "Your GN officer needs to enrol you in a division before you can register."
+                : "You are not registered yet. Please register during the Registration phase."}
           </Text>
           <GradientButton
             title={registeredLocal ? "Already registered" : "Register to vote"}

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { NextPage } from "next";
+import decodeQR from "qr/decode.js";
 import type { Abi } from "viem";
 import { useAccount } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
@@ -53,15 +54,60 @@ const NIC_REGISTRY_ABI = [
 /** Optional override; normally the address comes from the deployment record. */
 const NIC_REGISTRY_ADDRESS_OVERRIDE = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS;
 
+/** Longest edge fed to the decoder — bigger frames cost time without helping. */
+const SCAN_MAX_EDGE = 640;
+
+/**
+ * Wait for the <video> to be committed to the DOM after `setScanning(true)`.
+ * Resolves null if it never appears (component unmounted).
+ */
+const waitForVideoEl = (ref: React.RefObject<HTMLVideoElement | null>, tries = 20): Promise<HTMLVideoElement | null> =>
+  new Promise(resolve => {
+    const tick = (left: number) => {
+      if (ref.current) return resolve(ref.current);
+      if (left <= 0) return resolve(null);
+      setTimeout(() => tick(left - 1), 25);
+    };
+    tick(tries);
+  });
+
+/** Grab the current video frame and try to decode a QR code out of it. */
+const decodeFrame = (
+  video: HTMLVideoElement,
+  canvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
+): string | null => {
+  const scale = Math.min(1, SCAN_MAX_EDGE / Math.max(video.videoWidth, video.videoHeight));
+  const width = Math.round(video.videoWidth * scale);
+  const height = Math.round(video.videoHeight * scale);
+  if (!width || !height) return null;
+
+  const canvas = (canvasRef.current ??= document.createElement("canvas"));
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0, width, height);
+
+  try {
+    // decodeQR throws when no code is present in the frame — that is the
+    // common case while the officer is still aiming.
+    return decodeQR(ctx.getImageData(0, 0, width, height)) || null;
+  } catch {
+    return null;
+  }
+};
+
 type Step = 1 | 2 | 3 | 4;
 
 const GNRegisterVoter: NextPage = () => {
   const [step, setStep] = useState<Step>(1);
   const [voterNIC, setVoterNIC] = useState("");
   const [voterAddress, setVoterAddress] = useState("");
-  const [voterPhone, setVoterPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const scanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [scanning, setScanning] = useState(false);
 
   const { address } = useAccount();
@@ -99,41 +145,24 @@ const GNRegisterVoter: NextPage = () => {
   };
 
   // QR Scanner
+  //
+  // `BarcodeDetector` is only shipped by a minority of browsers (Android Chrome,
+  // ChromeOS, macOS Chrome). On Windows Chrome/Edge, Firefox and Safari it is
+  // absent, so relying on it alone opens the camera but never decodes anything.
+  // The canvas + `decodeQR` path below is pure JS and works in every browser;
+  // `BarcodeDetector` is used first only as a faster native shortcut.
   const startQRScan = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      notification.error("Camera requires HTTPS or localhost.");
+      return;
+    }
+
+    let stream: MediaStream;
     try {
-      setScanning(true);
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        notification.error("Camera requires HTTPS or localhost.");
-        setScanning(false);
-        return;
-      }
-      let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       } catch {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      }
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-      if ("BarcodeDetector" in window) {
-        const detector = new (window as any).BarcodeDetector({ formats: ["qr_code"] });
-        const scanInterval = setInterval(async () => {
-          if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
-            try {
-              const barcodes = await detector.detect(videoRef.current);
-              if (barcodes.length > 0) {
-                handleQRResult(barcodes[0].rawValue);
-                clearInterval(scanInterval);
-                stopCamera();
-              }
-            } catch {}
-          }
-        }, 300);
-      } else {
-        notification.error("Barcode scanning not supported by this browser.");
       }
     } catch (err: any) {
       if (err.name === "NotAllowedError") {
@@ -145,11 +174,71 @@ const GNRegisterVoter: NextPage = () => {
       } else {
         notification.error(err.message || "Camera access failed.");
       }
-      setScanning(false);
+      return;
     }
+
+    // The <video> is only mounted once `scanning` is true, so attach the stream
+    // after React has committed that render.
+    setScanning(true);
+    const video = await waitForVideoEl(videoRef);
+    if (!video) {
+      stream.getTracks().forEach(t => t.stop());
+      setScanning(false);
+      notification.error("Could not attach camera preview.");
+      return;
+    }
+
+    video.srcObject = stream;
+    try {
+      await video.play();
+    } catch {
+      /* autoplay rejection — the frame loop below tolerates a stalled video */
+    }
+
+    // Native detector when available; `decodeQR` otherwise.
+    let detector: any = null;
+    if ("BarcodeDetector" in window) {
+      try {
+        detector = new (window as any).BarcodeDetector({ formats: ["qr_code"] });
+      } catch {
+        detector = null;
+      }
+    }
+
+    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    scanTimerRef.current = setInterval(async () => {
+      const v = videoRef.current;
+      // HAVE_CURRENT_DATA (2) is enough to grab a frame; live streams do not
+      // reliably reach HAVE_ENOUGH_DATA (4).
+      if (!v || v.readyState < 2 || !v.videoWidth) return;
+
+      if (detector) {
+        try {
+          const barcodes = await detector.detect(v);
+          if (barcodes.length > 0) {
+            stopCamera();
+            handleQRResult(barcodes[0].rawValue);
+            return;
+          }
+        } catch {
+          // Detector unusable on this frame/platform — fall through to decodeQR.
+          detector = null;
+        }
+      }
+
+      const text = decodeFrame(v, canvasRef);
+      if (text) {
+        stopCamera();
+        handleQRResult(text);
+      }
+    }, 250);
   };
 
   const stopCamera = () => {
+    if (scanTimerRef.current) {
+      clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
     if (videoRef.current?.srcObject) {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
@@ -215,7 +304,7 @@ const GNRegisterVoter: NextPage = () => {
   // division contract. Both writes go through the seam, so they are signed by
   // MetaMask on Hardhat and by the relay on the custom chain.
   const handleSubmit = async () => {
-    if (!voterAddress || !voterPhone || !myDivision || !nicRegistryAddress) return;
+    if (!voterAddress || !myDivision || !nicRegistryAddress) return;
 
     setIsSubmitting(true);
     try {
@@ -281,7 +370,6 @@ const GNRegisterVoter: NextPage = () => {
     setStep(1);
     setVoterNIC("");
     setVoterAddress("");
-    setVoterPhone("");
   };
 
   useEffect(() => {
@@ -333,7 +421,7 @@ const GNRegisterVoter: NextPage = () => {
   }
 
   return (
-    <div className="flex flex-col items-center grow pt-8 px-4">
+    <div className="flex flex-col items-center grow p-6 lg:p-8">
       <div className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-6">
@@ -414,19 +502,12 @@ const GNRegisterVoter: NextPage = () => {
               <InfoRow label="NIC" value={voterNIC} />
               <InfoRow label="Address" value={`${voterAddress.slice(0, 10)}...${voterAddress.slice(-6)}`} />
             </div>
-            <input
-              type="tel"
-              placeholder="Phone: +94 77 123 4567"
-              className="input input-bordered w-full mb-4"
-              value={voterPhone}
-              onChange={e => setVoterPhone(e.target.value)}
-            />
             <button
               className={`btn btn-primary w-full ${isSubmitting ? "loading" : ""}`}
               onClick={handleSubmit}
-              disabled={isSubmitting || !voterPhone}
+              disabled={isSubmitting}
             >
-              {isSubmitting ? "Adding to Blockchain..." : "Add to Voter Roll →"}
+              {isSubmitting ? "Adding to Blockchain..." : "Confirm & Add to Voter Roll →"}
             </button>
           </Card>
         )}
@@ -440,9 +521,7 @@ const GNRegisterVoter: NextPage = () => {
               <p className="text-sm opacity-60 mb-1">
                 {voterAddress.slice(0, 14)}... added to <strong>{myDivision.name}</strong>
               </p>
-              <p className="text-xs opacity-40 mb-6">
-                NIC: {voterNIC} · Phone: {voterPhone}
-              </p>
+              <p className="text-xs opacity-40 mb-6">NIC: {voterNIC}</p>
               <button className="btn btn-primary" onClick={resetForm}>
                 Register Next Voter →
               </button>
@@ -486,7 +565,7 @@ const CenterMessage = ({
   subtitle: string;
   action?: React.ReactNode;
 }) => (
-  <div className="flex flex-col items-center grow pt-16 px-4 text-center">
+  <div className="flex flex-col items-center justify-center grow p-6 lg:p-8 text-center">
     <div className="text-5xl mb-4">{icon}</div>
     <h1 className="text-2xl font-bold mb-2">{title}</h1>
     <p className="opacity-60 max-w-md">{subtitle}</p>

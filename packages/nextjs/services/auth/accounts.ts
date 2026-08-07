@@ -242,6 +242,23 @@ export class GnAccountStore {
   }
 
   /**
+   * Deletes every account, returning how many were removed.
+   *
+   * Only the "start a new election" path uses this. Each account carries a
+   * `divisionId` that is an index into `ElectionRegistry.getAllDivisions()`, so
+   * once that list is cleared every stored account points at a division that no
+   * longer exists — keeping them would leave officers able to sign in and land
+   * on a portal bound to nothing.
+   */
+  async clear(): Promise<number> {
+    return this.mutate(async file => {
+      const removed = file.accounts.length;
+      if (removed > 0) await this.write({ ...file, accounts: [] });
+      return removed;
+    });
+  }
+
+  /**
    * Unseals a GN's signing key.
    *
    * The AAD is the username, so a record whose `encryptedPrivateKey` was copied

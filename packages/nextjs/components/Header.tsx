@@ -4,70 +4,37 @@ import React, { useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bars3Icon, BugAntIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
+import { Bars3Icon } from "@heroicons/react/24/outline";
 import { ElectionIdentity } from "~~/components/ElectionIdentity";
+import { activeHrefFor, useDashboardNavLinks } from "~~/components/dashboard/navigation";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
-import { useIsVotingOwner, useOutsideClick } from "~~/hooks/scaffold-eth";
-import { useElectionAuth } from "~~/hooks/useElectionAuth";
+import { useOutsideClick } from "~~/hooks/scaffold-eth";
 import { isCustomMode } from "~~/utils/chainMode";
 
-type HeaderMenuLink = {
-  label: string;
-  href: string;
-  icon?: React.ReactNode;
-};
+/**
+ * The pre-dashboard horizontal navbar.
+ *
+ * `DashboardShell` no longer mounts it — routes live in `Sidebar` and the
+ * identity control in `Topbar` — but it is kept intact, and kept sourcing its
+ * routes from the shared nav config, so it cannot drift out of sync and so the
+ * existing header tests continue to describe real behaviour.
+ */
 
-export const baseMenuLinks: HeaderMenuLink[] = [
-  {
-    label: "Home",
-    href: "/",
-  },
-  {
-    label: "Download App",
-    href: "/voting",
-  },
-  {
-    label: "GN Portal",
-    href: "/gn",
-  },
-  {
-    label: "Results",
-    href: "/results",
-  },
-  {
-    label: "Audit",
-    href: "/audit",
-  },
-  {
-    label: "Debug",
-    href: "/debug",
-    icon: <BugAntIcon className="h-4 w-4" />,
-  },
-];
-
-const adminLink: HeaderMenuLink = {
-  label: "Admin",
-  href: "/voting/admin",
-  icon: <Cog6ToothIcon className="h-4 w-4" />,
-};
+export type { HeaderMenuLink } from "~~/components/dashboard/navigation";
+export { baseMenuLinks, adminLink } from "~~/components/dashboard/navigation";
 
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
-  const isOwner = useIsVotingOwner();
-  const { isAdmin } = useElectionAuth();
-  // Both backends are plain EVM chains reached over JSON-RPC, so the menu is
-  // identical in either mode: /debug and /blockexplorer work against our node
-  // just as they do against Hardhat. Only the Admin link differs, because
-  // "is this person the admin?" is a wallet question on Hardhat and a session
-  // question on the custom chain — `useIsVotingOwner` can never be true there,
-  // so without the second check the link would simply never appear.
-  const showAdminLink = isCustomMode() ? isAdmin : isOwner;
-  const links = showAdminLink ? [...baseMenuLinks, adminLink] : baseMenuLinks;
+  const links = useDashboardNavLinks();
+  const activeHref = activeHrefFor(
+    pathname ?? "/",
+    links.map(link => link.href),
+  );
 
   return (
     <>
       {links.map(({ label, href, icon }) => {
-        const isActive = pathname === href;
+        const isActive = href === activeHref;
         return (
           <li key={href}>
             <Link

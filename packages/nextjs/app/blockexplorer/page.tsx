@@ -75,7 +75,7 @@ const BlockExplorer: NextPage = () => {
   }, [hasError, targetNetwork.name]);
 
   return (
-    <div className="container mx-auto my-10">
+    <div className="container mx-auto p-6 lg:p-8">
       <SearchBar />
       <TransactionsTable blocks={blocks} transactionReceipts={transactionReceipts} />
       <PaginationButton currentPage={currentPage} totalItems={Number(totalBlocks)} setCurrentPage={setCurrentPage} />

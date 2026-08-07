@@ -116,13 +116,21 @@ export async function markRegistered(): Promise<void> {
   await SecureStore.setItemAsync(KEY_REGISTERED, "1", PUBLIC_OPTIONS);
 }
 
-/** The division (Voting contract address) the voter has chosen to vote in. */
+/**
+ * Cache of the division (Voting contract address) resolved from the on-chain
+ * allowlist. This is a cache, not a choice — see `services/division.ts`, which
+ * owns resolution and is the only thing that should write here.
+ */
 export async function setSelectedDivision(votingContract: string): Promise<void> {
   await SecureStore.setItemAsync(KEY_DIVISION, votingContract, PUBLIC_OPTIONS);
 }
 
 export async function getSelectedDivision(): Promise<string | null> {
   return SecureStore.getItemAsync(KEY_DIVISION, PUBLIC_OPTIONS).catch(() => null);
+}
+
+export async function clearSelectedDivision(): Promise<void> {
+  await SecureStore.deleteItemAsync(KEY_DIVISION, PUBLIC_OPTIONS).catch(() => undefined);
 }
 
 async function getVotedList(): Promise<string[]> {

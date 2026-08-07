@@ -44,8 +44,8 @@ export const RELAY_WHITELIST: Record<AuthRole, Partial<Record<ContractKind, read
       "resetElection",
       "setGNOfficer",
     ],
-    ElectionRegistry: ["createDivision", "addDivision", "updateDivision"],
-    NicRegistry: ["setVotingContract"],
+    ElectionRegistry: ["createDivision", "addDivision", "updateDivision", "clearDivisions"],
+    NicRegistry: ["setVotingContract", "clearNicHashes"],
   },
   gn: {
     Voting: ["addVoters"],

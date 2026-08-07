@@ -66,6 +66,39 @@ describe("NicRegistry", function () {
     );
   });
 
+  it("frees every reserved hash when the enrolment epoch is cleared", async function () {
+    await registry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress());
+    expect(await registry.isNicHashUsed(NIC_HASH)).to.equal(true);
+
+    await expect(registry.clearNicHashes()).to.emit(registry, "NicHashesCleared").withArgs(1);
+
+    // Without this a new election could not enrol anyone who took part in the
+    // previous one — the reservation outlives the divisions themselves.
+    expect(await registry.isNicHashUsed(NIC_HASH)).to.equal(false);
+    await expect(registry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress())).to.emit(
+      registry,
+      "NicHashReserved",
+    );
+  });
+
+  it("still rejects a repeat reservation within the new epoch", async function () {
+    await registry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress());
+    await registry.clearNicHashes();
+    await registry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress());
+
+    await expect(registry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress()))
+      .to.be.revertedWithCustomError(registry, "NicRegistry__AlreadyUsed")
+      .withArgs(NIC_HASH);
+  });
+
+  it("lets only the owner clear NIC hashes", async function () {
+    await expect(registry.connect(gn).clearNicHashes()).to.be.revertedWithCustomError(
+      registry,
+      "OwnableUnauthorizedAccount",
+    );
+    expect(await registry.getCurrentEpoch()).to.equal(0);
+  });
+
   it("emits a NIC reservation event with only the hash", async function () {
     const event = registry.interface.getEvent("NicHashReserved");
     expect(event?.inputs).to.have.length(1);

@@ -42,6 +42,7 @@ contract ElectionRegistry is Ownable {
     event DivisionAdded(uint256 indexed divisionId, string name, address votingContract, address gnOfficer);
     event DivisionUpdated(uint256 indexed divisionId, address votingContract, address gnOfficer);
     event DivisionCreated(uint256 indexed divisionId, string name, address votingContract);
+    event DivisionsCleared(uint256 count);
 
     constructor(address _owner, address _verifier) Ownable(_owner) {
         i_verifier = _verifier;
@@ -97,6 +98,22 @@ contract ElectionRegistry is Ownable {
         divisions[_divisionId].votingContract = _votingContract;
         divisions[_divisionId].gnOfficer = _gnOfficer;
         emit DivisionUpdated(_divisionId, _votingContract, _gnOfficer);
+    }
+
+    /// @notice Remove every registered division, so a new election starts from an
+    ///         empty registry.
+    ///
+    ///         The Voting contracts themselves stay deployed — this contract did
+    ///         not necessarily create them and cannot destroy them — but nothing
+    ///         in the system reaches a division that is not listed here, so the
+    ///         previous election's names, officers, allowlists and tallies all
+    ///         disappear from every read path at once. Division ids are indices
+    ///         into this array, so they restart at 0 and any GN account still
+    ///         holding an old id must be recreated.
+    function clearDivisions() external onlyOwner {
+        uint256 count = divisions.length;
+        delete divisions;
+        emit DivisionsCleared(count);
     }
 
     /// @notice Get the total number of divisions.
