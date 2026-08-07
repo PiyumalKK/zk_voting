@@ -157,6 +157,24 @@ describe("GnAccountStore", () => {
     expect(await store.list()).toEqual([]);
   });
 
+  it("clears every account and reports how many went", async () => {
+    const { store } = await newStore();
+    await store.create(baseAccount());
+    await store.create(baseAccount({ username: "gn-kandy", divisionId: 1 }));
+
+    expect(await store.clear()).toBe(2);
+    expect(await store.list()).toEqual([]);
+    expect(await store.findByUsername("gn-colombo")).toBeUndefined();
+  });
+
+  it("clears an empty store without writing to it", async () => {
+    const { store, filePath } = await newStore();
+    // The file does not exist yet; clearing must not create one, or the "no
+    // plaintext key on disk" gate starts reporting a file where there is none.
+    expect(await store.clear()).toBe(0);
+    await expect(readFile(filePath, "utf8")).rejects.toThrow();
+  });
+
   it("reports a clear error when removing or disabling an unknown account", async () => {
     const { store } = await newStore();
     await expect(store.remove("nobody")).rejects.toThrow(AccountStoreError);

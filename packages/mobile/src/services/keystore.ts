@@ -116,7 +116,11 @@ export async function markRegistered(): Promise<void> {
   await SecureStore.setItemAsync(KEY_REGISTERED, "1", PUBLIC_OPTIONS);
 }
 
-/** The division (Voting contract address) the voter has chosen to vote in. */
+/**
+ * Cache of the division (Voting contract address) resolved from the on-chain
+ * allowlist. This is a cache, not a choice — see `services/division.ts`, which
+ * owns resolution and is the only thing that should write here.
+ */
 export async function setSelectedDivision(votingContract: string): Promise<void> {
   await SecureStore.setItemAsync(KEY_DIVISION, votingContract, PUBLIC_OPTIONS);
 }
@@ -125,27 +129,8 @@ export async function getSelectedDivision(): Promise<string | null> {
   return SecureStore.getItemAsync(KEY_DIVISION, PUBLIC_OPTIONS).catch(() => null);
 }
 
-/**
- * Resolve the division the voter is acting in, persisting the answer.
- *
- * Home / register / vote all default to the first division when the voter has
- * not tapped a chip, so a voter can register AND vote without anything ever
- * reaching KEY_DIVISION. Verify has no such default and used to hard-fail with
- * "No division selected" for those voters. Writing the resolved division back
- * here keeps every screen pointed at the same one.
- */
-export async function resolveSelectedDivision<T extends { votingContract: string }>(
-  divisions: T[],
-): Promise<T | null> {
-  const chosen = await getSelectedDivision();
-  const div =
-    divisions.find(d => d.votingContract.toLowerCase() === chosen?.toLowerCase()) ??
-    divisions[0] ??
-    null;
-  if (div && div.votingContract.toLowerCase() !== chosen?.toLowerCase()) {
-    await setSelectedDivision(div.votingContract);
-  }
-  return div;
+export async function clearSelectedDivision(): Promise<void> {
+  await SecureStore.deleteItemAsync(KEY_DIVISION, PUBLIC_OPTIONS).catch(() => undefined);
 }
 
 async function getVotedList(): Promise<string[]> {

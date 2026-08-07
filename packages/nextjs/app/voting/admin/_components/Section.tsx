@@ -8,6 +8,10 @@ import React from "react";
  * `tone="danger"` marks a control that destroys state. `resetElection` has no
  * phase gate, so it is live during Voting and sits one mis-click away from the
  * routine buttons; it should not look like them.
+ *
+ * The title is an `h3` because a `GroupHeading` (`h2`) precedes every stack of
+ * these. Both were `h2` before, which left a screen reader with a flat list of
+ * siblings — the grouping the layout draws did not exist in the a11y tree.
  */
 export const Section = ({
   title,
@@ -30,7 +34,7 @@ export const Section = ({
       } ${disabled ? "opacity-70" : ""}`}
     >
       <div className="border-b border-base-300/60 pb-4">
-        <h2 className={`text-lg font-bold ${isDanger ? "text-error" : ""}`}>{title}</h2>
+        <h3 className={`text-lg font-bold ${isDanger ? "text-error" : ""}`}>{title}</h3>
         {hint && <p className="text-xs opacity-60 mt-1">{hint}</p>}
       </div>
       {children}

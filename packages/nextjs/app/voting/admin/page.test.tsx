@@ -258,8 +258,8 @@ describe("admin area — the GN Accounts panel", () => {
 describe("admin area — write sites go through the seam", () => {
   /**
    * `ready` is matched against a heading, not any text: panels cross-reference
-   * each other by name ("Uses the durations set in Phase controls below"), so a
-   * bare text query would match two nodes and throw.
+   * each other by name ("Uses the durations typed in Phase controls above"), so
+   * a bare text query would match two nodes and throw.
    */
   const renderAsAdmin = async (ui: React.ReactNode, ready: RegExp) => {
     mocks.auth = { mode: "custom", isAdmin: true, isLoading: false };
@@ -284,7 +284,9 @@ describe("admin area — write sites go through the seam", () => {
   it("sends durations as bigint seconds, parsed from hh:mm:ss", async () => {
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
 
-    await user.click(screen.getByRole("button", { name: /start registration phase/i }));
+    // Named after the selected division, which is also what tells this button
+    // apart from the "… on all N divisions" one in the same section.
+    await user.click(screen.getByRole("button", { name: /start registration on kaduwela/i }));
 
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write.mock.calls[0][0]).toMatchObject({ functionName: "startRegistration", args: [3600n] });
@@ -293,7 +295,7 @@ describe("admin area — write sites go through the seam", () => {
   it("applies an ALL-divisions action to every division contract", async () => {
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
 
-    await user.click(screen.getByRole("button", { name: /start registration — all/i }));
+    await user.click(screen.getByRole("button", { name: /start registration on all/i }));
 
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write.mock.calls[0][0]).toMatchObject({
@@ -307,9 +309,24 @@ describe("admin area — write sites go through the seam", () => {
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
     mocks.write.mockRejectedValue(new Error("Voting__WrongPhase"));
 
-    await user.click(screen.getByRole("button", { name: /end — all/i }));
+    await user.click(screen.getByRole("button", { name: /end election on all/i }));
 
     await waitFor(() => expect(mocks.notifySuccess).toHaveBeenCalledWith(expect.stringContaining("skipped")));
+  });
+
+  /**
+   * A national phase change is a one-way door — `Voting` cannot go back without
+   * a full reset — and it acts on divisions the operator cannot see from here.
+   * The reversible ballot broadcasts already asked; these used to fire on the
+   * first click.
+   */
+  it("does not run a national phase change when the operator cancels", async () => {
+    const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
+
+    await user.click(screen.getByRole("button", { name: /end election on all/i }));
+
+    expect(mocks.write).not.toHaveBeenCalled();
   });
 
   it("creates a division on the registry, not on a division contract", async () => {
@@ -430,6 +447,19 @@ describe("admin area — write sites go through the seam", () => {
 
     await waitFor(() => expect(mocks.notifyError).toHaveBeenCalledWith("Voting__WrongPhase"));
   });
+
+  /**
+   * A per-division save used to report nothing at all: the button un-greyed and
+   * that was the whole signal, which looks the same as a click that never
+   * registered. The failure path always toasted — only success was silent.
+   */
+  it("confirms a per-division save, naming the division it landed on", async () => {
+    const user = await renderAsAdmin(<AdminBallotPage />, /ballot question/i);
+
+    await user.click(screen.getByRole("button", { name: /save question for/i }));
+
+    await waitFor(() => expect(mocks.notifySuccess).toHaveBeenCalledWith(expect.stringContaining("Kaduwela")));
+  });
 });
 
 describe("admin area — candidates, per division and across all of them", () => {
@@ -452,6 +482,14 @@ describe("admin area — candidates, per division and across all of them", () =>
       functionName: "setCandidates",
       args: [["Alice", "Bob"]],
     });
+  });
+
+  it("confirms the save, without claiming the broadcast's division count", async () => {
+    const user = await renderBallot();
+
+    await user.click(screen.getByRole("button", { name: /save candidates for/i }));
+
+    await waitFor(() => expect(mocks.notifySuccess).toHaveBeenCalledWith("2 candidates saved for Kaduwela"));
   });
 
   it("broadcasts the same slate to every division", async () => {

@@ -263,7 +263,6 @@ const ResultsDashboard: NextPage = () => {
                       ) : (
                         <p className="text-xs opacity-40 py-2">No candidates configured for this division.</p>
                       )}
-                      <p className="text-[10px] opacity-30 font-mono mt-2">{div.votingContract}</p>
                     </div>
                   )}
                 </div>

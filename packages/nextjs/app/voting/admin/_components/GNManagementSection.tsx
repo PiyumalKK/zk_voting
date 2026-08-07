@@ -181,7 +181,7 @@ export const GNManagementSection = () => {
               {divisions.map((div, idx) => (
                 <option key={div.votingContract} value={idx} disabled={div.hidden}>
                   {div.hidden ? "[HIDDEN] " : ""}
-                  {div.name} — {div.votingContract.slice(0, 10)}...
+                  {div.name}
                 </option>
               ))}
             </select>

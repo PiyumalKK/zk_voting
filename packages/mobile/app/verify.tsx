@@ -5,7 +5,8 @@ import { toHex } from "viem";
 import { AnimatedResult, FadeIn, GlassCard, GradientButton } from "../src/components/ui";
 import { api, DivisionState, VerifyVoteResponse } from "../src/services/api";
 import { deriveFromSecrets } from "../src/services/crypto";
-import { authenticate, getVoterSecrets, resolveSelectedDivision } from "../src/services/keystore";
+import { loadVoterDivision } from "../src/services/division";
+import { authenticate, getVoterSecrets } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
 
 type Status = "idle" | "checking" | "done" | "error";
@@ -19,8 +20,7 @@ export default function Verify() {
   useEffect(() => {
     (async () => {
       try {
-        const election = await api.getElection();
-        setDivision(await resolveSelectedDivision(election.divisions));
+        setDivision((await loadVoterDivision()).division);
       } catch {
         /* non-critical — handleVerify resolves the division again */
       }
@@ -52,12 +52,14 @@ export default function Verify() {
       // missing selection.
       let target = division;
       if (!target) {
-        const election = await api.getElection();
-        target = await resolveSelectedDivision(election.divisions);
+        target = (await loadVoterDivision()).division;
         setDivision(target);
       }
       if (!target) {
-        setErrorMsg("No divisions are available from the election service yet. Please try again.");
+        setErrorMsg(
+          "We could not work out which division you belong to. Ask your GN officer to confirm " +
+            "your voting address is on the roll, then try again.",
+        );
         setStatus("error");
         return;
       }

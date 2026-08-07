@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   9494: {
     ElectionRegistry: {
-      address: "0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690",
+      address: "0x4C2F7092C2aE51D986bEFEe378e50BD4dB99C901",
       abi: [
         {
           inputs: [
@@ -132,6 +132,19 @@ const deployedContracts = {
           anonymous: false,
           inputs: [
             {
+              indexed: false,
+              internalType: "uint256",
+              name: "count",
+              type: "uint256",
+            },
+          ],
+          name: "DivisionsCleared",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
               indexed: true,
               internalType: "address",
               name: "previousOwner",
@@ -173,6 +186,13 @@ const deployedContracts = {
               type: "uint256",
             },
           ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "clearDivisions",
+          outputs: [],
           stateMutability: "nonpayable",
           type: "function",
         },
@@ -408,10 +428,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 32,
+      deployedOnBlock: 97,
     },
     HonkVerifier: {
-      address: "0x67d269191c92Caf3cD7723F116c85e6E9bf55933",
+      address: "0x1c85638e118b37167e9298c2268758e058DdfDA0",
       abi: [
         {
           inputs: [],
@@ -459,10 +479,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 30,
+      deployedOnBlock: 95,
     },
     LeanIMT: {
-      address: "0xc5a5C42992dECbae36851359345FE25997F5C42d",
+      address: "0xC9a43158891282A2B1475592D5719c001986Aaec",
       abi: [
         {
           inputs: [],
@@ -491,10 +511,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 29,
+      deployedOnBlock: 94,
     },
     NicRegistry: {
-      address: "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB",
+      address: "0x7A9Ec1d04904907De0ED7b6839CcdD59c3716AC9",
       abi: [
         {
           inputs: [
@@ -557,6 +577,19 @@ const deployedContracts = {
           anonymous: false,
           inputs: [
             {
+              indexed: false,
+              internalType: "uint256",
+              name: "epoch",
+              type: "uint256",
+            },
+          ],
+          name: "NicHashesCleared",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
               indexed: true,
               internalType: "address",
               name: "previousOwner",
@@ -590,6 +623,45 @@ const deployedContracts = {
           ],
           name: "VotingContractUpdated",
           type: "event",
+        },
+        {
+          inputs: [],
+          name: "clearNicHashes",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "getCurrentEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          name: "isNicHashUsed",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
         },
         {
           inputs: [],
@@ -672,10 +744,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 33,
+      deployedOnBlock: 98,
     },
     PoseidonT3: {
-      address: "0x09635F643e140090A9A8Dcd712eD6285858ceBef",
+      address: "0x46b142DD1E924FAb83eCc3c08e4D46E82f005e0E",
       abi: [
         {
           inputs: [
@@ -698,10 +770,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 28,
+      deployedOnBlock: 93,
     },
     Voting: {
-      address: "0xE6E340D132b5f46d1e472DebcD681B2aBc16e57E",
+      address: "0x367761085BF3C12e5DA2Df99AC6E1a824612b8fb",
       abi: [
         {
           inputs: [
@@ -1423,10 +1495,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 31,
+      deployedOnBlock: 96,
     },
     Voting_Colombo: {
-      address: "0x851356ae760d987E095750cCeb3bC6014560891C",
+      address: "0xA4899D35897033b927acFCf422bc745916139776",
       abi: [
         {
           inputs: [
@@ -2144,10 +2216,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 37,
+      deployedOnBlock: 102,
     },
     Voting_Gampaha: {
-      address: "0x998abeb3E57409262aE5b751f60747921B33613E",
+      address: "0x5c74c94173F05dA1720953407cbb920F3DF9f887",
       abi: [
         {
           inputs: [
@@ -2865,10 +2937,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 40,
+      deployedOnBlock: 105,
     },
     Voting_Kaduwela: {
-      address: "0x9E545E3C0baAB3E08CdfD552C960A1050f373042",
+      address: "0x49fd2BE640DB2910c2fAb69bB8531Ab6E76127ff",
       abi: [
         {
           inputs: [
@@ -3586,7 +3658,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 34,
+      deployedOnBlock: 99,
     },
   },
 } as const;

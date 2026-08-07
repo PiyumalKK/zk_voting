@@ -4,14 +4,21 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPublicClient, http } from "viem";
+import type { Abi } from "viem";
 import { useAccount } from "wagmi";
 import { AdminTabs } from "~~/app/voting/admin/_components/AdminTabs";
-import { VoterEntry, parseDurationToSeconds } from "~~/app/voting/admin/_components/adminContracts";
+import {
+  CLEAR_DIVISIONS_ABI,
+  CLEAR_NIC_HASHES_ABI,
+  VoterEntry,
+  parseDurationToSeconds,
+} from "~~/app/voting/admin/_components/adminContracts";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
 import { useElectionAuth } from "~~/hooks/useElectionAuth";
 import { useElectionWriter } from "~~/hooks/useElectionWriter";
+import { getDeployedAddress } from "~~/utils/deployedAddress";
 import { PHASE_LABELS } from "~~/utils/electionPhase";
 import { notification } from "~~/utils/scaffold-eth";
 
@@ -65,6 +72,12 @@ type AdminElectionValue = {
   setVotingDuration: React.Dispatch<React.SetStateAction<string>>;
 
   busy: string | null;
+  /**
+   * How far a fan-out has got. One transaction per division, sequentially, each
+   * routed through the relay — with a realistic division count that is minutes
+   * of a page that otherwise says only "Starting…".
+   */
+  progress: { done: number; total: number } | null;
   handleSetQuestion: () => void;
   /** Broadcasts the current question draft to every division. */
   handleSetQuestionAll: () => void;
@@ -115,6 +128,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     () => (deployedContracts as Record<number, any>)[targetNetwork.id]?.Voting?.abi ?? [],
     [targetNetwork.id],
   );
+
+  // The two shared registries. Only the "start a new election" path writes to
+  // them from here; everything else in this provider targets a division.
+  const registryAddress = useMemo(() => getDeployedAddress(targetNetwork.id, "ElectionRegistry"), [targetNetwork.id]);
+  const nicRegistryAddress = useMemo(() => getDeployedAddress(targetNetwork.id, "NicRegistry"), [targetNetwork.id]);
 
   const publicClient = useMemo(
     () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
@@ -241,6 +259,7 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const [registrationDuration, setRegistrationDuration] = useState<string>("01:00:00");
   const [votingDuration, setVotingDuration] = useState<string>("01:00:00");
   const [busy, setBusy] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Seed drafts from on-chain state once.
   useEffect(() => {
@@ -260,11 +279,21 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   }, []);
 
   // --- Action handlers ---
-  const run = async (label: string, fn: () => Promise<unknown>) => {
+  /**
+   * Run one admin action, and say what happened.
+   *
+   * `successMessage` is optional because the callers that fan out across
+   * divisions (`runAll`) and the reset already report their own outcome — a
+   * second toast there would contradict the count they just showed. Everything
+   * else passes one: a save that only un-greys its own button looks identical
+   * whether the transaction landed or the click never registered.
+   */
+  const run = async (label: string, fn: () => Promise<unknown>, successMessage?: string) => {
     try {
       setBusy(label);
       await fn();
       await refetchDivision();
+      if (successMessage) notification.success(successMessage);
     } catch (e: any) {
       console.error(label, e);
       notification.error(e?.shortMessage || e?.message || "Transaction failed");
@@ -272,6 +301,9 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       setBusy(null);
     }
   };
+
+  /** Names the division a message is about, falling back when none is selected. */
+  const divisionName = () => selectedDiv?.name ?? "this division";
 
   /**
    * The question as the contract will receive it, or `null` if it is not fit to
@@ -291,7 +323,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const handleSetQuestion = () => {
     const question = validatedQuestion();
     if (question === null) return;
-    return run("question", () => writeContractAsync({ functionName: "setQuestion", args: [question] }));
+    return run(
+      "question",
+      () => writeContractAsync({ functionName: "setQuestion", args: [question] }),
+      `Ballot question saved for ${divisionName()}`,
+    );
   };
 
   /**
@@ -342,7 +378,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const handleSetCandidates = () => {
     const cleaned = cleanCandidateDrafts();
     if (!cleaned) return;
-    return run("candidates", () => writeContractAsync({ functionName: "setCandidates", args: [cleaned] }));
+    return run(
+      "candidates",
+      () => writeContractAsync({ functionName: "setCandidates", args: [cleaned] }),
+      `${cleaned.length} candidate${cleaned.length === 1 ? "" : "s"} saved for ${divisionName()}`,
+    );
   };
 
   /**
@@ -379,10 +419,14 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     }
     const addrs = valid.map(v => v.address as `0x${string}`);
     const statuses = valid.map(v => v.status);
-    return run("voters", async () => {
-      await writeContractAsync({ functionName: "addVoters", args: [addrs, statuses] });
-      setVoterDrafts([{ address: "", status: true }]);
-    });
+    return run(
+      "voters",
+      async () => {
+        await writeContractAsync({ functionName: "addVoters", args: [addrs, statuses] });
+        setVoterDrafts([{ address: "", status: true }]);
+      },
+      `Allowlist updated for ${valid.length} address${valid.length === 1 ? "" : "es"} on ${divisionName()}`,
+    );
   };
 
   const handleStartRegistration = () => {
@@ -419,63 +463,178 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     await run(label, async () => {
       let ok = 0;
       let skipped = 0;
-      for (const d of divisions) {
-        try {
-          await writeToDivision(d.votingContract, functionName, args);
-          ok += 1;
-        } catch {
-          skipped += 1; // wrong phase for this division — skip it
+      setProgress({ done: 0, total: divisions.length });
+      try {
+        for (const d of divisions) {
+          try {
+            await writeToDivision(d.votingContract, functionName, args);
+            ok += 1;
+          } catch {
+            skipped += 1; // wrong phase for this division — skip it
+          }
+          setProgress({ done: ok + skipped, total: divisions.length });
         }
+      } finally {
+        setProgress(null);
       }
       notification.success(`${verb} on ${ok} division(s)${skipped ? ` · ${skipped} skipped (wrong phase)` : ""}`);
     });
   };
 
-  const handleStartRegistrationAll = () =>
-    runAll(
-      "all-registration",
-      "startRegistration",
-      () => {
-        const sec = parseDurationToSeconds(registrationDuration);
-        if (!sec) {
-          notification.error("Enter a positive registration duration.");
-          return null;
-        }
-        return [sec];
-      },
-      "Registration started",
+  /**
+   * Stop before a national phase change.
+   *
+   * `Voting` has no route back to an earlier phase short of `resetElection`, so
+   * every one of these is a one-way door. The per-division buttons act on the
+   * division named in the status panel directly above them; these act on all of
+   * them at once, most of which the operator cannot see — which is exactly why
+   * the reversible ballot broadcasts already confirmed and these did not.
+   */
+  const confirmFanout = (action: string, consequence: string) =>
+    window.confirm(
+      `${action} on all ${divisions.length} division(s)?\n\n${consequence}\n\n` +
+        `Divisions in the wrong phase are skipped and left exactly as they are. This cannot be undone.`,
     );
 
-  const handleStartVotingAll = () =>
-    runAll(
-      "all-voting",
-      "startVoting",
-      () => {
-        const sec = parseDurationToSeconds(votingDuration);
-        if (!sec) {
-          notification.error("Enter a positive voting duration.");
-          return null;
-        }
-        return [sec];
-      },
-      "Voting started",
+  const handleStartRegistrationAll = () => {
+    const sec = parseDurationToSeconds(registrationDuration);
+    if (!sec) {
+      notification.error("Enter a positive registration duration.");
+      return;
+    }
+    const confirmed = confirmFanout(
+      "Start registration",
+      `Every division still in Setup opens a ${registrationDuration} registration window. Its ballot question and ` +
+        `candidate list are frozen from that moment on.`,
     );
+    if (!confirmed) return;
 
-  const handleEndAll = () => runAll("all-end", "endElection", () => [], "Ended");
+    return runAll("all-registration", "startRegistration", () => [sec], "Registration started");
+  };
 
+  const handleStartVotingAll = () => {
+    const sec = parseDurationToSeconds(votingDuration);
+    if (!sec) {
+      notification.error("Enter a positive voting duration.");
+      return;
+    }
+    const confirmed = confirmFanout(
+      "Start voting",
+      `Every division still in Registration opens a ${votingDuration} voting window. No further voters can be ` +
+        `enrolled there once it does.`,
+    );
+    if (!confirmed) return;
+
+    return runAll("all-voting", "startVoting", () => [sec], "Voting started");
+  };
+
+  const handleEndAll = () => {
+    const confirmed = confirmFanout(
+      "End the election",
+      "Voting closes everywhere and the results are frozen. No further votes are accepted on any division.",
+    );
+    if (!confirmed) return;
+
+    return runAll("all-end", "endElection", () => [], "Ended");
+  };
+
+  /**
+   * Start a new election: wipe everything the previous one produced.
+   *
+   * "Reset" used to mean `Voting.resetElection()` on the *selected* division —
+   * which left every other division untouched, left the division list itself
+   * intact, left the GN officer accounts signed in against those divisions, and
+   * left every enrolled NIC permanently reserved. The result looked like a fresh
+   * election and behaved like a half-finished one.
+   *
+   * A new election therefore clears four things, in an order chosen so a failure
+   * part-way through leaves the least confusing state:
+   *
+   *   1. Each division's ballot (`resetElection`), so an old Voting contract
+   *      that somehow stays referenced is not sitting on a live tally.
+   *   2. The division registry, which is what makes divisions exist at all.
+   *   3. Reserved NIC hashes, without which no previous voter could enrol again.
+   *   4. The GN officer accounts, whose `divisionId` indexes a list that step 2
+   *      just emptied.
+   *
+   * Steps 1 and 4 are best-effort: neither can undo the registry clear, and
+   * stopping on them would leave an election that is already gone looking like
+   * it might come back.
+   */
   const handleResetElection = () => {
     const ok = window.confirm(
-      "Start a NEW election?\n\nThis permanently clears the current question, candidates, voter allowlist, " +
-        "registrations and votes, and returns the contract to the Setup phase. This cannot be undone.",
+      `Start a NEW election?\n\nThis permanently deletes EVERYTHING from the current election:\n` +
+        `  • all ${divisions.length} division(s) and their ballots, voters and votes\n` +
+        `  • every GN officer account and their sign-in credentials\n` +
+        `  • every NIC enrolment record\n\n` +
+        `You will need to create the divisions and GN officers again from scratch. This cannot be undone.`,
     );
     if (!ok) return;
+
     return run("resetElection", async () => {
-      await writeContractAsync({ functionName: "resetElection" });
+      // 1. Blank each division's ballot before it stops being listed.
+      for (const d of divisions) {
+        try {
+          await writeToDivision(d.votingContract, "resetElection", []);
+        } catch (e) {
+          console.error("resetElection on division", d.name, e);
+        }
+      }
+
+      // 2. The registry itself. This is the step that actually removes the
+      //    divisions, so a failure here must abort — everything after it is
+      //    cleanup that only makes sense once the list is gone.
+      if (!registryAddress) throw new Error("ElectionRegistry is not deployed on this chain.");
+      await write({
+        address: registryAddress,
+        abi: CLEAR_DIVISIONS_ABI as unknown as Abi,
+        functionName: "clearDivisions",
+      });
+
+      // 3. NIC reservations, so the same citizens can enrol again.
+      if (nicRegistryAddress) {
+        try {
+          await write({
+            address: nicRegistryAddress,
+            abi: CLEAR_NIC_HASHES_ABI as unknown as Abi,
+            functionName: "clearNicHashes",
+          });
+        } catch (e) {
+          console.error("clearNicHashes", e);
+          notification.warning("Divisions were cleared, but NIC enrolment records could not be released.");
+        }
+      }
+
+      // 4. GN officer accounts (custom chain only — in hardhat mode an officer
+      //    is a wallet the server never held).
+      if (isCustom) {
+        try {
+          const response = await fetch("/api/gn-accounts?all=true", {
+            method: "DELETE",
+            credentials: "same-origin",
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch (e) {
+          console.error("clear gn accounts", e);
+          notification.warning("Divisions were cleared, but the GN officer accounts could not be deleted.");
+        }
+      }
+
+      // Local-only leftovers: hidden-division ids point at indices that no
+      // longer exist, so keeping them would hide whichever divisions are
+      // created next.
+      try {
+        localStorage.removeItem("hiddenDivisions");
+      } catch {}
+
+      setSelectedIdx(0);
       setQuestionDraft("");
       setCandidateDrafts(["", ""]);
       setVoterDrafts([{ address: "", status: true }]);
       setRegistrationDuration("01:00:00");
       setVotingDuration("01:00:00");
+
+      notification.success("New election started — all previous data cleared. Create your divisions to begin.");
     });
   };
 
@@ -548,6 +707,7 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     votingDuration,
     setVotingDuration,
     busy,
+    progress,
     handleSetQuestion,
     handleSetQuestionAll,
     handleSetCandidates,

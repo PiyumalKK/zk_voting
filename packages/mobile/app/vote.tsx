@@ -11,7 +11,8 @@ import {
 } from "../src/components/ui";
 import { newBurnerAccount, submitVote } from "../src/services/chain";
 import { deriveFromSecrets } from "../src/services/crypto";
-import { authenticate, getVoterSecrets, markVoted, resolveSelectedDivision } from "../src/services/keystore";
+import { loadVoterDivision } from "../src/services/division";
+import { authenticate, getVoterSecrets, markVoted } from "../src/services/keystore";
 import { generateVoteCallData } from "../src/services/zkproof";
 import { colors, styles } from "../src/theme";
 
@@ -39,8 +40,7 @@ export default function Vote() {
   useEffect(() => {
     (async () => {
       try {
-        const election = await api.getElection();
-        setDivision(await resolveSelectedDivision(election.divisions));
+        setDivision((await loadVoterDivision()).division);
       } catch {
         /* handled in UI */
       }
