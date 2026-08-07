@@ -26,6 +26,36 @@ export const PhaseBadge = ({ phase, phaseLabel }: { phase: number; phaseLabel: s
   <span className={`badge badge-lg ${PHASE_BADGE[phase] ?? "badge-ghost"}`}>Phase: {phaseLabel}</span>
 );
 
+/**
+ * How the divisions are spread across the phases.
+ *
+ * The master controls send to every division and let each contract reject the
+ * ones in the wrong phase, so a run reports "3 skipped" only once it is over.
+ * This says the same thing before the click, which is when it can still change
+ * what the operator does.
+ */
+export const PhaseSpread = ({ divisions }: { divisions: LiveDivision[] }) => {
+  if (divisions.length === 0) return null;
+
+  const counts = new Map<number, number>();
+  for (const division of divisions) {
+    counts.set(division.phase, (counts.get(division.phase) ?? 0) + 1);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[10px] uppercase tracking-wider opacity-50">Divisions by phase</span>
+      {[...counts.keys()]
+        .sort((a, b) => a - b)
+        .map(phase => (
+          <span key={phase} className={`badge badge-sm ${PHASE_BADGE[phase] ?? "badge-ghost"}`}>
+            {counts.get(phase)} {PHASE_LABELS[phase] ?? "Unknown"}
+          </span>
+        ))}
+    </div>
+  );
+};
+
 const StatTile = ({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) => (
   <div className="rounded-xl border border-base-300/60 bg-base-200/40 px-4 py-3">
     <div className="text-[10px] uppercase tracking-wider opacity-50">{label}</div>
@@ -130,6 +160,16 @@ export const DivisionStatusPanel = () => {
               selectedIdx={selectedIdx}
               setSelectedIdx={setSelectedIdx}
               selectedName={selectedDiv?.name}
+              hint={
+                // The default hint claims every action on the page follows this
+                // selection. On Operations that is only half true — the master
+                // controls deliberately ignore it — and this is the one screen
+                // where believing it costs you a national phase change.
+                <>
+                  <strong>Phase controls</strong> below act on <strong>{selectedDiv?.name}</strong> alone. The{" "}
+                  <strong>master controls</strong> ignore this selection and act on every division.
+                </>
+              }
             />
           )}
         </div>

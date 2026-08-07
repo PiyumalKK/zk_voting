@@ -72,6 +72,12 @@ type AdminElectionValue = {
   setVotingDuration: React.Dispatch<React.SetStateAction<string>>;
 
   busy: string | null;
+  /**
+   * How far a fan-out has got. One transaction per division, sequentially, each
+   * routed through the relay — with a realistic division count that is minutes
+   * of a page that otherwise says only "Starting…".
+   */
+  progress: { done: number; total: number } | null;
   handleSetQuestion: () => void;
   /** Broadcasts the current question draft to every division. */
   handleSetQuestionAll: () => void;
@@ -253,6 +259,7 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const [registrationDuration, setRegistrationDuration] = useState<string>("01:00:00");
   const [votingDuration, setVotingDuration] = useState<string>("01:00:00");
   const [busy, setBusy] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Seed drafts from on-chain state once.
   useEffect(() => {
@@ -272,11 +279,21 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   }, []);
 
   // --- Action handlers ---
-  const run = async (label: string, fn: () => Promise<unknown>) => {
+  /**
+   * Run one admin action, and say what happened.
+   *
+   * `successMessage` is optional because the callers that fan out across
+   * divisions (`runAll`) and the reset already report their own outcome — a
+   * second toast there would contradict the count they just showed. Everything
+   * else passes one: a save that only un-greys its own button looks identical
+   * whether the transaction landed or the click never registered.
+   */
+  const run = async (label: string, fn: () => Promise<unknown>, successMessage?: string) => {
     try {
       setBusy(label);
       await fn();
       await refetchDivision();
+      if (successMessage) notification.success(successMessage);
     } catch (e: any) {
       console.error(label, e);
       notification.error(e?.shortMessage || e?.message || "Transaction failed");
@@ -284,6 +301,9 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       setBusy(null);
     }
   };
+
+  /** Names the division a message is about, falling back when none is selected. */
+  const divisionName = () => selectedDiv?.name ?? "this division";
 
   /**
    * The question as the contract will receive it, or `null` if it is not fit to
@@ -303,7 +323,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const handleSetQuestion = () => {
     const question = validatedQuestion();
     if (question === null) return;
-    return run("question", () => writeContractAsync({ functionName: "setQuestion", args: [question] }));
+    return run(
+      "question",
+      () => writeContractAsync({ functionName: "setQuestion", args: [question] }),
+      `Ballot question saved for ${divisionName()}`,
+    );
   };
 
   /**
@@ -354,7 +378,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const handleSetCandidates = () => {
     const cleaned = cleanCandidateDrafts();
     if (!cleaned) return;
-    return run("candidates", () => writeContractAsync({ functionName: "setCandidates", args: [cleaned] }));
+    return run(
+      "candidates",
+      () => writeContractAsync({ functionName: "setCandidates", args: [cleaned] }),
+      `${cleaned.length} candidate${cleaned.length === 1 ? "" : "s"} saved for ${divisionName()}`,
+    );
   };
 
   /**
@@ -391,10 +419,14 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     }
     const addrs = valid.map(v => v.address as `0x${string}`);
     const statuses = valid.map(v => v.status);
-    return run("voters", async () => {
-      await writeContractAsync({ functionName: "addVoters", args: [addrs, statuses] });
-      setVoterDrafts([{ address: "", status: true }]);
-    });
+    return run(
+      "voters",
+      async () => {
+        await writeContractAsync({ functionName: "addVoters", args: [addrs, statuses] });
+        setVoterDrafts([{ address: "", status: true }]);
+      },
+      `Allowlist updated for ${valid.length} address${valid.length === 1 ? "" : "es"} on ${divisionName()}`,
+    );
   };
 
   const handleStartRegistration = () => {
@@ -431,49 +463,80 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     await run(label, async () => {
       let ok = 0;
       let skipped = 0;
-      for (const d of divisions) {
-        try {
-          await writeToDivision(d.votingContract, functionName, args);
-          ok += 1;
-        } catch {
-          skipped += 1; // wrong phase for this division — skip it
+      setProgress({ done: 0, total: divisions.length });
+      try {
+        for (const d of divisions) {
+          try {
+            await writeToDivision(d.votingContract, functionName, args);
+            ok += 1;
+          } catch {
+            skipped += 1; // wrong phase for this division — skip it
+          }
+          setProgress({ done: ok + skipped, total: divisions.length });
         }
+      } finally {
+        setProgress(null);
       }
       notification.success(`${verb} on ${ok} division(s)${skipped ? ` · ${skipped} skipped (wrong phase)` : ""}`);
     });
   };
 
-  const handleStartRegistrationAll = () =>
-    runAll(
-      "all-registration",
-      "startRegistration",
-      () => {
-        const sec = parseDurationToSeconds(registrationDuration);
-        if (!sec) {
-          notification.error("Enter a positive registration duration.");
-          return null;
-        }
-        return [sec];
-      },
-      "Registration started",
+  /**
+   * Stop before a national phase change.
+   *
+   * `Voting` has no route back to an earlier phase short of `resetElection`, so
+   * every one of these is a one-way door. The per-division buttons act on the
+   * division named in the status panel directly above them; these act on all of
+   * them at once, most of which the operator cannot see — which is exactly why
+   * the reversible ballot broadcasts already confirmed and these did not.
+   */
+  const confirmFanout = (action: string, consequence: string) =>
+    window.confirm(
+      `${action} on all ${divisions.length} division(s)?\n\n${consequence}\n\n` +
+        `Divisions in the wrong phase are skipped and left exactly as they are. This cannot be undone.`,
     );
 
-  const handleStartVotingAll = () =>
-    runAll(
-      "all-voting",
-      "startVoting",
-      () => {
-        const sec = parseDurationToSeconds(votingDuration);
-        if (!sec) {
-          notification.error("Enter a positive voting duration.");
-          return null;
-        }
-        return [sec];
-      },
-      "Voting started",
+  const handleStartRegistrationAll = () => {
+    const sec = parseDurationToSeconds(registrationDuration);
+    if (!sec) {
+      notification.error("Enter a positive registration duration.");
+      return;
+    }
+    const confirmed = confirmFanout(
+      "Start registration",
+      `Every division still in Setup opens a ${registrationDuration} registration window. Its ballot question and ` +
+        `candidate list are frozen from that moment on.`,
     );
+    if (!confirmed) return;
 
-  const handleEndAll = () => runAll("all-end", "endElection", () => [], "Ended");
+    return runAll("all-registration", "startRegistration", () => [sec], "Registration started");
+  };
+
+  const handleStartVotingAll = () => {
+    const sec = parseDurationToSeconds(votingDuration);
+    if (!sec) {
+      notification.error("Enter a positive voting duration.");
+      return;
+    }
+    const confirmed = confirmFanout(
+      "Start voting",
+      `Every division still in Registration opens a ${votingDuration} voting window. No further voters can be ` +
+        `enrolled there once it does.`,
+    );
+    if (!confirmed) return;
+
+    return runAll("all-voting", "startVoting", () => [sec], "Voting started");
+  };
+
+  const handleEndAll = () => {
+    const confirmed = confirmFanout(
+      "End the election",
+      "Voting closes everywhere and the results are frozen. No further votes are accepted on any division.",
+    );
+    if (!confirmed) return;
+
+    return runAll("all-end", "endElection", () => [], "Ended");
+  };
 
   /**
    * Start a new election: wipe everything the previous one produced.
@@ -644,6 +707,7 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     votingDuration,
     setVotingDuration,
     busy,
+    progress,
     handleSetQuestion,
     handleSetQuestionAll,
     handleSetCandidates,
