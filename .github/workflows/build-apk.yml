@@ -59,9 +59,12 @@ jobs:
         run: |
           cd packages/mobile
           eas init --force --non-interactive
-          eas build --platform android --profile preview --non-interactive
+          eas build --platform android --profile preview --non-interactive --no-wait
       - name: Show build info
         run: |
-          echo "📱 APK built with production config:"
+          echo "📱 APK build submitted to EAS!"
+          echo "   Check build status: https://expo.dev/accounts/piyumalkk/projects/sl-vote/builds"
+          echo ""
+          echo "   Production config:"
           echo "   API: http://${{ needs.get-alb-url.outputs.alb_dns }}"
           echo "   RPC: http://${{ needs.get-alb-url.outputs.alb_dns }}/chain-api"
