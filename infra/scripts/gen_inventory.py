@@ -23,7 +23,7 @@ def main():
     node_priv = tf["node_private_ips"]["value"]
     web_pub = tf["web_public_ip"]["value"]
 
-    # Build peer lists (each node peers with the other 3)
+    # Build peer lists (each node peers with the others)
     def peers_for(idx):
         others = []
         for i, ip in enumerate(node_priv):
@@ -31,7 +31,16 @@ def main():
                 others.append(f"https://{ip}:4001")
         return ",".join(others)
 
-    lines = ["all:", "  vars:", f"    node1_priv: {node_priv[0]}", f"    node2_priv: {node_priv[1]}", f"    node3_priv: {node_priv[2]}", "  children:", "    nodes:", "      hosts:"]
+    # Build shared variables for all nodes
+    shared_vars = []
+    for i in range(len(node_priv)):
+        shared_vars.append(f"    node{i+1}_priv: {node_priv[i]}")
+
+    lines = ["all:", "  vars:"]
+    lines.extend(shared_vars)
+    lines.append("  children:")
+    lines.append("    nodes:")
+    lines.append("      hosts:")
     for i in range(len(node_pub)):
         nid = 3001 + i
         lines.append(f"        node{i+1}:")

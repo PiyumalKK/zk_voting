@@ -20,8 +20,8 @@
  */
 
 // Dev fallbacks — set EXPO_PUBLIC_* env vars for production (ALB URL) or local dev (LAN IP)
-const DEV_HOST = "http://192.168.43.186:3000";
-const DEV_RPC = "http://192.168.43.186:9545";
+const DEV_HOST = "http://10.40.252.216:3000";
+const DEV_RPC = "http://10.40.252.216:9545";
 const DEV_CHAIN_ID = 9494;
 
 function envUrl(value: string | undefined, fallback: string): string {

@@ -11,6 +11,7 @@ jobs:
       node1_ip: ${{ steps.ips.outputs.node1 }}
       node2_ip: ${{ steps.ips.outputs.node2 }}
       node3_ip: ${{ steps.ips.outputs.node3 }}
+      node4_ip: ${{ steps.ips.outputs.node4 }}
       web_ip: ${{ steps.ips.outputs.web }}
       inventory: ${{ steps.inv.outputs.content }}
     steps:
@@ -34,6 +35,7 @@ jobs:
           echo "node1=$(terraform output -json node_public_ips | jq -r '.[0]')" >> $GITHUB_OUTPUT
           echo "node2=$(terraform output -json node_public_ips | jq -r '.[1]')" >> $GITHUB_OUTPUT
           echo "node3=$(terraform output -json node_public_ips | jq -r '.[2]')" >> $GITHUB_OUTPUT
+          echo "node4=$(terraform output -json node_public_ips | jq -r '.[3]')" >> $GITHUB_OUTPUT
           echo "web=$(terraform output -raw web_public_ip)" >> $GITHUB_OUTPUT
       - name: Generate inventory
         id: inv
@@ -104,6 +106,8 @@ jobs:
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.node2_ip }}:3001/health || echo "NOT READY"
           echo "=== Node 3 ==="
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.node3_ip }}:3001/health || echo "NOT READY"
+          echo "=== Node 4 ==="
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node4_ip }}:3001/health || echo "NOT READY"
           echo "=== Web ==="
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.web_ip }}:3000 | head -c 100 || echo "NOT READY"
           echo ""

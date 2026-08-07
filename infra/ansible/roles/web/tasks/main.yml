@@ -43,6 +43,19 @@
   async: 900
   poll: 20
 
+- name: Deploy smart contracts to blockchain
+  shell: yarn deploy --network custom --reset
+  args:
+    chdir: /opt/zk-voting/packages/hardhat
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+  register: deploy_output
+
+- name: Show contract deployment result
+  debug:
+    var: deploy_output.stdout_lines
+
 - name: Copy public assets into standalone dir
   shell: |
     cp -r public .next/standalone/packages/nextjs/public 2>/dev/null || true
