@@ -276,14 +276,12 @@ const ResultsDashboard: NextPage = () => {
   };
 
   return (
-    <div className="flex flex-col items-center grow pt-8 px-4">
+    <div className="flex flex-col items-center grow p-6 lg:p-8">
       <div className="w-full max-w-4xl">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl md:text-4xl font-extrabold">
-            <span className="gradient-text">📊 National Election Results</span>
-          </h1>
-          <p className="text-sm opacity-60 mt-2">
+        <div className="dash-card p-6 mb-6">
+          <h1 className="text-lg font-bold">National Election Results</h1>
+          <p className="text-sm opacity-60 mt-1">
             Real-time on-chain tally aggregated across all divisions · Publicly verifiable
           </p>
         </div>

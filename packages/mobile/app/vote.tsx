@@ -11,7 +11,7 @@ import {
 } from "../src/components/ui";
 import { newBurnerAccount, submitVote } from "../src/services/chain";
 import { deriveFromSecrets } from "../src/services/crypto";
-import { authenticate, getSelectedDivision, getVoterSecrets, markVoted } from "../src/services/keystore";
+import { authenticate, getVoterSecrets, markVoted, resolveSelectedDivision } from "../src/services/keystore";
 import { generateVoteCallData } from "../src/services/zkproof";
 import { colors, styles } from "../src/theme";
 
@@ -40,12 +40,7 @@ export default function Vote() {
     (async () => {
       try {
         const election = await api.getElection();
-        const chosen = await getSelectedDivision();
-        setDivision(
-          election.divisions.find(d => d.votingContract.toLowerCase() === chosen?.toLowerCase()) ??
-            election.divisions[0] ??
-            null,
-        );
+        setDivision(await resolveSelectedDivision(election.divisions));
       } catch {
         /* handled in UI */
       }

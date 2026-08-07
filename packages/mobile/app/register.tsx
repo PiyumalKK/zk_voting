@@ -16,10 +16,10 @@ import {
   authenticate,
   getAddress,
   getPrivateKey,
-  getSelectedDivision,
   getVoterSecrets,
   hasRegisteredLocally,
   markRegistered,
+  resolveSelectedDivision,
   storeVoterSecrets,
 } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
@@ -40,12 +40,7 @@ export default function Register() {
       setAlreadyRegistered(await hasRegisteredLocally());
       try {
         const election = await api.getElection();
-        const chosen = await getSelectedDivision();
-        setDivision(
-          election.divisions.find(d => d.votingContract.toLowerCase() === chosen?.toLowerCase()) ??
-            election.divisions[0] ??
-            null,
-        );
+        setDivision(await resolveSelectedDivision(election.divisions));
       } catch {
         /* handled in UI */
       }

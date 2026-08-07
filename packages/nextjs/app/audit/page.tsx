@@ -144,13 +144,12 @@ const AuditPage: NextPage = () => {
   const isLoading = divisionsLoading || dataLoading;
 
   return (
-    <div className="flex flex-col items-center grow pt-8 px-4">
+    <div className="flex flex-col items-center grow p-6 lg:p-8">
       <div className="w-full max-w-5xl">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="text-4xl mb-2">🔍</div>
-          <h1 className="text-3xl font-extrabold">Election Audit</h1>
-          <p className="text-sm opacity-60 mt-2">Independent verification — re-check every ballot on-chain</p>
+        <div className="dash-card p-6 mb-6">
+          <h1 className="text-lg font-bold">Election Audit</h1>
+          <p className="text-sm opacity-60 mt-1">Independent verification — re-check every ballot on-chain</p>
         </div>
 
         {isLoading ? (

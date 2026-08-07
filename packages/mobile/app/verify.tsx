@@ -3,9 +3,9 @@ import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "rea
 import { router } from "expo-router";
 import { toHex } from "viem";
 import { AnimatedResult, FadeIn, GlassCard, GradientButton } from "../src/components/ui";
-import { api, VerifyVoteResponse } from "../src/services/api";
+import { api, DivisionState, VerifyVoteResponse } from "../src/services/api";
 import { deriveFromSecrets } from "../src/services/crypto";
-import { authenticate, getSelectedDivision, getVoterSecrets } from "../src/services/keystore";
+import { authenticate, getVoterSecrets, resolveSelectedDivision } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
 
 type Status = "idle" | "checking" | "done" | "error";
@@ -14,19 +14,15 @@ export default function Verify() {
   const [status, setStatus] = useState<Status>("idle");
   const [result, setResult] = useState<VerifyVoteResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
-  const [divisionName, setDivisionName] = useState("");
+  const [division, setDivision] = useState<DivisionState | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const election = await api.getElection();
-        const chosen = await getSelectedDivision();
-        const div = election.divisions.find(
-          d => d.votingContract.toLowerCase() === chosen?.toLowerCase(),
-        );
-        if (div) setDivisionName(div.name);
+        setDivision(await resolveSelectedDivision(election.divisions));
       } catch {
-        /* non-critical */
+        /* non-critical — handleVerify resolves the division again */
       }
     })();
   }, []);
@@ -51,9 +47,17 @@ export default function Verify() {
         return;
       }
 
-      const division = await getSelectedDivision();
-      if (!division) {
-        setErrorMsg("No division selected. Go back to the home screen and pick your division.");
+      // The screen usually already has the division; re-resolve if the initial
+      // election fetch failed, so a transient network blip is not reported as a
+      // missing selection.
+      let target = division;
+      if (!target) {
+        const election = await api.getElection();
+        target = await resolveSelectedDivision(election.divisions);
+        setDivision(target);
+      }
+      if (!target) {
+        setErrorMsg("No divisions are available from the election service yet. Please try again.");
         setStatus("error");
         return;
       }
@@ -61,7 +65,7 @@ export default function Verify() {
       const { nullifierHash } = deriveFromSecrets(secrets.nullifier, secrets.secret);
       const nhHex = toHex(BigInt(nullifierHash), { size: 32 });
 
-      const res = await api.verifyVote(division, nhHex);
+      const res = await api.verifyVote(target.votingContract, nhHex);
       setResult(res);
       setStatus("done");
     } catch (e: any) {
@@ -79,11 +83,11 @@ export default function Verify() {
         </Text>
       </FadeIn>
 
-      {divisionName ? (
+      {division ? (
         <FadeIn delay={50}>
           <GlassCard>
             <Text style={styles.label}>Division</Text>
-            <Text style={styles.cardText}>{divisionName}</Text>
+            <Text style={styles.cardText}>{division.name}</Text>
           </GlassCard>
         </FadeIn>
       ) : null}

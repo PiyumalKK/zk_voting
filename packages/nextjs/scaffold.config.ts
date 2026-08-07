@@ -30,8 +30,10 @@ const scaffoldConfig = {
   // The static type stays pinned to the hardhat tuple so scaffold-eth's
   // contract-type inference keeps resolving against a single chain key; at
   // runtime the custom backend swaps in the Go node's chain. Both are
-  // Chain-shaped and `deployedContracts.ts` carries entries for 31337 *and*
-  // 9494, so contract lookups succeed in either mode.
+  // Chain-shaped, and contract lookups go through `deployedContracts.ts` keyed
+  // by the *selected* chain id — so whichever backend you point at has to have
+  // been deployed to. `yarn deploy --network custom` writes the 9494 entries;
+  // a chain with no entry there resolves every address to `undefined`.
   targetNetworks: (process.env.NEXT_PUBLIC_CHAIN_BACKEND === "custom" ? [customChain] : [chains.hardhat]) as readonly [
     typeof chains.hardhat,
   ],

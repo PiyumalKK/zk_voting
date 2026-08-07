@@ -162,7 +162,7 @@ const LoginPage = () => {
   const isCustom = getChainMode() === "custom";
 
   return (
-    <div className="flex flex-col items-center grow pt-16 px-4">
+    <div className="flex flex-col items-center justify-center grow p-6 lg:p-8">
       <div className="w-full max-w-sm bg-base-100 rounded-2xl p-8 shadow-md border border-base-300/50">
         <div className="text-center mb-6">
           <div className="text-4xl mb-2">🗳️</div>

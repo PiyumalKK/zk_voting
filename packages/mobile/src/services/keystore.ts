@@ -125,6 +125,29 @@ export async function getSelectedDivision(): Promise<string | null> {
   return SecureStore.getItemAsync(KEY_DIVISION, PUBLIC_OPTIONS).catch(() => null);
 }
 
+/**
+ * Resolve the division the voter is acting in, persisting the answer.
+ *
+ * Home / register / vote all default to the first division when the voter has
+ * not tapped a chip, so a voter can register AND vote without anything ever
+ * reaching KEY_DIVISION. Verify has no such default and used to hard-fail with
+ * "No division selected" for those voters. Writing the resolved division back
+ * here keeps every screen pointed at the same one.
+ */
+export async function resolveSelectedDivision<T extends { votingContract: string }>(
+  divisions: T[],
+): Promise<T | null> {
+  const chosen = await getSelectedDivision();
+  const div =
+    divisions.find(d => d.votingContract.toLowerCase() === chosen?.toLowerCase()) ??
+    divisions[0] ??
+    null;
+  if (div && div.votingContract.toLowerCase() !== chosen?.toLowerCase()) {
+    await setSelectedDivision(div.votingContract);
+  }
+  return div;
+}
+
 async function getVotedList(): Promise<string[]> {
   const raw = await SecureStore.getItemAsync(KEY_VOTED, PUBLIC_OPTIONS).catch(() => null);
   if (!raw) return [];

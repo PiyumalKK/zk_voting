@@ -56,6 +56,8 @@ export const GnAccountsSection = () => {
 
   useEffect(() => {
     void load();
+    const interval = setInterval(load, 4000);
+    return () => clearInterval(interval);
   }, [load]);
 
   // Keep the division selector pointed at something that exists.
@@ -121,7 +123,7 @@ export const GnAccountsSection = () => {
   const handleDelete = async (account: PublicGnAccount) => {
     const confirmed = window.confirm(
       `Delete the account "${account.username}"?\n\nTheir signing key is destroyed and they can no longer enrol voters. ` +
-        `The division's on-chain gnOfficer is left as-is — clear it from section 6 if that is what you want.`,
+        `The division's on-chain gnOfficer is left as-is — clear it from GN Officer Management above if that is what you want.`,
     );
     if (!confirmed) return;
     try {
@@ -130,6 +132,7 @@ export const GnAccountsSection = () => {
         method: "DELETE",
       });
       await load();
+      setCreated(prev => (prev?.username === account.username ? null : prev));
     } catch (error) {
       notification.error(error instanceof Error ? error.message : "Could not delete the account.");
     }
@@ -146,7 +149,7 @@ export const GnAccountsSection = () => {
 
   return (
     <Section
-      title="8. GN Officer Accounts"
+      title="GN Officer Accounts"
       hint="Credential logins for GN officers. Creating one generates a server-held signing key and assigns it on-chain."
     >
       {loadError && (

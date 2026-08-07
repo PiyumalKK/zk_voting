@@ -3,217 +3,119 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { NextPage } from "next";
-import { CheckBadgeIcon, FingerPrintIcon, LockClosedIcon, ShieldCheckIcon } from "@heroicons/react/24/outline";
+import {
+  ChartBarIcon,
+  Cog6ToothIcon,
+  DevicePhoneMobileIcon,
+  MagnifyingGlassIcon,
+  UserGroupIcon,
+} from "@heroicons/react/24/outline";
+
+/**
+ * Portal home.
+ *
+ * An index of operator entry points, not a landing page: the marketing hero,
+ * feature grid, team roster and tech-stack badges were removed because everyone
+ * who reaches this screen is an election official or an observer with a job to
+ * do, and every one of those blocks was pushing the actual portals below the
+ * fold.
+ */
+
+const PORTALS = [
+  {
+    href: "/voting/admin",
+    label: "Election Authority",
+    detail: "Configure divisions, ballots and phases",
+    icon: Cog6ToothIcon,
+  },
+  {
+    href: "/gn",
+    label: "GN Officer",
+    detail: "Enrol voters in your division",
+    icon: UserGroupIcon,
+  },
+  {
+    href: "/results",
+    label: "Results",
+    detail: "National and per-division tally",
+    icon: ChartBarIcon,
+  },
+  {
+    href: "/audit",
+    label: "Audit",
+    detail: "Independently verify proofs and tally",
+    icon: MagnifyingGlassIcon,
+  },
+];
 
 const Home: NextPage = () => {
   return (
-    <>
-      {/* Hero Section */}
-      <div className="relative min-h-[90vh] flex items-center justify-center overflow-hidden">
-        {/* Animated background */}
-        <div className="absolute inset-0 animated-gradient opacity-10"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(99,102,241,0.1),transparent_50%)]"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_80%,rgba(6,182,212,0.08),transparent_50%)]"></div>
-
-        <div className="relative z-10 flex flex-col items-center text-center px-6 max-w-5xl mx-auto">
-          {/* University & Faculty Logos */}
-          <div className="mb-8 mt-5 relative flex items-center gap-6">
-            <div className="absolute inset-0 bg-primary/20 rounded-full blur-3xl scale-150"></div>
-            <Image
-              src="/uni_logo.png"
-              width={100}
-              height={100}
-              alt="University of Ruhuna"
-              className="relative shadow-2xl"
-            />
-            <Image
-              src="/engineering_logo.png"
-              width={100}
-              height={100}
-              alt="Faculty of Engineering"
-              className="relative shadow-2xl"
-            />
-          </div>
-
-          {/* Project Title */}
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight mb-4">
-            <span className="gradient-text">Privacy-Preserving</span>
-            <br />
-            <span className="text-base-content">E-Voting System</span>
-          </h1>
-
-          <p className="text-lg md:text-xl text-base-content/70 max-w-2xl mb-3">
-            End-to-End Verifiable Blockchain-Based Electronic Voting with
-            <span className="font-semibold text-primary"> Anonymous Credential Management</span>
-          </p>
-
-          <p className="text-sm text-base-content/50 mb-8">
-            Department of Electrical and Information Engineering &bull; Faculty of Engineering &bull; University of
-            Ruhuna
-          </p>
-
-          {/* CTA Buttons */}
-          <div className="flex flex-wrap gap-4 justify-center mb-12">
-            <Link href="/voting" className="btn btn-primary btn-lg gap-2 shadow-lg shadow-primary/25">
-              📱 Download SL Vote App
-            </Link>
-            <Link href="/debug" className="btn btn-outline btn-lg gap-2">
-              Explore Contracts
-            </Link>
-          </div>
-
-          {/* Feature Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 w-full max-w-4xl">
-            <div className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
-              <LockClosedIcon className="h-8 w-8 text-primary mb-3" />
-              <h3 className="font-bold text-sm">Zero-Knowledge Proofs</h3>
-              <p className="text-xs opacity-60 mt-1">Prove eligibility without revealing identity</p>
+    <div className="grow w-full p-6 lg:p-8">
+      <div className="w-full max-w-5xl mx-auto space-y-6">
+        {/* System identity */}
+        <div className="dash-card p-6 lg:p-8">
+          <div className="flex flex-wrap items-center gap-5">
+            <div className="flex items-center gap-3 shrink-0">
+              <Image src="/uni_logo.png" width={48} height={48} alt="University of Ruhuna" />
+              <Image src="/engineering_logo.png" width={48} height={48} alt="Faculty of Engineering" />
             </div>
-            <div className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
-              <FingerPrintIcon className="h-8 w-8 text-secondary mb-3" />
-              <h3 className="font-bold text-sm">Anonymous Voting</h3>
-              <p className="text-xs opacity-60 mt-1">Votes unlinkable to voter identities</p>
-            </div>
-            <div className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
-              <CheckBadgeIcon className="h-8 w-8 text-accent mb-3" />
-              <h3 className="font-bold text-sm">On-Chain Verifiable</h3>
-              <p className="text-xs opacity-60 mt-1">Results publicly auditable on blockchain</p>
-            </div>
-            <div className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
-              <ShieldCheckIcon className="h-8 w-8 text-success mb-3" />
-              <h3 className="font-bold text-sm">Sybil Resistant</h3>
-              <p className="text-xs opacity-60 mt-1">One-person-one-vote enforcement</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Vote & Portals Section */}
-      <div className="bg-base-200 border-t border-base-300 py-16 px-6">
-        <div className="max-w-5xl mx-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
-            {/* Voter: download the app */}
-            <div className="bg-gradient-to-br from-primary/10 to-secondary/10 rounded-3xl p-8 border border-primary/20">
-              <div className="text-3xl mb-3">📱</div>
-              <h2 className="text-2xl font-bold mb-2">Cast Your Vote</h2>
-              <p className="text-sm opacity-70 mb-5">
-                Voting is done from the secure <strong>SL Vote</strong> mobile app — protected by your phone&apos;s
-                hardware security chip, fingerprint/Face unlock, PIN, and one-time SMS code. Your vote stays anonymous.
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold leading-tight">Privacy-Preserving E-Voting System</h1>
+              <p className="text-sm opacity-70 mt-1">
+                End-to-end verifiable, blockchain-based electronic voting with anonymous credential management.
               </p>
-              <div className="flex flex-wrap gap-3">
-                <span className="btn btn-neutral btn-sm gap-2 pointer-events-none opacity-90">▶ Google Play</span>
-                <span className="btn btn-neutral btn-sm gap-2 pointer-events-none opacity-90"> App Store</span>
-                <span className="badge badge-warning badge-sm self-center">Coming soon</span>
-              </div>
-              <p className="text-xs opacity-50 mt-4">
-                At your GN office: open the app, show your address QR, and the officer adds you to the roll.
+              <p className="text-xs opacity-50 mt-2">
+                Department of Electrical and Information Engineering &bull; Faculty of Engineering &bull; University of
+                Ruhuna
               </p>
             </div>
-
-            {/* Officials: web portals */}
-            <div>
-              <h2 className="text-2xl font-bold mb-1">Officials &amp; Observers</h2>
-              <p className="text-sm opacity-60 mb-5">Election staff and public observers work from the web.</p>
-              <div className="grid grid-cols-2 gap-3">
-                <Link
-                  href="/voting/admin"
-                  className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50"
-                >
-                  <div className="text-2xl mb-1">🏛️</div>
-                  <h3 className="font-bold text-sm">Election Authority</h3>
-                  <p className="text-xs opacity-60 mt-1">Configure election, manage GNs, control phases</p>
-                </Link>
-                <Link href="/gn" className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50">
-                  <div className="text-2xl mb-1">👨‍💼</div>
-                  <h3 className="font-bold text-sm">GN Officer</h3>
-                  <p className="text-xs opacity-60 mt-1">Enrol voters in your division</p>
-                </Link>
-                <Link
-                  href="/audit"
-                  className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50"
-                >
-                  <div className="text-2xl mb-1">👁️</div>
-                  <h3 className="font-bold text-sm">Observer</h3>
-                  <p className="text-xs opacity-60 mt-1">Independently verify proofs &amp; tally</p>
-                </Link>
-                <Link
-                  href="/results"
-                  className="hover-lift bg-base-100 rounded-2xl p-5 shadow-md border border-base-300/50"
-                >
-                  <div className="text-2xl mb-1">📊</div>
-                  <h3 className="font-bold text-sm">Live Results</h3>
-                  <p className="text-xs opacity-60 mt-1">National &amp; per-division tally</p>
-                </Link>
-              </div>
-            </div>
           </div>
         </div>
-      </div>
 
-      {/* Team Section */}
-      <div className="bg-base-100 border-t border-base-300 py-16 px-6">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-2xl font-bold mb-2">Research Team</h2>
-          <p className="text-sm opacity-60 mb-8">BSc Engineering (Hons) &bull; University of Ruhuna, Sri Lanka</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                KK
-              </div>
-              <p className="font-medium text-sm">Kumarasinghe K.K.R.</p>
-              <p className="text-xs opacity-50">EG/2021/4632</p>
-            </div>
-            <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-secondary/10 flex items-center justify-center text-secondary font-bold">
-                RM
-              </div>
-              <p className="font-medium text-sm">Madhusankha R.M.D.</p>
-              <p className="text-xs opacity-50">EG/2021/4655</p>
-            </div>
-            <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold">
-                RM
-              </div>
-              <p className="font-medium text-sm">Pradeepani R.M.T.</p>
-              <p className="text-xs opacity-50">EG/2021/4725</p>
-            </div>
-            <div className="space-y-1">
-              <div className="w-12 h-12 mx-auto rounded-full bg-success/10 flex items-center justify-center text-success font-bold">
-                KK
-              </div>
-              <p className="font-medium text-sm">Ranasinghe K.K.M.P</p>
-              <p className="text-xs opacity-50">EG/2021/4735</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Tech Stack */}
-      <div className="bg-base-200 py-12 px-6">
-        <div className="max-w-4xl mx-auto text-center">
-          <h3 className="text-lg font-bold mb-6 opacity-70">Built With</h3>
-          <div className="flex flex-wrap justify-center gap-3">
-            {[
-              "Noir ZK Circuits",
-              "Solidity",
-              "Barretenberg",
-              "Next.js",
-              "Ethereum",
-              "Poseidon Hash",
-              "LeanIMT",
-              "ERC-4337",
-            ].map(tech => (
-              <span
-                key={tech}
-                className="px-4 py-2 bg-base-100 rounded-full text-xs font-medium shadow-sm border border-base-300/50"
+        {/* Operator entry points */}
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-base-content/50 mb-3">Portals</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {PORTALS.map(({ href, label, detail, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                className="dash-card flex items-start gap-4 p-5 transition-colors hover:border-primary/40"
               >
-                {tech}
-              </span>
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Icon className="h-5 w-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold">{label}</span>
+                  <span className="block text-xs opacity-60 mt-0.5">{detail}</span>
+                </span>
+              </Link>
             ))}
           </div>
         </div>
+
+        {/* Voter channel — stated as a fact of the system, not a pitch */}
+        <div className="dash-card p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-base-200 text-base-content/70">
+                <DevicePhoneMobileIcon className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold">Voter access</h2>
+                <p className="text-xs opacity-60 mt-1 max-w-xl">
+                  Ballots are cast only from the SL Vote mobile app, which holds the voter&apos;s key in the
+                  phone&apos;s hardware security module. Voters enrol in person at their GN office.
+                </p>
+              </div>
+            </div>
+            <Link href="/voting" className="btn btn-outline btn-sm">
+              App details
+            </Link>
+          </div>
+        </div>
       </div>
-    </>
+    </div>
   );
 };
 
