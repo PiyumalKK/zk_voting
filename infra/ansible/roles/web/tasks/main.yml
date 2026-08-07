@@ -32,6 +32,33 @@
     HOME: /home/ubuntu
     NODE_OPTIONS: "--max-old-space-size=3000"
 
+# Contracts MUST be deployed before the Next.js build: the web app imports
+# deployedContracts.ts (addresses) at build time. Target the PRIMARY node (node1)
+# — replicas forward writes anyway, but the primary is where blocks are sealed.
+- name: Wait for primary blockchain node RPC
+  uri:
+    url: "http://{{ node1_ip }}:3001/health"
+    status_code: 200
+  register: node_health
+  retries: 30
+  delay: 5
+  until: node_health.status == 200
+
+- name: Deploy smart contracts to blockchain (primary node)
+  shell: yarn deploy --network custom --reset
+  args:
+    chdir: /opt/zk-voting/packages/hardhat
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    CUSTOM_RPC_URL: "http://{{ node1_ip }}:3001"
+    CUSTOM_CHAIN_ID: "9494"
+  register: deploy_output
+
+- name: Show contract deployment result
+  debug:
+    var: deploy_output.stdout_lines
+
 - name: Build Next.js (standalone output)
   shell: yarn build
   args:
@@ -43,23 +70,11 @@
   async: 900
   poll: 20
 
-- name: Deploy smart contracts to blockchain
-  shell: yarn deploy --network custom --reset
-  args:
-    chdir: /opt/zk-voting/packages/hardhat
-  become_user: ubuntu
-  environment:
-    HOME: /home/ubuntu
-  register: deploy_output
-
-- name: Show contract deployment result
-  debug:
-    var: deploy_output.stdout_lines
-
 - name: Copy public assets into standalone dir
   shell: |
     cp -r public .next/standalone/packages/nextjs/public 2>/dev/null || true
     cp -r .next/static .next/standalone/packages/nextjs/.next/static 2>/dev/null || true
+    cp .env.local .next/standalone/packages/nextjs/.env.local 2>/dev/null || true
   args:
     chdir: /opt/zk-voting/packages/nextjs
   become_user: ubuntu
@@ -67,10 +82,10 @@
 - name: Start Next.js standalone with PM2
   shell: |
     pm2 delete zk-web 2>/dev/null || true
-    PORT=3000 pm2 start .next/standalone/packages/nextjs/server.js --name zk-web
+    PORT=3000 pm2 start server.js --name zk-web
     pm2 save
   args:
-    chdir: /opt/zk-voting/packages/nextjs
+    chdir: /opt/zk-voting/packages/nextjs/.next/standalone/packages/nextjs
   become_user: ubuntu
 
 - name: Install nginx
