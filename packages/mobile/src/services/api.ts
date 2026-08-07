@@ -20,6 +20,10 @@ export interface DivisionState {
   registrationEndTime: number;
   votingEndTime: number;
   root: string;
+  /** Present only when the election was fetched for a specific voter address. */
+  voterAllowlisted?: boolean;
+  /** Present only when the election was fetched for a specific voter address. */
+  voterRegistered?: boolean;
 }
 
 export interface ElectionResponse {
@@ -66,7 +70,12 @@ export interface VerifyVoteResponse {
 }
 
 export const api = {
-  getElection: () => req<ElectionResponse>("/api/election"),
+  /**
+   * @param voter - when given, each division also reports whether this address
+   *   is on its allowlist, which is how the app derives the voter's division.
+   */
+  getElection: (voter?: string | null) =>
+    req<ElectionResponse>(`/api/election${voter ? `?voter=${voter}` : ""}`),
 
   getDivision: (contract: string) =>
     req<ElectionResponse>(`/api/election?division=${contract}`).then(r => r.divisions[0]),

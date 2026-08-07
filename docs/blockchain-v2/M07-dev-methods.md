@@ -1,6 +1,30 @@
 # M07 — Dev/compat methods
 
-Status: pending · Depends: M05 · Package: `packages/blockchain`
+Status: **done** (2026-08-01) · Depends: M05 · Package: `packages/blockchain`
+
+> All six deliverables complete. `make diff-dev` passes 20/20 against a live
+> `hardhat node` (2 informational). Gate commands: `RUNNING-GATES.md` §4.
+>
+> **Four things the differential harness corrected that review did not:**
+> 1. `evm_mine` returns the decimal string `"0"`, not the hex quantity
+>    `"0x0"` — all three `evm_` methods return decimal, so Hardhat's
+>    hex-convention exception is broader than its docs state.
+> 2. Hardhat does not implement `anvil_setBalance` at all (`-32004`), so
+>    that alias is ours-only and cannot be diffed.
+> 3. `evm_increaseTime` was silently ineffective whenever the chain head sat
+>    ahead of wall clock — routine on a persistent chain, and it would have
+>    broken M08's test suite on every run after the first. Fixed by flooring
+>    the offset against the head.
+> 4. Hardhat seeds its clock offset from the last block's timestamp rather
+>    than wall clock, so absolute offsets differ by a second or two between
+>    backends. Deltas match; nothing reads the absolute values.
+>
+> Deliverable 5 (`web3_clientVersion`) stays on the honest default
+> `zkchain/v2.0.0`; `CLIENT_VERSION_MODE=anvil` is wired up so M08 can flip
+> it by env var if a plugin turns out to special-case client identity.
+>
+> **Carried to M09:** blocks sealed after a restart onto a future head still
+> advance 1s at a time. See M09 deliverable 1.
 
 ## Goal
 The small set of non-standard methods needed for (a) the Hardhat contract test suite to run

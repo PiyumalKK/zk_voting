@@ -12,6 +12,7 @@ import {
 } from "../src/components/ui";
 import { submitRegister } from "../src/services/chain";
 import { deriveFromSecrets, generateCommitment } from "../src/services/crypto";
+import { loadVoterDivision } from "../src/services/division";
 import {
   authenticate,
   getAddress,
@@ -19,7 +20,6 @@ import {
   getVoterSecrets,
   hasRegisteredLocally,
   markRegistered,
-  resolveSelectedDivision,
   storeVoterSecrets,
 } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
@@ -30,6 +30,7 @@ const STEPS = ["Authenticate", "Commitment", "Fund", "Submit"];
 
 export default function Register() {
   const [division, setDivision] = useState<DivisionState | null>(null);
+  const [notEnrolled, setNotEnrolled] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [currentStep, setCurrentStep] = useState(0);
   const [stepStatus, setStepStatus] = useState<"active" | "done" | "error">("active");
@@ -39,8 +40,9 @@ export default function Register() {
     (async () => {
       setAlreadyRegistered(await hasRegisteredLocally());
       try {
-        const election = await api.getElection();
-        setDivision(await resolveSelectedDivision(election.divisions));
+        const { division: div, notEnrolled: none } = await loadVoterDivision();
+        setDivision(div);
+        setNotEnrolled(none);
       } catch {
         /* handled in UI */
       }
@@ -115,7 +117,7 @@ export default function Register() {
         } else {
           hint =
             "\n\nWe couldn't verify your eligibility for this division. " +
-            "Please make sure you selected the exact division your GN officer registered you for.";
+            "Ask your GN officer to confirm they added this phone's voting address to the roll.";
         }
       }
       Alert.alert(`Registration failed (${failedStep})`, `${detail}${hint}`);
@@ -181,6 +183,18 @@ export default function Register() {
         </FadeIn>
       )}
 
+      {notEnrolled && (
+        <FadeIn delay={50}>
+          <GlassCard glow glowColor={colors.warning}>
+            <Text style={styles.cardTitle}>⏳ Not enrolled yet</Text>
+            <Text style={[styles.cardText, { marginTop: 8 }]}>
+              Your voting address is not on any division&apos;s roll. Show your QR code to your GN
+              officer first — your division is then set automatically.
+            </Text>
+          </GlassCard>
+        </FadeIn>
+      )}
+
       {status === "working" && (
         <FadeIn>
           <GlassCard>
@@ -209,7 +223,7 @@ export default function Register() {
           <GradientButton
             title="Register now"
             icon="📝"
-            disabled={division?.phase !== 1}
+            disabled={!division || division.phase !== 1}
             onPress={handleRegister}
           />
         </FadeIn>

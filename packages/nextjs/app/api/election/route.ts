@@ -13,6 +13,10 @@ import { serverChainConfig } from "~~/utils/serverChain";
  *
  * Query params:
  *   ?division=<contractAddress>  → return only that division
+ *   ?voter=<address>             → also report, per division, whether that
+ *                                  address is on its allowlist. This is how the
+ *                                  voter app derives a voter's division instead
+ *                                  of asking them to pick one.
  *
  * Consumed by the native voter app and any external integrator/observer.
  * The server holds NO secrets — this is purely public on-chain data.
@@ -61,6 +65,16 @@ const VOTING_ABI = [
   { name: "getCandidates", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string[]" }] },
   { name: "getVoteCounts", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256[]" }] },
   { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    name: "getVoterData",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "_voter", type: "address" }],
+    outputs: [
+      { name: "voter", type: "bool" },
+      { name: "registered", type: "bool" },
+    ],
+  },
 ] as const;
 
 interface DivisionState {
@@ -78,6 +92,10 @@ interface DivisionState {
   registrationEndTime: number;
   votingEndTime: number;
   root: string;
+  /** Only present when ?voter= was supplied: is that address on this division's allowlist? */
+  voterAllowlisted?: boolean;
+  /** Only present when ?voter= was supplied: has that address already registered here? */
+  voterRegistered?: boolean;
 }
 
 export async function GET(req: NextRequest) {
@@ -97,16 +115,32 @@ export async function GET(req: NextRequest) {
 
     const filter = req.nextUrl.searchParams.get("division")?.toLowerCase();
 
+    // A GN officer enrols a voter on exactly one division's contract, so the
+    // allowlist is already the authoritative record of which division a voter
+    // belongs to. Reporting it here lets the voter app derive the division
+    // instead of asking the voter to pick it. Still public data: the caller
+    // must already know the address they are asking about.
+    const voterParam = req.nextUrl.searchParams.get("voter");
+    const voter = /^0x[0-9a-fA-F]{40}$/.test(voterParam ?? "") ? (voterParam as `0x${string}`) : null;
+
     const divisions: DivisionState[] = await Promise.all(
       rawDivisions
         .filter(d => !filter || d.votingContract.toLowerCase() === filter)
         .map(async (d): Promise<DivisionState> => {
           try {
-            const [votingData, candidates, voteCounts, gn] = await Promise.all([
+            const [votingData, candidates, voteCounts, gn, voterData] = await Promise.all([
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getVotingData" }),
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getCandidates" }),
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getVoteCounts" }),
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "s_gnOfficer" }),
+              voter
+                ? client.readContract({
+                    address: d.votingContract,
+                    abi: VOTING_ABI,
+                    functionName: "getVoterData",
+                    args: [voter],
+                  })
+                : Promise.resolve(null),
             ]);
             const vd = votingData as readonly unknown[];
             const counts = (voteCounts as bigint[]).map(Number);
@@ -125,6 +159,7 @@ export async function GET(req: NextRequest) {
               registrationEndTime: Number(vd[3]),
               votingEndTime: Number(vd[4]),
               root: (vd[7] as bigint).toString(),
+              ...(voterData ? { voterAllowlisted: Boolean(voterData[0]), voterRegistered: Boolean(voterData[1]) } : {}),
             };
           } catch {
             return {
