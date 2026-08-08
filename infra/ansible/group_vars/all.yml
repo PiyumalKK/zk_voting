@@ -19,7 +19,7 @@ server_pepper: "9b4e7a1f3c8d6e2a5f0b9c7d4e1a8f6c3b5d2e9a7f1c8b4d6e0a3f9c2b7d5e8a
 
 # Repository settings
 repo_url: "https://github.com/PiyumalKK/zk_voting.git"
-branch: "Piyumal"
+branch: "feature/bft-consensus"
 
 # SSH settings
 ansible_user: ubuntu
