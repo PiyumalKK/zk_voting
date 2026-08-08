@@ -65,6 +65,44 @@
     var: deploy_output.stdout_lines
   when: redeploy_contracts | default(false) | bool
 
+# Persist the freshly-deployed addresses OUTSIDE the checkout (which is wiped on
+# every deploy). Web-only deploys restore this so their build matches the LIVE
+# chain instead of the stale addresses committed in git (addresses drift on
+# every --reset because the deployer nonce keeps climbing).
+- name: Ensure persistent contract-state dir
+  file:
+    path: /opt/zk-voting-state
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+  when: redeploy_contracts | default(false) | bool
+
+- name: Save deployed addresses to persistent store
+  copy:
+    src: /opt/zk-voting/packages/nextjs/contracts/deployedContracts.ts
+    dest: /opt/zk-voting-state/deployedContracts.ts
+    remote_src: true
+    owner: ubuntu
+  when: redeploy_contracts | default(false) | bool
+
+# Web-only deploy (redeploy_contracts=false): reuse the addresses from the last
+# contract deploy so the build points at the live contracts.
+- name: Check for persisted contract addresses
+  stat:
+    path: /opt/zk-voting-state/deployedContracts.ts
+  register: persisted_contracts
+  when: not (redeploy_contracts | default(false) | bool)
+
+- name: Restore deployed addresses from persistent store
+  copy:
+    src: /opt/zk-voting-state/deployedContracts.ts
+    dest: /opt/zk-voting/packages/nextjs/contracts/deployedContracts.ts
+    remote_src: true
+    owner: ubuntu
+  when:
+    - not (redeploy_contracts | default(false) | bool)
+    - persisted_contracts.stat.exists
+
 - name: Build Next.js (standalone output)
   shell: yarn build
   args:
