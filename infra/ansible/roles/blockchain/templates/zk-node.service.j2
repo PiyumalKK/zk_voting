@@ -1,5 +1,5 @@
 [Unit]
-Description=ZK Voting Node ({{ role | default('primary') }})
+Description=ZK Voting Node ({{ 'validator ' ~ validator_id if consensus_mode | default('solo') == 'bft' else role | default('primary') }})
 After=network.target
 
 [Service]
@@ -18,6 +18,32 @@ Environment=TLS_CERT=/opt/zk-voting/packages/blockchain/data_3001/certs/server.c
 Environment=TLS_KEY=/opt/zk-voting/packages/blockchain/data_3001/certs/server.key
 Environment=TLS_CA=/opt/zk-voting/packages/blockchain/data_3001/certs/server.crt
 
+{% if consensus_mode | default('solo') == 'bft' %}
+# --- BFT consensus (CONSENSUS_MODE=bft) --------------------------------
+#
+# Every node is a co-equal validator, so every node is ROLE=primary. There is
+# no replica in a BFT cluster: a replica cannot propose, so a validator
+# configured as one would hold a key, be counted in the quorum and never take
+# its turn, leaving the cluster permanently one validator short. The node
+# refuses to boot in that configuration.
+#
+# A block is final only once a quorum (ceil(2N/3), so 3 of 4) of validators
+# has signed a COMMIT for it. The election survives losing one validator and
+# halts rather than weakening if it loses two. See
+# packages/blockchain/CONSENSUS.md.
+Environment=ROLE=primary
+Environment=CONSENSUS_MODE=bft
+Environment=VALIDATOR_ID={{ validator_id }}
+Environment=VALIDATOR_SET={{ validator_set }}
+Environment=CONSENSUS_PEERS={{ consensus_peers }}
+Environment=VALIDATOR_RPC_URLS={{ validator_rpc_urls }}
+Environment=ROUND_TIMEOUT_MS={{ round_timeout_ms | default(4000) }}
+
+# The signing key is read from a 0600 file rather than passed inline, so it
+# never appears in `ps -e` output or in `systemctl show`. The file is written
+# by the blockchain role from a GitHub Actions secret and is never in git.
+Environment=VALIDATOR_PRIVATE_KEY_FILE=/opt/zk-voting/packages/blockchain/data_3001/keys/validator.key
+{% else %}
 # Role: node1 = primary (sequencer), node2+ = replica (follows node1)
 Environment=ROLE={{ role | default('primary') }}
 {% if role | default('primary') == 'primary' %}
@@ -25,6 +51,7 @@ Environment=PEERS={{ peers | default('') }}
 {% else %}
 Environment=PRIMARY_RPC_URL={{ primary_rpc_url }}
 Environment=REPLICA_PULL_URL={{ replica_pull_url }}
+{% endif %}
 {% endif %}
 
 ExecStart=/opt/zk-voting/packages/blockchain/bin/zk-node

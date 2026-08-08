@@ -44,6 +44,49 @@
     creates: "/opt/zk-voting/packages/blockchain/data_3001/keys/admin_public.pem"
   become_user: ubuntu
 
+# The consensus signing key (CONSENSUS_MODE=bft).
+#
+# Written to a 0600 file rather than passed as an Environment= line, so it
+# never appears in `ps -e`, `systemctl show` or the unit file. The value comes
+# from a GitHub Actions secret via --extra-vars and is never in this
+# repository; no_log keeps it out of Ansible's own output too.
+#
+# Losing this key does not lose the chain — a validator's blocks are already
+# final and signed by a quorum — but it does lose that validator's vote until
+# a new key is issued and every node's VALIDATOR_SET is updated, which is a
+# coordinated restart.
+#
+# validator_keys is a dict keyed by inventory hostname, passed whole as
+# --extra-vars, because --extra-vars sets one global value and each host needs
+# a different key.
+- name: Install the validator's consensus signing key
+  copy:
+    content: "{{ validator_keys[inventory_hostname] }}"
+    dest: /opt/zk-voting/packages/blockchain/data_3001/keys/validator.key
+    owner: ubuntu
+    group: ubuntu
+    mode: "0600"
+  no_log: true
+  when:
+    - consensus_mode | default('solo') == 'bft'
+    - validator_keys is defined
+    - validator_keys[inventory_hostname] | default('') | length > 0
+
+# A validator with no key would boot, fail configuration validation and exit,
+# and the cluster would silently be one vote short — spending its single
+# failure of slack on a missing secret. Better to stop the deploy.
+- name: Fail early when a validator has no signing key
+  fail:
+    msg: >-
+      consensus_mode is 'bft' but no signing key was provided for
+      {{ inventory_hostname }}. The deploy workflow passes these from the
+      VALIDATOR_KEY_NODE1..4 repository secrets as
+      -e '{"validator_keys": {...}}'. Set them, or set consensus_mode=solo to
+      deploy the single-sequencer topology instead.
+  when:
+    - consensus_mode | default('solo') == 'bft'
+    - validator_keys is not defined or validator_keys[inventory_hostname] | default('') | length == 0
+
 - name: Install nginx
   apt:
     name: nginx

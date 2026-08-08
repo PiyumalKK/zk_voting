@@ -66,9 +66,31 @@ jobs:
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
           chmod 400 ~/.ssh/zk-voting-key.pem
       # --limit nodes → only blockchain hosts; the web play is skipped entirely
+      #
+      # The validator signing keys (CONSENSUS_MODE=bft) are passed as a
+      # host-keyed dict, because --extra-vars sets one global value and each
+      # validator needs a different key. They come from repository secrets and
+      # are never in git; the role writes each to a 0600 file with no_log, so
+      # they appear neither in this log nor in `ps -e` on the host.
+      #
+      # A validator whose key is missing stops the deploy rather than booting
+      # one vote short — see the guard in roles/blockchain/tasks/main.yml.
       - name: Deploy to all nodes
         working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml --limit nodes -v
+        env:
+          VALIDATOR_KEY_NODE1: ${{ secrets.VALIDATOR_KEY_NODE1 }}
+          VALIDATOR_KEY_NODE2: ${{ secrets.VALIDATOR_KEY_NODE2 }}
+          VALIDATOR_KEY_NODE3: ${{ secrets.VALIDATOR_KEY_NODE3 }}
+          VALIDATOR_KEY_NODE4: ${{ secrets.VALIDATOR_KEY_NODE4 }}
+        run: |
+          VALIDATOR_KEYS=$(jq -cn \
+            --arg n1 "$VALIDATOR_KEY_NODE1" \
+            --arg n2 "$VALIDATOR_KEY_NODE2" \
+            --arg n3 "$VALIDATOR_KEY_NODE3" \
+            --arg n4 "$VALIDATOR_KEY_NODE4" \
+            '{validator_keys: {node1: $n1, node2: $n2, node3: $n3, node4: $n4}}')
+          ansible-playbook playbook.yml -i inventory.yml --limit nodes -v \
+            -e "$VALIDATOR_KEYS"
 
   health-check:
     name: Health Check
@@ -77,11 +99,20 @@ jobs:
     steps:
       - name: Check all nodes
         run: |
-          echo "=== Node 1 ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node1_ip }}:3001/health || echo "NOT READY"
-          echo "=== Node 2 ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node2_ip }}:3001/health || echo "NOT READY"
-          echo "=== Node 3 ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node3_ip }}:3001/health || echo "NOT READY"
-          echo "=== Node 4 ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.node4_ip }}:3001/health || echo "NOT READY"
+          for ip in ${{ needs.inventory.outputs.node1_ip }} \
+                    ${{ needs.inventory.outputs.node2_ip }} \
+                    ${{ needs.inventory.outputs.node3_ip }} \
+                    ${{ needs.inventory.outputs.node4_ip }}; do
+            echo "=== $ip ==="
+            curl -sf --max-time 10 "http://$ip:3001/health" || echo "NOT READY"
+            echo
+            # Under CONSENSUS_MODE=bft, "the process is up" is not the
+            # question — a validator that cannot reach its peers is up and
+            # useless. zk_consensusStatus reports whose turn it is and whether
+            # this node is caught up, which is what actually says the cluster
+            # is working. Answers -32601 in solo mode, which is expected.
+            curl -sf --max-time 10 -X POST "http://$ip:3001" \
+              -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"zk_consensusStatus","params":[]}' || true
+            echo
+          done

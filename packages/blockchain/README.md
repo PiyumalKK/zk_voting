@@ -1,11 +1,21 @@
 # zk-blockchain node (v2)
 
-A permissioned, single-sequencer EVM chain that speaks the Ethereum JSON-RPC
-subset this app uses. It executes ordinary EVM bytecode and knows nothing
-about `Voting.sol`, `ElectionRegistry.sol` or `HonkVerifier.sol` — contracts
-are deployed to it with the same `hardhat-deploy` scripts used against
-Hardhat, and switching between the two backends is an environment-variable
-change.
+A permissioned EVM chain that speaks the Ethereum JSON-RPC subset this app
+uses. It executes ordinary EVM bytecode and knows nothing about `Voting.sol`,
+`ElectionRegistry.sol` or `HonkVerifier.sol` — contracts are deployed to it
+with the same `hardhat-deploy` scripts used against Hardhat, and switching
+between the two backends is an environment-variable change.
+
+It runs in one of two modes, selected by `CONSENSUS_MODE`:
+
+| Mode | Who may seal a block |
+|---|---|
+| `solo` (default) | one sequencer; replicas verify and copy |
+| `bft` | four co-equal validators; a block is final only once a quorum of three has signed it |
+
+`solo` is everything this document describes below. For `bft` — the protocol,
+the safety argument, and the kill-a-node demonstrations — see
+[`CONSENSUS.md`](CONSENSUS.md).
 
 See `../../00-MASTER.md` for the design and milestone plan, `RPC.md` for the
 implemented method matrix, and `../../RUNNING-GATES.md` for how to run each
@@ -66,6 +76,10 @@ opt-in: a node becomes part of a cluster only when `PEERS` (sequencer) or
   primary's head every 5 s and pulls whatever it is missing, so a node that
   was down, or whose push was dropped, converges on its own.
 - **Replica count is configuration.** Nothing in the code assumes two.
+- **One writer is also the limitation.** If the primary stops, the chain stops,
+  even with healthy replicas — a replica can copy but never propose. That is
+  what `CONSENSUS_MODE=bft` removes: four validators take turns proposing, and
+  the chain survives losing any one of them. See [`CONSENSUS.md`](CONSENSUS.md).
 
 ### Running the cluster
 

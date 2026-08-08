@@ -1,0 +1,95 @@
+name: Blockchain Tests
+
+# The Go node's own test suite. Until now the Go code was only ever compiled
+# on the EC2 hosts by Ansible at deploy time, which meant a change that did
+# not build was discovered during a deployment rather than on the pull request
+# that introduced it.
+#
+# This is a new, standalone workflow: it adds no job to test.yml and nothing
+# references it, so it cannot affect the existing contract and web jobs.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/blockchain/**"
+      - ".github/workflows/blockchain-test.yml"
+
+jobs:
+  unit:
+    name: Go Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Read from go.mod rather than pinned here, so the toolchain the CI
+          # uses cannot drift from the one the module declares.
+          go-version-file: packages/blockchain/go.mod
+          cache-dependency-path: packages/blockchain/go.sum
+      - run: cd packages/blockchain && go build ./...
+      - run: cd packages/blockchain && go vet ./...
+      - run: cd packages/blockchain && go test ./... -timeout 15m
+
+      # gofmt last, because it rewrites line endings in the checkout.
+      #
+      # This repository stores its Go sources with CRLF line endings (they
+      # were committed from Windows without a .gitattributes). gofmt treats
+      # CR as content, so a plain `gofmt -l .` on a Linux checkout flags every
+      # file in the package for a reason that has nothing to do with
+      # formatting. Normalising first checks what is actually being asserted —
+      # that the code is gofmt-clean — without this workflow having to
+      # renormalise several hundred files it did not write.
+      - name: gofmt
+        run: |
+          cd packages/blockchain
+          find . -name '*.go' -exec sed -i 's/\r$//' {} +
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  bft-consensus:
+    name: BFT Consensus Cluster Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/blockchain/go.mod
+          cache-dependency-path: packages/blockchain/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd packages/blockchain && go build -o bin/zk-blockchain-node ./cmd/node
+      - run: cd packages/blockchain && go run ./cmd/gencerts -dir certs
+      - run: cd packages/blockchain/e2e && npm ci
+      # Four real validator processes over real mTLS: blocks finalize only at
+      # quorum, one validator can be killed without stopping the election, two
+      # freeze it rather than weakening it, the proposership rotates, a
+      # restarted validator rejoins, and cmd/audit still passes.
+      - name: Four-validator acceptance gate
+        run: cd packages/blockchain && make bft-cluster-test
+
+  solo-compatibility:
+    name: Solo Mode Unchanged
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/blockchain/go.mod
+          cache-dependency-path: packages/blockchain/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd packages/blockchain && go build -o bin/zk-blockchain-node ./cmd/node
+      - run: cd packages/blockchain && go run ./cmd/gencerts -dir certs
+      - run: cd packages/blockchain/e2e && npm ci
+      # The M10 gate, run with CONSENSUS_MODE unset. This is the guarantee
+      # that the consensus work is revertible: the single-sequencer topology
+      # must behave exactly as it did before any of it existed.
+      - name: Single-sequencer cluster gate
+        run: cd packages/blockchain && make cluster-test

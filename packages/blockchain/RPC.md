@@ -45,6 +45,29 @@ forwarding (M10).
 | `eth_getBlockTransactionCountByHash` | Same null-on-unknown rule. |
 | `eth_getLogs` | Full filter-object support (address single-or-array, positional topics with `null` wildcards and inner OR-arrays, `fromBlock`/`toBlock` tags or numbers, `blockHash` mode). Empty result is `[]`, never `null`. Range capped by `LOG_RANGE_LIMIT`. See "Log filter semantics" below. |
 
+### Consensus methods — `CONSENSUS_MODE=bft` only
+
+Additive and read-only. Registered only on a validator, so a solo node answers
+`-32601` for both exactly as it would for a method that was never written —
+the same "gated by not existing" approach `DEV_RPC` uses.
+
+They live in a `zk_` namespace of this chain's own rather than in `eth_`
+deliberately: every method in the eth namespace has a shape viem, ethers and
+the mobile relay depend on, and putting chain-specific consensus data there
+would spend the one thing that namespace is valuable for. **No `eth_*` method
+changes shape, gains a field or behaves differently in either mode.**
+
+Neither is forwarded by a replica or a validator — both are reads, answered
+from local state.
+
+| Method | Params | Returns | Notes |
+|---|---|---|---|
+| `zk_getCommitSeals` | `[blockNumberOrTag]` | certificate object, or `null` | The signatures that made a block final: `{number, blockHash, round, quorum, validatorSetSize, seals[]}`, each seal `{validator, address, signature}`. Addresses are **recovered server-side from the signatures**, so a client can verify the quorum without holding `VALIDATOR_SET`. Unknown block, or a block with no recorded certificate → JSON `null` (the same convention `eth_getBlockByNumber` follows, and what makes the method safe to call across a rollout or on pre-consensus history). A certificate that exists but does **not** verify returns an error rather than a truncated list. |
+| `zk_consensusStatus` | `[]` | status object | `{mode, self, height, round, proposer, validators[], quorum, synced, faulty[]}`. Exists so "did the proposership rotate when we killed a node?" and "is this validator caught up?" are answerable without reading logs. `faulty` names validators caught equivocating. |
+
+See [`CONSENSUS.md`](CONSENSUS.md) for the protocol and for what the seal
+certificate means.
+
 ### Dev / compatibility methods (M07) — `DEV_RPC=true` only
 
 These are **not registered at all** unless `DEV_RPC=true`, so on a default
