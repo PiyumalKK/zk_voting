@@ -41,10 +41,10 @@ export const colors = {
   muted: "#64748B",
 
   // Gradient pairs (for LinearGradient)
-  gradientPrimary: ["#3B82F6", "#6366F1"] as const,
-  gradientSuccess: ["#10B981", "#059669"] as const,
-  gradientDanger: ["#EF4444", "#DC2626"] as const,
-  gradientCard: ["rgba(17, 29, 50, 0.9)", "rgba(15, 23, 42, 0.95)"] as const,
+  gradientPrimary: ["#60A5FA", "#3B82F6", "#6366F1"] as const,
+  gradientSuccess: ["#34D399", "#10B981", "#059669"] as const,
+  gradientDanger: ["#F87171", "#EF4444", "#DC2626"] as const,
+  gradientCard: ["rgba(23, 37, 63, 0.95)", "rgba(13, 22, 40, 0.98)"] as const,
   gradientHeader: ["#0C1628", "#070E1A"] as const,
 };
 
@@ -81,20 +81,20 @@ export const shadows = {
   button: Platform.select({
     ios: {
       shadowColor: colors.primary,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.4,
+      shadowRadius: 14,
     },
-    android: { elevation: 4 },
+    android: { elevation: 8 },
   }),
   glow: Platform.select({
     ios: {
       shadowColor: colors.primary,
       shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 0.2,
-      shadowRadius: 20,
+      shadowOpacity: 0.35,
+      shadowRadius: 28,
     },
-    android: { elevation: 2 },
+    android: { elevation: 4 },
   }),
 };
 

@@ -7,11 +7,11 @@ import {
   TouchableOpacityProps,
   View,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { colors, radii, shadows, spacing } from "../theme";
 
 // ─── GradientButton ──────────────────────────────────────────────
-// A primary action button with press animation. Falls back to a solid
-// color since expo-linear-gradient may not be available in Expo Go.
+// A primary action button with a real gradient fill and press animation.
 
 interface GradientButtonProps extends TouchableOpacityProps {
   title: string;
@@ -31,12 +31,12 @@ export function GradientButton({
 }: GradientButtonProps) {
   const scale = useRef(new Animated.Value(1)).current;
 
-  const bg =
+  const gradient =
     variant === "success"
-      ? colors.success
+      ? colors.gradientSuccess
       : variant === "danger"
-        ? colors.danger
-        : colors.primary;
+        ? colors.gradientDanger
+        : colors.gradientPrimary;
 
   const onPressIn = () => {
     Animated.spring(scale, {
@@ -55,25 +55,28 @@ export function GradientButton({
   return (
     <Animated.View style={[{ transform: [{ scale }] }, style]}>
       <TouchableOpacity
-        activeOpacity={0.85}
+        activeOpacity={0.9}
         disabled={disabled || loading}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
-        style={[
-          btnStyles.button,
-          { backgroundColor: bg, opacity: disabled ? 0.4 : 1 },
-          shadows.button,
-        ]}
+        style={[{ opacity: disabled ? 0.4 : 1, borderRadius: radii.md }, shadows.button]}
         {...rest}
       >
-        {loading ? (
-          <Text style={btnStyles.text}>⏳</Text>
-        ) : (
-          <Text style={btnStyles.text}>
-            {icon ? `${icon}  ` : ""}
-            {title}
-          </Text>
-        )}
+        <LinearGradient
+          colors={gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={btnStyles.button}
+        >
+          {loading ? (
+            <Text style={btnStyles.text}>⏳</Text>
+          ) : (
+            <Text style={btnStyles.text}>
+              {icon ? `${icon}  ` : ""}
+              {title}
+            </Text>
+          )}
+        </LinearGradient>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -113,18 +116,21 @@ export function GlassCard({
   style,
 }: GlassCardProps) {
   return (
-    <View
+    <LinearGradient
+      colors={colors.gradientCard}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
       style={[
         cardStyles.glass,
         glow && {
-          borderColor: glowColor + "40",
+          borderColor: glowColor + "55",
           ...shadows.glow,
         },
         style,
       ]}
     >
       {children}
-    </View>
+    </LinearGradient>
   );
 }
 
