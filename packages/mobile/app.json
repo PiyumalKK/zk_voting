@@ -20,7 +20,8 @@
     },
     "android": {
       "package": "lk.gov.slvote",
-      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"]
+      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT", "INTERNET"],
+      "usesCleartextTraffic": true
     },
     "plugins": [
       "expo-router",
