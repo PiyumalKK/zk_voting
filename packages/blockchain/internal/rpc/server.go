@@ -38,6 +38,11 @@ type ServerConfig struct {
 	// unchanged. In BFT mode cmd/node passes the consensus engine. See
 	// proposer.go.
 	Writer Proposer
+	// Zk, when non-nil, registers the additive zk_ namespace
+	// (zk_getCommitSeals, zk_consensusStatus). nil in solo mode, where those
+	// methods answer -32601 because they were never registered — the same
+	// "gated by not existing" approach DEV_RPC uses.
+	Zk *ZkService
 }
 
 // NewJSONRPCServer builds a *gethrpc.Server with the eth/net/web3
@@ -89,6 +94,16 @@ func NewJSONRPCServer(seq *chain.Sequencer, cfg ServerConfig) (*gethrpc.Server, 
 	}
 	if err := srv.RegisterName("web3", NewWeb3Service(cfg.ClientVersionMode)); err != nil {
 		return nil, fmt.Errorf("register web3 namespace: %w", err)
+	}
+
+	// The zk_ namespace is purely additive and read-only: it publishes the
+	// commit certificates and the engine's live state. Nothing in eth_ moves
+	// or changes shape because of it, which is the whole point of putting
+	// consensus data in a namespace of this chain's own.
+	if cfg.Zk != nil {
+		if err := srv.RegisterName("zk", cfg.Zk); err != nil {
+			return nil, fmt.Errorf("register zk namespace: %w", err)
+		}
 	}
 
 	// M07's dev namespaces are gated *by not existing*: when DEV_RPC is

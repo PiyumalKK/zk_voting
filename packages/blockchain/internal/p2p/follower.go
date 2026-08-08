@@ -50,6 +50,15 @@ type FollowerConfig struct {
 	// PullLimit is how many blocks one catch-up request asks for; zero means
 	// DefaultPullLimit.
 	PullLimit int
+	// SyncSeals, when set, fetches the commit certificates for a range of
+	// blocks that were just applied. nil in solo mode, where no certificates
+	// exist and the whole step is skipped.
+	//
+	// Its errors are logged and ignored on purpose. A block's validity is
+	// established by re-execution, never by its seals, so a peer with a
+	// truncated seal store must not be able to stop this node from syncing —
+	// that would turn a cosmetic gap in the audit trail into an outage.
+	SyncSeals func(ctx context.Context, from, to uint64) error
 }
 
 // FollowerStatus is what /health reports on a replica (M10 deliverable 3).
@@ -86,6 +95,10 @@ type Follower struct {
 
 	primaryHeight atomic.Uint64
 	contacted     atomic.Bool
+
+	// syncSeals fetches commit certificates for freshly applied blocks; nil
+	// in solo mode.
+	syncSeals func(ctx context.Context, from, to uint64) error
 }
 
 // NewFollower validates cfg and builds a Follower.
@@ -115,6 +128,7 @@ func NewFollower(cfg FollowerConfig) (*Follower, error) {
 		pollInterval: poll,
 		pullLimit:    limit,
 		kick:         make(chan struct{}, 1),
+		syncSeals:    cfg.SyncSeals,
 	}, nil
 }
 
@@ -217,6 +231,18 @@ func (f *Follower) CatchUp(ctx context.Context) error {
 			return fmt.Errorf("catch-up made no progress: still at block %d after applying %d block(s)", after, len(resp.Blocks))
 		}
 		f.noteLocalProgress(after)
+
+		// Certificates follow the blocks they belong to. Deliberately after
+		// the progress check and deliberately non-fatal: the blocks are
+		// already verified and applied, and failing here would discard that
+		// work over a record the chain's correctness does not depend on.
+		if f.syncSeals != nil {
+			if err := f.syncSeals(ctx, local+1, after); err != nil {
+				log.Debug().Err(err).
+					Uint64("from", local+1).Uint64("to", after).
+					Msg("could not fetch commit certificates for freshly synced blocks; the blocks themselves are verified and applied")
+			}
+		}
 	}
 }
 

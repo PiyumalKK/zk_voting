@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/rs/zerolog/log"
 
 	"zk-blockchain/internal/chain"
 	"zk-blockchain/internal/config"
+	"zk-blockchain/internal/consensus"
 )
 
 // maxPushBodyBytes caps a pushed block's encoded size. A block on this chain
@@ -43,6 +45,23 @@ type BlockApplier interface {
 	ApplyBlock(block *types.Block) error
 }
 
+// ConsensusReceiver accepts an inbound BFT consensus message. The
+// implementation is *consensus.Engine, whose Deliver is non-blocking, so a
+// busy engine never turns into slow HTTP responses for peers.
+//
+// It is an interface here purely to keep the dependency one-way: internal/p2p
+// imports internal/consensus for the message type, and internal/consensus
+// must never import internal/p2p.
+type ConsensusReceiver interface {
+	Deliver(msg *consensus.SignedMessage)
+}
+
+// SealReader serves stored commit certificates to a validator that fell
+// behind. *consensus.Store satisfies it.
+type SealReader interface {
+	Get(height uint64, hash common.Hash) (*consensus.CommitSeals, error)
+}
+
 // HandlerConfig configures NewHandler.
 type HandlerConfig struct {
 	// Role decides whether pushes are accepted. A primary serves reads and
@@ -59,13 +78,24 @@ type HandlerConfig struct {
 	// MaxPullLimit caps how many blocks one /p2p/blocks response may carry.
 	// Zero means MaxPullLimit.
 	MaxPullLimit int
+	// Consensus receives BFT consensus messages. nil in solo mode, in which
+	// case /p2p/consensus is not registered at all — the same "gated by not
+	// existing" approach DEV_RPC uses (see internal/rpc/dev.go), and stronger
+	// than a runtime flag check: a solo node has no code path that can reach
+	// the state machine.
+	Consensus ConsensusReceiver
+	// Seals serves commit certificates. nil in solo mode, where there are
+	// none.
+	Seals SealReader
 }
 
 type handler struct {
-	role     config.Role
-	chain    BlockStore
-	applier  BlockApplier
-	maxLimit int
+	role      config.Role
+	chain     BlockStore
+	applier   BlockApplier
+	maxLimit  int
+	consensus ConsensusReceiver
+	seals     SealReader
 }
 
 // NewHandler builds the P2P HTTP handler. It is an ordinary http.Handler
@@ -88,12 +118,27 @@ func NewHandler(cfg HandlerConfig) (http.Handler, error) {
 		limit = MaxPullLimit
 	}
 
-	h := &handler{role: cfg.Role, chain: cfg.Chain, applier: cfg.Applier, maxLimit: limit}
+	h := &handler{
+		role:      cfg.Role,
+		chain:     cfg.Chain,
+		applier:   cfg.Applier,
+		maxLimit:  limit,
+		consensus: cfg.Consensus,
+		seals:     cfg.Seals,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(PathHead, h.handleHead)
 	mux.HandleFunc(PathBlocks, h.handleBlocks)
 	mux.HandleFunc(PathBlock, h.handleBlock)
+	// Registered only under consensus, so a solo node answers 404 for these
+	// exactly as it would for a path that was never written.
+	if h.consensus != nil {
+		mux.HandleFunc(PathConsensus, h.handleConsensus)
+	}
+	if h.seals != nil {
+		mux.HandleFunc(PathCommitSeals, h.handleCommitSeals)
+	}
 	return mux, nil
 }
 
@@ -182,6 +227,118 @@ func (h *handler) handleBlocks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.Blocks = append(resp.Blocks, msg)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleConsensus answers POST /p2p/consensus — one signed BFT message from
+// a peer validator.
+//
+// It does the minimum and returns: decode the envelope, check its shape, hand
+// it to the engine, answer 202. In particular it performs **no cryptography**.
+// Signature recovery happens on the engine's own goroutine, after the message
+// has passed the cheap height filter, so a peer cannot make this node spend
+// ECDSA recoveries on messages for heights it does not care about — and
+// cannot make an HTTP handler goroutine do unbounded work at all.
+//
+// 202 Accepted rather than 200 OK is the honest status: the message has been
+// queued for the state machine, and whether it changes anything is not known
+// when this returns and is not the sender's business.
+func (h *handler) handleConsensus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, CodeMalformed, "POST only")
+		return
+	}
+	if h.consensus == nil {
+		writeError(w, http.StatusForbidden, CodeNotAValidator,
+			"this node is not running BFT consensus (CONSENSUS_MODE is not bft)")
+		return
+	}
+
+	var wire consensus.WireMessage
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPushBodyBytes)).Decode(&wire); err != nil {
+		writeError(w, http.StatusBadRequest, CodeMalformed, fmt.Sprintf("decoding the request body: %v", err))
+		return
+	}
+	msg, err := wire.Decode()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeMalformed, err.Error())
+		return
+	}
+
+	h.consensus.Deliver(msg)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleCommitSeals answers GET /p2p/commitseals?from=N&to=M — the
+// certificates for a range of finalized blocks, so a validator catching up
+// can fetch the seals alongside the blocks.
+//
+// Blocks with no recorded certificate are omitted rather than reported as an
+// error. A block's validity never depended on its seals — that is established
+// by re-execution, in replay.go — so a node whose peer has a truncated seal
+// store must still be able to sync. Refusing would turn a cosmetic gap in the
+// audit trail into an outage.
+func (h *handler) handleCommitSeals(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, CodeMalformed, "GET only")
+		return
+	}
+	if h.seals == nil {
+		writeError(w, http.StatusForbidden, CodeNotAValidator,
+			"this node does not record commit certificates (CONSENSUS_MODE is not bft)")
+		return
+	}
+
+	from, err := parseUintQuery(r, "from", 1)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeMalformed, err.Error())
+		return
+	}
+	if from == 0 {
+		from = 1 // genesis is derived locally and has no certificate
+	}
+
+	head, _, err := h.chain.HeadInfo()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, CodeInternal, err.Error())
+		return
+	}
+
+	to, err := parseUintQuery(r, "to", head)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeMalformed, err.Error())
+		return
+	}
+	if to > head {
+		to = head
+	}
+	// The same bound /p2p/blocks uses, for the same reason: one request must
+	// not be able to make this node buffer an unbounded slice of the chain.
+	if to >= from && to-from+1 > uint64(h.maxLimit) {
+		to = from + uint64(h.maxLimit) - 1
+	}
+
+	resp := SealsResponse{Head: head, Seals: []SealsForBlock{}}
+	for n := from; n <= to; n++ {
+		block, err := h.chain.BlockByNumber(n)
+		if err != nil {
+			continue // a gap in this node's chain is not this endpoint's problem
+		}
+		stored, err := h.seals.Get(n, block.Hash())
+		if err != nil || stored == nil {
+			continue
+		}
+		entry := SealsForBlock{
+			Number:    n,
+			BlockHash: block.Hash(),
+			Round:     stored.Round,
+			Seals:     make([]hexutil.Bytes, 0, len(stored.Seals)),
+		}
+		for _, seal := range stored.Seals {
+			entry.Seals = append(entry.Seals, seal)
+		}
+		resp.Seals = append(resp.Seals, entry)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

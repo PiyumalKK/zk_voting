@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
+
+	"zk-blockchain/internal/consensus"
 )
 
 // DefaultClientTimeout bounds a single P2P request. It has to comfortably
@@ -136,6 +138,29 @@ func (c *Client) PushBlock(ctx context.Context, block *types.Block) (PushRespons
 
 	var out PushResponse
 	err = c.do(ctx, http.MethodPost, PathBlock, body, &out)
+	return out, err
+}
+
+// SendConsensus delivers one signed BFT message to the peer.
+//
+// It reports only whether the message left this node, because that is all the
+// caller can act on: the peer answers 202 the moment it has queued the
+// message, and what its state machine then does is not observable from here
+// and is not this node's business.
+func (c *Client) SendConsensus(ctx context.Context, msg *consensus.SignedMessage) error {
+	body, err := json.Marshal(msg.Wire())
+	if err != nil {
+		return fmt.Errorf("marshal %s for height %d: %w", msg.Type, msg.Height, err)
+	}
+	return c.do(ctx, http.MethodPost, PathConsensus, body, nil)
+}
+
+// CommitSeals pulls the commit certificates for blocks in [from, to].
+func (c *Client) CommitSeals(ctx context.Context, from, to uint64) (SealsResponse, error) {
+	path := PathCommitSeals + "?from=" + strconv.FormatUint(from, 10) + "&to=" + strconv.FormatUint(to, 10)
+
+	var out SealsResponse
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
 

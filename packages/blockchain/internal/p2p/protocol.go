@@ -30,6 +30,16 @@ const (
 	PathBlock  = "/p2p/block"
 	PathBlocks = "/p2p/blocks"
 	PathHead   = "/p2p/head"
+
+	// PathConsensus receives one signed BFT consensus message
+	// (CONSENSUS_MODE=bft). Registered only on a validator; a solo node does
+	// not serve it, so a stray consensus message to a solo cluster gets a 404
+	// rather than being quietly accepted.
+	PathConsensus = "/p2p/consensus"
+	// PathCommitSeals serves the commit certificates for a range of blocks,
+	// so a validator that fell behind can fetch the seals alongside the
+	// blocks it pulls from /p2p/blocks.
+	PathCommitSeals = "/p2p/commitseals"
 )
 
 // DefaultPullLimit is how many blocks one catch-up request asks for when the
@@ -71,6 +81,11 @@ const (
 	// CodeInternal: this node failed for reasons of its own (unreadable
 	// database, most likely). Not a judgement about the block.
 	CodeInternal = "internal"
+	// CodeNotAValidator: a consensus message arrived at a node that is not
+	// running consensus, or the endpoint was reached on a solo node. Distinct
+	// from CodeRefused so an operator can tell "wrong role" from "wrong
+	// consensus mode" — the likeliest mistake during a rollout.
+	CodeNotAValidator = "not-a-validator"
 )
 
 // BlockMessage is one block on the wire: its number, and its canonical RLP
@@ -131,6 +146,24 @@ type BlocksResponse struct {
 type PushResponse struct {
 	Status string `json:"status"`
 	Number uint64 `json:"number"`
+}
+
+// SealsResponse is GET /p2p/commitseals?from=&to=. Blocks with no recorded
+// certificate are simply absent from Seals rather than present-and-empty: a
+// missing certificate is a normal state (blocks sealed before consensus was
+// enabled have none) and must not be confused with "this block was finalized
+// by nobody".
+type SealsResponse struct {
+	Head  uint64          `json:"head"`
+	Seals []SealsForBlock `json:"seals"`
+}
+
+// SealsForBlock is one block's commit certificate on the wire.
+type SealsForBlock struct {
+	Number    uint64          `json:"number"`
+	BlockHash common.Hash     `json:"blockHash"`
+	Round     uint32          `json:"round"`
+	Seals     []hexutil.Bytes `json:"seals"`
 }
 
 // ErrorResponse is the body of every non-2xx P2P response.

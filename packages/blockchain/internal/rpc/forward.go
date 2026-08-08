@@ -78,11 +78,32 @@ func ShouldForward(method string) bool {
 	return false
 }
 
-// Forwarder proxies a JSON-RPC request to the primary and copies the answer
+// Forwarder proxies a JSON-RPC request to another node and copies the answer
 // back unchanged.
+//
+// It has two shapes, and the difference between them is not merely where the
+// request goes but what happens when it cannot get there:
+//
+//	static (solo)   target is fixed at construction (PRIMARY_RPC_URL). An
+//	                unreachable primary is reported as -32603 and the request
+//	                is *never* served locally: on a single-sequencer chain a
+//	                replica that answered a write itself would fork the
+//	                cluster.
+//	dynamic (bft)   resolve names the current proposer, which changes with
+//	                every height and every round change, so it cannot be
+//	                captured at construction. An unreachable proposer falls
+//	                back to *local* handling, because under consensus every
+//	                validator is a legitimate entry point — the local engine
+//	                queues the request and a round change carries it. This is
+//	                what makes forwarding a latency optimisation rather than a
+//	                correctness requirement, and it is why killing the current
+//	                proposer does not stop writes.
 type Forwarder struct {
 	target string
-	client *http.Client
+	// resolve is nil for a static forwarder. When set, it returns the URL to
+	// forward to and false when this node should handle the request itself.
+	resolve func() (string, bool)
+	client  *http.Client
 }
 
 // NewForwarder builds a forwarder pointed at the primary's public JSON-RPC
@@ -101,15 +122,63 @@ func NewForwarder(primaryRPCURL string, timeout time.Duration) (*Forwarder, erro
 	return &Forwarder{target: parsed.String(), client: &http.Client{Timeout: timeout}}, nil
 }
 
+// NewDynamicForwarder builds a forwarder whose target is resolved per
+// request, for BFT mode: resolve returns the current proposer's JSON-RPC URL,
+// and false when this node is the proposer or the proposer's address is not
+// known.
+//
+// resolve returning false is not an error. It means "handle this here", which
+// under consensus is always a valid answer — see the type's doc comment.
+func NewDynamicForwarder(resolve func() (string, bool), timeout time.Duration) *Forwarder {
+	if timeout <= 0 {
+		timeout = DefaultForwardTimeout
+	}
+	return &Forwarder{resolve: resolve, client: &http.Client{Timeout: timeout}}
+}
+
 // Target reports where writes are being sent — used in the startup log,
 // where "which primary" is the first thing to check when a replica's writes
-// fail.
-func (f *Forwarder) Target() string { return f.target }
+// fail. A dynamic forwarder has no fixed target and reports the proposer it
+// would use right now.
+func (f *Forwarder) Target() string {
+	if f.resolve == nil {
+		return f.target
+	}
+	if target, ok := f.resolve(); ok {
+		return target
+	}
+	return "(this node)"
+}
+
+// dynamic reports whether an unreachable target may fall back to local
+// handling.
+func (f *Forwarder) dynamic() bool { return f.resolve != nil }
+
+// resolveTarget picks the URL for this request, and reports false when the
+// request should be handled locally.
+func (f *Forwarder) resolveTarget() (string, bool) {
+	if f.resolve == nil {
+		return f.target, true
+	}
+	return f.resolve()
+}
 
 // forward proxies one request body and copies status, content type and body
 // back to the client.
-func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, body []byte) {
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, f.target, bytes.NewReader(body))
+//
+// local is used only by a dynamic forwarder, and only when the target cannot
+// be reached — see the Forwarder doc comment for why a static one must never
+// fall back.
+func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, body []byte, local http.Handler) {
+	target, ok := f.resolveTarget()
+	if !ok {
+		// Dynamic only: this node is the proposer, or the proposer's RPC URL
+		// is not configured. Either way it handles the request itself.
+		local.ServeHTTP(w, r)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		writeRPCTransportError(w, fmt.Sprintf("building the forwarded request: %v", err))
 		return
@@ -118,12 +187,25 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, body []byte)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		// The primary being unreachable is this node's problem to report, and
-		// it must be reported as a JSON-RPC error — viem and ethers parse the
-		// body, and an HTTP 502 with an HTML body surfaces to a voter as an
-		// unintelligible client-side exception.
-		log.Error().Err(err).Str("primary", f.target).Msg("forwarding a write to the primary failed")
-		writeRPCTransportError(w, fmt.Sprintf("cannot reach the sequencer at %s: %v", f.target, err))
+		if f.dynamic() {
+			// The proposer is down. Under consensus that is a survivable,
+			// expected state — one validator is allowed to fail — so this
+			// node takes the request itself: its engine queues it, the round
+			// times out, the proposership rotates, and the transaction lands
+			// one round later. Reporting an error here instead is what would
+			// let a single dead validator stop the election.
+			log.Warn().Err(err).Str("proposer", target).
+				Msg("the current proposer is unreachable; handling this write locally and letting a round change carry it")
+			local.ServeHTTP(w, r)
+			return
+		}
+		// Static (solo): the primary being unreachable is this node's problem
+		// to report, and it must be reported as a JSON-RPC error — viem and
+		// ethers parse the body, and an HTTP 502 with an HTML body surfaces
+		// to a voter as an unintelligible client-side exception. Serving the
+		// write locally is not an option: it would fork the cluster.
+		log.Error().Err(err).Str("primary", target).Msg("forwarding a write to the primary failed")
+		writeRPCTransportError(w, fmt.Sprintf("cannot reach the sequencer at %s: %v", target, err))
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -201,7 +283,7 @@ func NewForwardingHandler(local http.Handler, forwarder *Forwarder) http.Handler
 		r.ContentLength = int64(len(body))
 
 		if bodyNeedsForwarding(body) {
-			forwarder.forward(w, r, body)
+			forwarder.forward(w, r, body, local)
 			return
 		}
 		local.ServeHTTP(w, r)
