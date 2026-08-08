@@ -17,6 +17,15 @@
     group: ubuntu
     recurse: yes
 
+# Persistent state that must survive checkout wipes: GN officer accounts,
+# relay audit log, and the deployed contract addresses.
+- name: Ensure persistent state dir
+  file:
+    path: /opt/zk-voting-state
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+
 - name: Create .env.local
   template:
     src: env.local.j2
@@ -69,14 +78,6 @@
 # every deploy). Web-only deploys restore this so their build matches the LIVE
 # chain instead of the stale addresses committed in git (addresses drift on
 # every --reset because the deployer nonce keeps climbing).
-- name: Ensure persistent contract-state dir
-  file:
-    path: /opt/zk-voting-state
-    state: directory
-    owner: ubuntu
-    group: ubuntu
-  when: redeploy_contracts | default(false) | bool
-
 - name: Save deployed addresses to persistent store
   copy:
     src: /opt/zk-voting/packages/nextjs/contracts/deployedContracts.ts
