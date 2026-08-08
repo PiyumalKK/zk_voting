@@ -17,7 +17,7 @@
     distinguished_name = req_distinguished_name
     [req_distinguished_name]
     [v3_req]
-    subjectAltName = IP:{{ node1_priv }},IP:{{ node2_priv }},IP:{{ node3_priv }}
+    subjectAltName = IP:{{ node_priv_csv.split(',') | join(',IP:') }}
     EOF
 
     openssl genrsa -out /tmp/cluster.key 2048
@@ -56,4 +56,19 @@
     src: "/tmp/ansible_cluster.key"
     dest: "/opt/zk-voting/packages/blockchain/data_3001/certs/server.key"
     owner: ubuntu
+  when: inventory_hostname != 'node1'
+
+# The blockchain role started zk-node before certs existed; a clustered node
+# (PEERS/replica) needs the cert to open its mTLS P2P listener. Restart now that
+# the shared cert is in place so node1 (primary) comes up before its replicas.
+- name: Restart primary node first
+  systemd:
+    name: zk-node
+    state: restarted
+  when: inventory_hostname == 'node1'
+
+- name: Restart replica nodes
+  systemd:
+    name: zk-node
+    state: restarted
   when: inventory_hostname != 'node1'

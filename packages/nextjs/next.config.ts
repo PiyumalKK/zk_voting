@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   devIndicators: false,
   output: "standalone",
+  // Serve /public images directly instead of via the /_next/image optimizer,
+  // which requires `sharp` and breaks images on the standalone EC2 server.
+  images: {
+    unoptimized: true,
+  },
   typescript: {
     ignoreBuildErrors: process.env.NEXT_PUBLIC_IGNORE_BUILD_ERROR === "true",
   },

@@ -49,14 +49,16 @@
     name: nginx
     state: present
 
-- name: Configure nginx (path rewrite /chain-api/* -> /*)
+- name: Configure nginx (path rewrite /chain-api -> /)
   copy:
     dest: /etc/nginx/sites-available/chain
     content: |
       server {
           listen 80;
-          location /chain-api/ {
-              rewrite ^/chain-api/(.*) /$1 break;
+          # Matches bare /chain-api AND /chain-api/... — strips the prefix with
+          # no 301 redirect (viem POSTs don't follow redirects).
+          location /chain-api {
+              rewrite ^/chain-api/?(.*)$ /$1 break;
               proxy_pass http://127.0.0.1:3001;
               proxy_set_header Host $host;
           }

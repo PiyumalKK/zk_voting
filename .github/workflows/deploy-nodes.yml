@@ -1,9 +1,9 @@
-name: Deploy Application (Full)
+name: Deploy Blockchain Nodes Only
 
-# Full deploy: blockchain nodes + web app together, on a fresh chain.
-# For routine updates use the scoped workflows instead:
-#   • "Deploy Web Server Only"        → UI/app change, nodes untouched
-#   • "Deploy Blockchain Nodes Only"  → node change, web untouched
+# Reconfigures/redeploys ONLY the blockchain node servers (Go node + nginx + certs).
+# The web server is left completely untouched.
+# NOTE: This restarts nodes and can reset chain data — do NOT run this for a
+# routine web/UI change. Use "Deploy Web Server Only" for that.
 
 on:
   workflow_dispatch:
@@ -17,8 +17,6 @@ jobs:
       node2_ip: ${{ steps.ips.outputs.node2 }}
       node3_ip: ${{ steps.ips.outputs.node3 }}
       node4_ip: ${{ steps.ips.outputs.node4 }}
-      web_ip: ${{ steps.ips.outputs.web }}
-      inventory: ${{ steps.inv.outputs.content }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -41,17 +39,11 @@ jobs:
           echo "node2=$(terraform output -json node_public_ips | jq -r '.[1]')" >> $GITHUB_OUTPUT
           echo "node3=$(terraform output -json node_public_ips | jq -r '.[2]')" >> $GITHUB_OUTPUT
           echo "node4=$(terraform output -json node_public_ips | jq -r '.[3]')" >> $GITHUB_OUTPUT
-          echo "web=$(terraform output -raw web_public_ip)" >> $GITHUB_OUTPUT
       - name: Generate inventory
-        id: inv
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: |
-          python infra/scripts/gen_inventory.py infra/terraform > infra/ansible/inventory.yml
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat infra/ansible/inventory.yml >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+        run: python infra/scripts/gen_inventory.py infra/terraform > infra/ansible/inventory.yml
       - uses: actions/upload-artifact@v4
         with:
           name: inventory
@@ -73,34 +65,14 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
           chmod 400 ~/.ssh/zk-voting-key.pem
-      # All 3 nodes in one play so the fetch→copy cert distribution works on the same runner
+      # --limit nodes → only blockchain hosts; the web play is skipped entirely
       - name: Deploy to all nodes
         working-directory: infra/ansible
         run: ansible-playbook playbook.yml -i inventory.yml --limit nodes -v
 
-  deploy-web:
-    name: Deploy Web Server
-    needs: inventory
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install ansible
-      - uses: actions/download-artifact@v4
-        with:
-          name: inventory
-          path: infra/ansible/
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
-          chmod 400 ~/.ssh/zk-voting-key.pem
-      - name: Deploy to Web Server
-        working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml --limit webserver -e "redeploy_contracts=true" -v
-
   health-check:
     name: Health Check
-    needs: [deploy-nodes, deploy-web]
+    needs: [inventory, deploy-nodes]
     runs-on: ubuntu-latest
     steps:
       - name: Check all nodes
@@ -113,7 +85,3 @@ jobs:
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.node3_ip }}:3001/health || echo "NOT READY"
           echo "=== Node 4 ==="
           curl -sf --max-time 10 http://${{ needs.inventory.outputs.node4_ip }}:3001/health || echo "NOT READY"
-          echo "=== Web ==="
-          curl -sf --max-time 10 http://${{ needs.inventory.outputs.web_ip }}:3000 | head -c 100 || echo "NOT READY"
-          echo ""
-          echo "✅ ALB URL: http://zk-voting-alb-712299694.ap-south-1.elb.amazonaws.com"
