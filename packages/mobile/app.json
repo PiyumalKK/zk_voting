@@ -20,8 +20,11 @@
     },
     "android": {
       "package": "lk.gov.slvote",
-      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT", "INTERNET"],
-      "usesCleartextTraffic": true
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "INTERNET"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -30,6 +33,14 @@
         "expo-local-authentication",
         {
           "faceIDPermission": "SL Vote uses Face ID to protect your voting key."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
         }
       ]
     ],
