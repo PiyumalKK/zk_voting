@@ -35,6 +35,9 @@
 # Contracts MUST be deployed before the Next.js build: the web app imports
 # deployedContracts.ts (addresses) at build time. Target the PRIMARY node (node1)
 # — replicas forward writes anyway, but the primary is where blocks are sealed.
+# Gated by `redeploy_contracts`: a plain web/UI update leaves this OFF so the
+# existing on-chain election state (votes, registrations) is preserved. The full
+# deploy sets it true to lay down fresh contracts on a clean chain.
 - name: Wait for primary blockchain node RPC
   uri:
     url: "http://{{ node1_ip }}:3001/health"
@@ -43,6 +46,7 @@
   retries: 30
   delay: 5
   until: node_health.status == 200
+  when: redeploy_contracts | default(false) | bool
 
 - name: Deploy smart contracts to blockchain (primary node)
   shell: yarn deploy --network custom --reset
@@ -54,10 +58,12 @@
     CUSTOM_RPC_URL: "http://{{ node1_ip }}:3001"
     CUSTOM_CHAIN_ID: "9494"
   register: deploy_output
+  when: redeploy_contracts | default(false) | bool
 
 - name: Show contract deployment result
   debug:
     var: deploy_output.stdout_lines
+  when: redeploy_contracts | default(false) | bool
 
 - name: Build Next.js (standalone output)
   shell: yarn build

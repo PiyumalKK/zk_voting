@@ -1,0 +1,79 @@
+name: Deploy Web Server Only
+
+# Updates ONLY the Next.js web application (contracts + app).
+# Blockchain nodes are left completely untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      redeploy_contracts:
+        description: "Redeploy smart contracts (WIPES all votes/registrations). Leave false for a normal UI/app update."
+        type: boolean
+        default: false
+
+jobs:
+  inventory:
+    name: Generate Inventory
+    runs-on: ubuntu-latest
+    outputs:
+      web_ip: ${{ steps.ips.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+      - name: Terraform Init
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init
+      - name: Get IPs
+        id: ips
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: echo "web=$(terraform output -raw web_public_ip)" >> $GITHUB_OUTPUT
+      - name: Generate inventory
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: python infra/scripts/gen_inventory.py infra/terraform > infra/ansible/inventory.yml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/inventory.yml
+
+  deploy-web:
+    name: Deploy Web Server
+    needs: inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install ansible
+      - uses: actions/download-artifact@v4
+        with:
+          name: inventory
+          path: infra/ansible/
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
+          chmod 400 ~/.ssh/zk-voting-key.pem
+      # --limit webserver → only the web host; blockchain plays are skipped entirely
+      - name: Deploy to Web Server
+        working-directory: infra/ansible
+        run: ansible-playbook playbook.yml -i inventory.yml --limit webserver -e "redeploy_contracts=${{ inputs.redeploy_contracts }}" -v
+
+  health-check:
+    name: Health Check
+    needs: [inventory, deploy-web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check web
+        run: |
+          echo "=== Web ==="
+          curl -sf --max-time 10 http://${{ needs.inventory.outputs.web_ip }}:3000 | head -c 100 || echo "NOT READY"
+          echo ""
+          echo "✅ ALB URL: http://zk-voting-alb-1406750063.ap-south-1.elb.amazonaws.com"
