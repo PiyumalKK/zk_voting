@@ -1,5 +1,11 @@
 # AWS Deployment Steps
 
+> **Switching the blockchain nodes to BFT consensus?** That is a one-time
+> rollout with its own prerequisites (four validator keys, four new secrets)
+> and two things that will trip you up — the servers clone `Piyumal` rather
+> than your branch, and deploying the nodes wipes the chain. Follow
+> [`DEPLOY-BFT.md`](DEPLOY-BFT.md) instead of this file.
+
 ## Prerequisites
 
 1. **AWS Setup:**

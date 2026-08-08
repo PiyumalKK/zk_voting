@@ -418,8 +418,15 @@ the cluster gate is the authority on the deployment actually working.
 
 ## 11. Demonstrating it on AWS
 
-The whole point is that these are observable on real machines. Deploy with the
-**Deploy Blockchain Nodes Only** workflow, then:
+The whole point is that these are observable on real machines.
+
+> For the one-time rollout itself — generating validator keys, the four
+> repository secrets, and the two things that will trip you up — follow
+> [`infra/DEPLOY-BFT.md`](../../infra/DEPLOY-BFT.md). Use the **Deploy
+> Application (Full)** workflow, not nodes-only: deploying the nodes wipes the
+> chain, so the contracts have to be laid down again in the same run.
+
+Once it is up:
 
 ### One validator down — the election continues
 
