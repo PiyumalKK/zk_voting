@@ -1,0 +1,71 @@
+name: Build Mobile APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  get-alb-url:
+    name: Get ALB URL from Terraform
+    runs-on: ubuntu-latest
+    outputs:
+      alb_dns: ${{ steps.get_url.outputs.alb_dns }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+      - name: Terraform Init
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init
+      - name: Get ALB DNS
+        id: get_url
+        working-directory: infra/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          ALB=$(terraform output -raw alb_dns | sed 's|http://||')
+          echo "alb_dns=$ALB" >> $GITHUB_OUTPUT
+          echo "✅ Using ALB: $ALB"
+
+  build:
+    name: Build Android APK
+    needs: get-alb-url
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+      - name: Inject AWS URLs into eas.json (preview.env is embedded by EAS at build time)
+        run: |
+          cd packages/mobile
+          ALB="${{ needs.get-alb-url.outputs.alb_dns }}"
+          jq --arg api "http://$ALB" --arg rpc "http://$ALB/chain-api" \
+            '.build.preview.env.EXPO_PUBLIC_API_URL = $api
+             | .build.preview.env.EXPO_PUBLIC_RPC_URL = $rpc
+             | .build.preview.env.EXPO_PUBLIC_CHAIN_ID = "9494"' \
+            eas.json > eas.json.tmp && mv eas.json.tmp eas.json
+          echo "✅ eas.json preview.env now points at ALB: $ALB"
+          jq '.build.preview.env' eas.json
+      - name: Install dependencies
+        run: cd packages/mobile && yarn install
+      - name: Build APK
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          cd packages/mobile
+          eas build --platform android --profile preview --non-interactive --no-wait
+      - name: Show build info
+        run: |
+          echo "📱 APK build submitted to EAS!"
+          echo "   Check build status: https://expo.dev/accounts/piyumalkk/projects/sl-vote/builds"
+          echo ""
+          echo "   Production config:"
+          echo "   API: http://${{ needs.get-alb-url.outputs.alb_dns }}"
+          echo "   RPC: http://${{ needs.get-alb-url.outputs.alb_dns }}/chain-api"

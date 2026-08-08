@@ -1,0 +1,184 @@
+---
+- name: Remove old checkout
+  file:
+    path: /opt/zk-voting
+    state: absent
+
+- name: Clone repo
+  git:
+    repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
+    dest: /opt/zk-voting
+    version: "{{ branch | default('Piyumal') }}"
+
+- name: Own by ubuntu
+  file:
+    path: /opt/zk-voting
+    owner: ubuntu
+    group: ubuntu
+    recurse: yes
+
+# Persistent state that must survive checkout wipes: GN officer accounts,
+# relay audit log, and the deployed contract addresses.
+- name: Ensure persistent state dir
+  file:
+    path: /opt/zk-voting-state
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+
+- name: Create .env.local
+  template:
+    src: env.local.j2
+    dest: /opt/zk-voting/packages/nextjs/.env.local
+    owner: ubuntu
+
+- name: Install yarn dependencies (root workspace)
+  shell: yarn install
+  args:
+    chdir: /opt/zk-voting
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    NODE_OPTIONS: "--max-old-space-size=3000"
+
+# Contracts MUST be deployed before the Next.js build: the web app imports
+# deployedContracts.ts (addresses) at build time. Target the PRIMARY node (node1)
+# — replicas forward writes anyway, but the primary is where blocks are sealed.
+# Gated by `redeploy_contracts`: a plain web/UI update leaves this OFF so the
+# existing on-chain election state (votes, registrations) is preserved. The full
+# deploy sets it true to lay down fresh contracts on a clean chain.
+- name: Wait for primary blockchain node RPC
+  uri:
+    url: "http://{{ node1_ip }}:3001/health"
+    status_code: 200
+  register: node_health
+  retries: 30
+  delay: 5
+  until: node_health.status == 200
+  when: redeploy_contracts | default(false) | bool
+
+- name: Deploy smart contracts to blockchain (primary node)
+  shell: yarn deploy --network custom --reset
+  args:
+    chdir: /opt/zk-voting/packages/hardhat
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    CUSTOM_RPC_URL: "http://{{ node1_ip }}:3001"
+    CUSTOM_CHAIN_ID: "9494"
+  register: deploy_output
+  when: redeploy_contracts | default(false) | bool
+
+- name: Show contract deployment result
+  debug:
+    var: deploy_output.stdout_lines
+  when: redeploy_contracts | default(false) | bool
+
+# Persist the freshly-deployed addresses OUTSIDE the checkout (which is wiped on
+# every deploy). Web-only deploys restore this so their build matches the LIVE
+# chain instead of the stale addresses committed in git (addresses drift on
+# every --reset because the deployer nonce keeps climbing).
+- name: Save deployed addresses to persistent store
+  copy:
+    src: /opt/zk-voting/packages/nextjs/contracts/deployedContracts.ts
+    dest: /opt/zk-voting-state/deployedContracts.ts
+    remote_src: true
+    owner: ubuntu
+  when: redeploy_contracts | default(false) | bool
+
+# Web-only deploy (redeploy_contracts=false): reuse the addresses from the last
+# contract deploy so the build points at the live contracts.
+- name: Check for persisted contract addresses
+  stat:
+    path: /opt/zk-voting-state/deployedContracts.ts
+  register: persisted_contracts
+  when: not (redeploy_contracts | default(false) | bool)
+
+- name: Restore deployed addresses from persistent store
+  copy:
+    src: /opt/zk-voting-state/deployedContracts.ts
+    dest: /opt/zk-voting/packages/nextjs/contracts/deployedContracts.ts
+    remote_src: true
+    owner: ubuntu
+  when:
+    - not (redeploy_contracts | default(false) | bool)
+    - persisted_contracts.stat.exists
+
+- name: Build Next.js (standalone output)
+  shell: yarn build
+  args:
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    NODE_OPTIONS: "--max-old-space-size=3000"
+  async: 900
+  poll: 20
+
+# Copy CONTENTS (trailing /.) so an existing dest/public from the standalone
+# build isn't nested into dest/public/public.
+- name: Copy public assets into standalone dir
+  shell:
+    cmd: |
+      set -e
+      dest=.next/standalone/packages/nextjs
+      mkdir -p "$dest/public" "$dest/.next/static"
+      cp -r public/. "$dest/public/"
+      cp -r .next/static/. "$dest/.next/static/"
+      cp .env.local "$dest/.env.local"
+    chdir: /opt/zk-voting/packages/nextjs
+  become_user: ubuntu
+
+- name: Start Next.js standalone with PM2
+  shell: |
+    pm2 delete zk-web 2>/dev/null || true
+    PORT=3000 pm2 start server.js --name zk-web
+    pm2 save
+  args:
+    chdir: /opt/zk-voting/packages/nextjs/.next/standalone/packages/nextjs
+  become_user: ubuntu
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Configure nginx (web proxy with fast health endpoint)
+  copy:
+    dest: /etc/nginx/sites-available/web
+    content: |
+      server {
+          listen 80;
+          proxy_read_timeout 120s;
+          proxy_connect_timeout 10s;
+          location = /nginx-health {
+              return 200 '{"status":"ok"}';
+              add_header Content-Type application/json;
+          }
+          location / {
+              proxy_pass http://127.0.0.1:3000;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
+              proxy_set_header Host $host;
+          }
+      }
+
+- name: Enable nginx site
+  file:
+    src: /etc/nginx/sites-available/web
+    dest: /etc/nginx/sites-enabled/web
+    state: link
+
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Reload nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: Setup PM2 auto-start on boot
+  shell: env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu | grep sudo | bash
+  ignore_errors: yes

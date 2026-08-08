@@ -1,0 +1,100 @@
+---
+# All nodes use NODE_ID=3001 (each on own EC2) — simplifies ALB routing to port 80 via nginx
+
+- name: Remove old checkout
+  file:
+    path: /opt/zk-voting
+    state: absent
+
+- name: Clone repo
+  git:
+    repo: "{{ repo_url | default('https://github.com/PiyumalKK/zk_voting.git') }}"
+    dest: /opt/zk-voting
+    version: "{{ branch | default('Piyumal') }}"
+
+- name: Own by ubuntu
+  file:
+    path: /opt/zk-voting
+    owner: ubuntu
+    group: ubuntu
+    recurse: yes
+
+- name: Build Go binary
+  shell: /snap/bin/go build -o bin/zk-node ./cmd/node
+  args:
+    chdir: /opt/zk-voting/packages/blockchain
+  become_user: ubuntu
+  environment:
+    HOME: /home/ubuntu
+    GOPATH: /home/ubuntu/go
+
+- name: Create data dirs
+  file:
+    path: "/opt/zk-voting/packages/blockchain/data_3001/{{ item }}"
+    state: directory
+    owner: ubuntu
+  loop: [certs, keys]
+
+- name: Generate admin RSA keypair
+  shell: |
+    openssl genrsa -out admin_private.pem 2048
+    openssl rsa -in admin_private.pem -pubout -out data_3001/keys/admin_public.pem
+  args:
+    chdir: /opt/zk-voting/packages/blockchain
+    creates: "/opt/zk-voting/packages/blockchain/data_3001/keys/admin_public.pem"
+  become_user: ubuntu
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Configure nginx (path rewrite /chain-api -> /)
+  copy:
+    dest: /etc/nginx/sites-available/chain
+    content: |
+      server {
+          listen 80;
+          # Matches bare /chain-api AND /chain-api/... — strips the prefix with
+          # no 301 redirect (viem POSTs don't follow redirects).
+          location /chain-api {
+              rewrite ^/chain-api/?(.*)$ /$1 break;
+              proxy_pass http://127.0.0.1:3001;
+              proxy_set_header Host $host;
+          }
+          location /nginx-health {
+              return 200 '{"status":"ok"}';
+              add_header Content-Type application/json;
+          }
+          location / {
+              proxy_pass http://127.0.0.1:3001;
+          }
+      }
+
+- name: Enable nginx site
+  file:
+    src: /etc/nginx/sites-available/chain
+    dest: /etc/nginx/sites-enabled/chain
+    state: link
+
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Reload nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: Template systemd service (NODE_ID=3001, no PEERS)
+  template:
+    src: zk-node.service.j2
+    dest: /etc/systemd/system/zk-node.service
+
+- name: Enable and start zk-node
+  systemd:
+    name: zk-node
+    enabled: yes
+    state: restarted
+    daemon_reload: yes

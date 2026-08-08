@@ -75,8 +75,13 @@ export const buildSessionOptions = (secret: string | undefined, isProduction = f
 };
 
 /** The configured options for this process. Throws if `SESSION_SECRET` is unusable. */
-export const getSessionOptions = (): SessionOptions =>
-  buildSessionOptions(process.env.SESSION_SECRET, process.env.NODE_ENV === "production");
+export const getSessionOptions = (): SessionOptions => {
+  // Cookies are Secure in production by default. Set SESSION_COOKIE_INSECURE=true
+  // when serving over plain HTTP (e.g. an ALB with no TLS), or the browser drops
+  // the Secure cookie and login silently never sticks.
+  const secure = process.env.NODE_ENV === "production" && process.env.SESSION_COOKIE_INSECURE !== "true";
+  return buildSessionOptions(process.env.SESSION_SECRET, secure);
+};
 
 /**
  * Whether this deployment runs against the custom chain.

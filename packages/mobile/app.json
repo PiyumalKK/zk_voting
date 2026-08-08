@@ -20,7 +20,11 @@
     },
     "android": {
       "package": "lk.gov.slvote",
-      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"]
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "INTERNET"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -30,10 +34,24 @@
         {
           "faceIDPermission": "SL Vote uses Face ID to protect your voting key."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "piyumalkk",
+    "extra": {
+      "eas": {
+        "projectId": "b6064d0f-12f9-45d0-9851-808bfc55a900"
+      }
     }
   }
 }

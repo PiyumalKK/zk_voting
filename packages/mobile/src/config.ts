@@ -1,4 +1,4 @@
-/**
+﻿/**
  * App configuration.
  *
  * Every value here is read from `EXPO_PUBLIC_*` at build time, so switching the
@@ -19,26 +19,15 @@
  * one `expo start` prints) so the phone can reach the API and the node.
  */
 
-// Set these to your dev machine's LAN IP when running on a real device.
-const DEV_HOST = "http://192.168.43.186:3000";
-const DEV_RPC = "http://192.168.43.186:8545";
-const DEV_CHAIN_ID = 31337;
+// Dev fallbacks — set EXPO_PUBLIC_* env vars for production (ALB URL) or local dev (LAN IP)
+const DEV_HOST = "http://10.40.252.216:3000";
+const DEV_RPC = "http://10.40.252.216:9545";
+const DEV_CHAIN_ID = 9494;
 
-/**
- * `||`, not `??`: an env var set to the empty string must fall back. `FOO=` in a
- * `.env` file yields `""`, not `undefined`, and `""` would otherwise win.
- */
 function envUrl(value: string | undefined, fallback: string): string {
   return value?.trim() || fallback;
 }
 
-/**
- * A malformed chain id must fall back rather than become `NaN`. viem accepts a
- * `NaN` chain id without complaint and then fails later, somewhere unrelated —
- * transactions get signed for a chain that does not exist and the node rejects
- * them with an error that says nothing about configuration. The same trap was
- * found and fixed on the Next.js side in M11.
- */
 function envChainId(value: string | undefined, fallback: number): number {
   const parsed = Number(value?.trim());
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;

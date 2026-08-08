@@ -1,0 +1,27 @@
+# Ansible variables for ZK Voting deployment
+# These values come from your local .env.local (working configuration)
+
+# Session secret for Next.js iron-session (base64, 32 bytes)
+session_secret: "rRMfEsrP1JONk9hTkt92qbYIsN7lU8bIlTKBmQU7xEs="
+
+# Admin bcrypt password hash (password: admin123)
+# CRITICAL: Use DOUBLE backslashes for Ansible YAML
+admin_password_hash: "\\$2b\\$12\\$CtGZgokkPVopzWbR4enIBOYp2H1aFq099XjbHsgN8fd8X7wHFj2UG"
+
+# Admin relay private key (Hardhat account #0 - dev only!)
+admin_relay_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+# GN officer key encryption key (hex, 32 bytes)
+gn_key_encryption_key: "72395a28dcfa7a922f3585a6daa4392eca5cc55f12c14fc8ab51ffcebf5f4fc9"
+
+# NIC hashing pepper (hex, 64 chars)
+server_pepper: "9b4e7a1f3c8d6e2a5f0b9c7d4e1a8f6c3b5d2e9a7f1c8b4d6e0a3f9c2b7d5e8a1f4c6d9e2b8a0f7c3d5e1a9b6c4d8f2"
+
+# Repository settings
+repo_url: "https://github.com/PiyumalKK/zk_voting.git"
+branch: "Piyumal"
+
+# SSH settings
+ansible_user: ubuntu
+ansible_ssh_private_key_file: "~/.ssh/zk-voting-key.pem"
+ansible_ssh_common_args: "-o StrictHostKeyChecking=no"

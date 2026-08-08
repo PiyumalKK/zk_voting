@@ -1,0 +1,35 @@
+[Unit]
+Description=ZK Voting Node ({{ role | default('primary') }})
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/zk-voting/packages/blockchain
+
+# Ports — must match nginx (/chain-api -> 3001), security groups, and inventory
+Environment=RPC_PORT=3001
+Environment=P2P_PORT=4001
+Environment=DATA_DIR=/opt/zk-voting/packages/blockchain/data_3001
+Environment=CORS_ORIGINS=*
+
+# Shared cluster TLS cert (self-signed; acts as its own CA for mTLS)
+Environment=TLS_CERT=/opt/zk-voting/packages/blockchain/data_3001/certs/server.crt
+Environment=TLS_KEY=/opt/zk-voting/packages/blockchain/data_3001/certs/server.key
+Environment=TLS_CA=/opt/zk-voting/packages/blockchain/data_3001/certs/server.crt
+
+# Role: node1 = primary (sequencer), node2+ = replica (follows node1)
+Environment=ROLE={{ role | default('primary') }}
+{% if role | default('primary') == 'primary' %}
+Environment=PEERS={{ peers | default('') }}
+{% else %}
+Environment=PRIMARY_RPC_URL={{ primary_rpc_url }}
+Environment=REPLICA_PULL_URL={{ replica_pull_url }}
+{% endif %}
+
+ExecStart=/opt/zk-voting/packages/blockchain/bin/zk-node
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
