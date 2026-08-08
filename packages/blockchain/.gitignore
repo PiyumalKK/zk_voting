@@ -6,6 +6,16 @@ data_*/
 # The 3-node cluster's per-node data directories (M10; make run-cluster).
 data-cluster/
 
+# The 4-validator BFT cluster's per-node data directories
+# (CONSENSUS_MODE=bft; make run-bft / make bft-cluster-test). A separate root
+# from data-cluster/ so a BFT run and a solo run can coexist on one machine
+# without either inheriting the other's chain.
+data-cluster-bft/
+
+# Go's temporary build tree, used via GOTMPDIR on machines whose policy
+# blocks executing test binaries out of %TEMP%.
+.gotmp/
+
 # The full-election gate's own chain (M14; make e2e). Separate from data/ so
 # the gate can reset it without destroying the chain M08/M09 built.
 data-e2e/

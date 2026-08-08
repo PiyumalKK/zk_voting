@@ -21,6 +21,11 @@ CERTS_DIR ?= certs
 # The 3-node cluster's data directories live under here, one per node.
 CLUSTER_DATA_DIR ?= data-cluster
 
+# The 4-validator BFT cluster's data directories (CONSENSUS_MODE=bft). A
+# separate root so a BFT run and a solo run can coexist on one machine
+# without either inheriting the other's chain.
+BFT_DATA_DIR ?= data-cluster-bft
+
 # Extra flags passed through to cmd/audit, e.g.
 #   make audit AUDIT_ARGS="-from 1200"
 #   make audit AUDIT_ARGS="-json"
@@ -35,6 +40,7 @@ AUDIT_ARGS ?=
 ifeq ($(OS),Windows_NT)
 BINARY := bin/zk-blockchain-node.exe
 RUN_BINARY := bin\zk-blockchain-node.exe
+BYZANTINE_BINARY := bin/zk-blockchain-node-byzantine.exe
 AUDIT_BINARY := bin/zk-blockchain-audit.exe
 RUN_AUDIT_BINARY := bin\zk-blockchain-audit.exe
 GENCERTS_BINARY := bin/zk-blockchain-gencerts.exe
@@ -42,6 +48,7 @@ RUN_GENCERTS_BINARY := bin\zk-blockchain-gencerts.exe
 else
 BINARY := bin/zk-blockchain-node
 RUN_BINARY := ./bin/zk-blockchain-node
+BYZANTINE_BINARY := bin/zk-blockchain-node-byzantine
 AUDIT_BINARY := bin/zk-blockchain-audit
 RUN_AUDIT_BINARY := ./bin/zk-blockchain-audit
 GENCERTS_BINARY := bin/zk-blockchain-gencerts
@@ -51,6 +58,19 @@ endif
 # Build the node binary.
 build:
 	go build -o $(BINARY) ./cmd/node
+
+# Build a deliberately-misbehaving node for the BFT equivocation demo.
+#
+# *** This binary must never be deployed. *** It is built under the
+# `byzantine` tag, which swaps in a transport that withholds and mangles this
+# node's own proposals so a live cluster can be shown resisting it. The tag
+# guards a file that is not compiled into any other build (cmd/node/byzantine_on.go),
+# and a node built this way announces itself with a CRITICAL log line at
+# startup. Acceptance criterion 5 is already proven in process by
+# internal/consensus's TestEquivocatingProposerCannotFinalizeTwoBlocks; this
+# exists so the same property can be demonstrated on real machines.
+build-byzantine:
+	go build -tags byzantine -o $(BYZANTINE_BINARY) ./cmd/node
 
 # Build the audit binary (M09).
 build-audit:
@@ -249,13 +269,35 @@ block-rlp-test:
 cluster-test: build block-rlp-test
 	cd e2e && node cluster-test.mjs
 
-# Delete the cluster's data directories (all three nodes).
+# Start the 4-validator BFT cluster (CONSENSUS_MODE=bft) — authority :9545,
+# jvp :9555, unp :9565, sjb :9575. Every node is a co-equal writer: point the
+# app at any of them, and the chain survives losing one.
+#
+#   make gen-certs      # once
+#   make run-bft
+run-bft: build
+	cd e2e && node cluster.mjs --bft --reset
+
+# The BFT acceptance gate: four real validator processes, killed and revived.
+#
+# Proves, over real mTLS on real sockets, what
+# internal/consensus/engine_test.go proves in process: every block finalizes
+# with a quorum of distinct signatures; killing any one validator (including
+# the authority) does not stop the election; killing two freezes the height
+# rather than finalizing below quorum; the proposership rotates; a restarted
+# validator re-executes what it missed and votes again; and cmd/audit still
+# passes over the resulting chain.
+bft-cluster-test: build
+	cd e2e && node bft-cluster-test.mjs
+
+# Delete the cluster's data directories (both clusters, every node).
 ifeq ($(OS),Windows_NT)
 reset-cluster:
 	if exist $(CLUSTER_DATA_DIR) rmdir /s /q $(CLUSTER_DATA_DIR)
+	if exist $(BFT_DATA_DIR) rmdir /s /q $(BFT_DATA_DIR)
 else
 reset-cluster:
-	rm -rf $(CLUSTER_DATA_DIR)
+	rm -rf $(CLUSTER_DATA_DIR) $(BFT_DATA_DIR)
 endif
 
 # Recompile e2e/diff/contracts/Probe.sol into its committed artifact. Only

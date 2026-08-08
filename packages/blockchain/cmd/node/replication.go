@@ -8,10 +8,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/rs/zerolog/log"
 
 	"zk-blockchain/internal/chain"
 	"zk-blockchain/internal/config"
+	"zk-blockchain/internal/consensus"
 	"zk-blockchain/internal/p2p"
 	"zk-blockchain/internal/rpc"
 )
@@ -47,17 +49,36 @@ type replication struct {
 	server    *http.Server
 	follower  *p2p.Follower
 	forwarder *rpc.Forwarder
+	// engine is the BFT consensus state machine, or nil in solo mode. When
+	// set it becomes the RPC layer's write path (rpc.Proposer), so a
+	// transaction is committed by a quorum rather than sealed unilaterally.
+	engine *consensus.Engine
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	errs   chan error
 }
 
-// startReplication builds and starts whatever cfg.Role requires. The
-// returned value is never nil; shutdown must be called on it.
-func startReplication(cfg *config.Config, seq *chain.Sequencer) (*replication, error) {
+// startReplication builds and starts whatever cfg requires. The returned
+// value is never nil; shutdown must be called on it.
+//
+// CONSENSUS_MODE=bft takes precedence over the role branches below and is
+// checked first, so the two original shapes are reachable only when consensus
+// is off — which is what makes the flag a real revert path: unset it and this
+// function is byte-for-byte the M10 one.
+func startReplication(cfg *config.Config, seq *chain.Sequencer, db ethdb.Database) (*replication, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &replication{cancel: cancel, errs: make(chan error, 1)}
+
+	if cfg.IsBFT() {
+		engine, err := r.startBFT(ctx, cfg, seq, db)
+		if err != nil {
+			r.shutdownNow()
+			return nil, err
+		}
+		r.engine = engine
+		return r, nil
+	}
 
 	switch cfg.Role {
 	case config.RolePrimary:
@@ -224,6 +245,10 @@ func (r *replication) Forwarder() *rpc.Forwarder {
 }
 
 // ReplicaStatus is the /health status provider, or nil on a primary.
+//
+// A BFT validator has a follower too — it is how a restarted node catches up
+// — so it also reports how far the cluster is ahead of it. That is exactly
+// the question an operator asks after restarting one.
 func (r *replication) ReplicaStatus() rpc.ReplicaStatusProvider {
 	if r == nil || r.follower == nil {
 		return nil
@@ -232,6 +257,27 @@ func (r *replication) ReplicaStatus() rpc.ReplicaStatusProvider {
 		status := r.follower.Status()
 		return status.PrimaryHeight, status.Synced
 	}
+}
+
+// Writer is the RPC layer's write path: the consensus engine in BFT mode, nil
+// otherwise (in which case the Sequencer seals directly, unchanged).
+func (r *replication) Writer() rpc.Proposer {
+	if r == nil || r.engine == nil {
+		// Returning a typed nil here would produce a non-nil interface
+		// holding a nil pointer, and rpc.NewJSONRPCServer's `writer == nil`
+		// check would then take the wrong branch and panic on the first
+		// write. Solo mode must get an untyped nil.
+		return nil
+	}
+	return r.engine
+}
+
+// Engine is the consensus engine, or nil in solo mode.
+func (r *replication) Engine() *consensus.Engine {
+	if r == nil {
+		return nil
+	}
+	return r.engine
 }
 
 // shutdown stops the listener and waits for the background loops.

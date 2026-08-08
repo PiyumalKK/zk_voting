@@ -176,7 +176,22 @@ func NewEngine(cfg Config) (*Engine, error) {
 		cfg.RoundTimeout = 4 * time.Second
 	}
 	if cfg.SubmitTimeout <= 0 {
-		cfg.SubmitTimeout = 3 * cfg.RoundTimeout
+		// Long enough for one full proposer rotation plus slack.
+		//
+		// The happy path takes none of this: rpc.NewDynamicForwarder sends a
+		// write straight to the current proposer, which proposes at once. The
+		// budget is for the case this feature exists to survive — the
+		// proposer is *down*, the forwarder falls back to local handling, and
+		// the transaction has to wait for the proposership to rotate to a node
+		// that holds it. With a flat backoff for the first N rounds that costs
+		// at most N * RoundTimeout; two extra rounds cover the round changes
+		// themselves.
+		//
+		// For the deployed cluster (N=4, ROUND_TIMEOUT_MS=4000) this is 24s,
+		// deliberately under rpc.DefaultForwardTimeout (30s) so the innermost
+		// timeout always fires first and the caller gets a typed JSON-RPC
+		// error rather than a socket hang-up.
+		cfg.SubmitTimeout = cfg.RoundTimeout * time.Duration(cfg.Validators.Size()+2)
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -218,6 +233,16 @@ func (e *Engine) Deliver(msg *SignedMessage) {
 // Run drives the state machine until ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) {
 	e.startHeightFromChain()
+	// Publish before entering the loop, not only after each event. An idle
+	// cluster produces no events — that is the whole point of the quiescence
+	// rule — so a status published only inside the loop would stay at its
+	// zero value until the first transaction arrived. That is not merely a
+	// cosmetic problem: rpc.NewDynamicForwarder reads Proposer from here to
+	// decide where to send a write, and an empty one means "handle it
+	// locally", so every node would keep its own transactions and wait for
+	// the proposership to rotate to it. Found exactly that way, by watching
+	// a four-node cluster round-change past a queued transaction three times.
+	e.publishStatus()
 
 	for {
 		select {
@@ -312,15 +337,31 @@ func (e *Engine) armTimerIfWorkPending() {
 	e.armTimer()
 }
 
+// armTimer starts the round-change timer.
+//
+// The backoff is **flat for the first N rounds and linear after that**, where
+// N is the size of the validator set. The first N rounds are one full
+// rotation — every validator gets exactly one turn — and each deserves the
+// same chance, so escalating during a rotation only makes a dead proposer
+// more expensive to route around. A transaction submitted to a node whose
+// turn has just passed therefore waits at most N * RoundTimeout, which is
+// what SubmitTimeout is sized against.
+//
+// Escalation after a full rotation means something systemic is wrong — a
+// partition, a clock, a misconfiguration — rather than one failed machine, and
+// backing off then is the right response. It is capped so an operator never
+// watches a cluster that looks hung.
 func (e *Engine) armTimer() {
 	e.stopTimer()
-	// Linear backoff. Flat risks two validators round-changing in lockstep
-	// indefinitely; doubling reaches minutes on a chain whose whole election
-	// lasts minutes.
-	d := e.cfg.RoundTimeout * time.Duration(1+e.rs.round)
+
+	d := e.cfg.RoundTimeout
+	if n := uint32(e.vs.Size()); e.rs.round >= n {
+		d = e.cfg.RoundTimeout * time.Duration(1+e.rs.round-n+1)
+	}
 	if d > maxRoundBackoff {
 		d = maxRoundBackoff
 	}
+
 	e.timer = e.cfg.NewTimer(d)
 	e.rs.timerArmed = true
 	e.rs.deadline = e.cfg.Now().Add(d)

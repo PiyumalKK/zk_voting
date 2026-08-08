@@ -36,6 +36,9 @@ export const ROOT = join(here, "..");
 const BINARY = join(ROOT, "bin", process.platform === "win32" ? "zk-blockchain-node.exe" : "zk-blockchain-node");
 const CERTS = join(ROOT, "certs");
 const DATA_ROOT = join(ROOT, "data-cluster");
+// A separate root so a BFT run and a solo run can coexist on one machine
+// without one inheriting the other's chain.
+const BFT_DATA_ROOT = join(ROOT, "data-cluster-bft");
 
 const CHAIN_ID = "9494";
 // The cluster runs with the dev namespaces on: it is a development cluster,
@@ -55,19 +58,82 @@ export const TOPOLOGY = [
 
 const PRIMARY = TOPOLOGY[0];
 
+// --- BFT (CONSENSUS_MODE=bft) -------------------------------------------
+//
+// The four validators of the deployed cluster. Every one is ROLE=primary:
+// there is no replica in a BFT cluster, because a replica cannot propose, so
+// a validator configured as one would hold a key, be counted in the quorum,
+// and never take its turn — leaving the cluster permanently one short.
+//
+// The keys are Hardhat's well-known accounts #0–#3, from the public
+// "test test … junk" mnemonic that ships in Hardhat's own documentation.
+// They are NOT secrets and are used here for the same reason
+// cluster-test.mjs already uses account #0 to sign test transactions: a local
+// cluster needs deterministic identities. Production validator keys come from
+// GitHub Actions secrets, are written to a 0600 file on each host, and never
+// enter this repository — see CONSENSUS.md.
+export const BFT_TOPOLOGY = [
+  {
+    name: "authority",
+    role: "primary",
+    rpcPort: 9545,
+    p2pPort: 9546,
+    key: "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  },
+  {
+    name: "jvp",
+    role: "primary",
+    rpcPort: 9555,
+    p2pPort: 9556,
+    key: "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  },
+  {
+    name: "unp",
+    role: "primary",
+    rpcPort: 9565,
+    p2pPort: 9566,
+    key: "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+    address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+  },
+  {
+    name: "sjb",
+    role: "primary",
+    rpcPort: 9575,
+    p2pPort: 9576,
+    key: "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
+    address: "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+  },
+];
+
+/** VALIDATOR_SET as every validator must see it — same members, same order. */
+function validatorSetEnv(topology) {
+  return topology.map((n) => `${n.name}:${n.address}`).join(",");
+}
+
+const ROUND_TIMEOUT_MS = process.env.BFT_ROUND_TIMEOUT_MS ?? "1500";
+
 /** One node process. */
 export class ClusterNode {
-  constructor(spec, { quiet = false } = {}) {
+  constructor(spec, { quiet = false, topology = TOPOLOGY, dataRoot = DATA_ROOT, binary = BINARY } = {}) {
     this.name = spec.name;
     this.role = spec.role;
+    this.spec = spec;
+    this.topology = topology;
+    this.bft = topology === BFT_TOPOLOGY || Boolean(spec.key);
+    this.binary = binary;
     this.rpcPort = spec.rpcPort;
     this.p2pPort = spec.p2pPort;
     this.rpcUrl = `http://127.0.0.1:${spec.rpcPort}`;
     this.p2pUrl = `https://127.0.0.1:${spec.p2pPort}`;
-    this.dataDir = join(DATA_ROOT, spec.name);
+    this.dataDir = join(dataRoot, spec.name);
     this.quiet = quiet;
     this.proc = null;
     this.exited = null;
+    // A validator reports role "validator" on /health even though it is
+    // configured ROLE=primary, so waitForHealth has to expect that.
+    this.healthRole = this.bft ? "validator" : spec.role;
   }
 
   env() {
@@ -92,7 +158,32 @@ export class ClusterNode {
       PEERS: "",
       PRIMARY_RPC_URL: "",
       REPLICA_PULL_URL: "",
+      // Cleared for the same reason as the above: a solo node refuses to
+      // boot if any validator variable is set, so a leftover export from a
+      // previous BFT run must not reach a solo child.
+      CONSENSUS_MODE: "",
+      VALIDATOR_ID: "",
+      VALIDATOR_PRIVATE_KEY: "",
+      VALIDATOR_PRIVATE_KEY_FILE: "",
+      VALIDATOR_SET: "",
+      CONSENSUS_PEERS: "",
+      VALIDATOR_RPC_URLS: "",
+      QUORUM: "",
     };
+
+    if (this.bft) {
+      const others = this.topology.filter((n) => n.name !== this.name);
+      base.CONSENSUS_MODE = "bft";
+      base.VALIDATOR_ID = this.name;
+      base.VALIDATOR_PRIVATE_KEY = this.spec.key;
+      base.VALIDATOR_SET = validatorSetEnv(this.topology);
+      base.CONSENSUS_PEERS = others.map((n) => `${n.name}=https://127.0.0.1:${n.p2pPort}`).join(",");
+      // Optional in production, set here so the happy path is one hop and
+      // the gate is not dominated by round timeouts.
+      base.VALIDATOR_RPC_URLS = others.map((n) => `${n.name}=http://127.0.0.1:${n.rpcPort}`).join(",");
+      base.ROUND_TIMEOUT_MS = ROUND_TIMEOUT_MS;
+      return base;
+    }
 
     if (this.role === "primary") {
       base.PEERS = TOPOLOGY.filter((n) => n.role === "replica")
@@ -108,7 +199,7 @@ export class ClusterNode {
   async start() {
     if (this.proc) throw new Error(`${this.name} is already running`);
 
-    const proc = spawn(BINARY, [], { cwd: ROOT, env: this.env(), stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(this.binary, [], { cwd: ROOT, env: this.env(), stdio: ["ignore", "pipe", "pipe"] });
     this.proc = proc;
     this.exited = new Promise((resolve) => proc.once("exit", (code, signal) => resolve({ code, signal })));
 
@@ -156,7 +247,7 @@ export class ClusterNode {
     while (Date.now() < deadline) {
       if (this.proc === null) throw new Error(`${this.name} exited during startup (see its log above)`);
       const health = await this.health();
-      if (health && health.role === this.role) return health;
+      if (health && health.role === this.healthRole) return health;
       await delay(100);
     }
     throw new Error(`${this.name} did not become healthy within ${timeoutMs} ms`);
@@ -190,19 +281,30 @@ export class ClusterNode {
 }
 
 /**
- * Starts the whole cluster: the primary first, then the replicas (which
- * connect to it at boot).
+ * Starts the whole cluster.
+ *
+ * Solo: the primary first, then the replicas (which connect to it at boot).
+ * BFT: every validator, in order. Startup order does not matter there — a
+ * validator that comes up first simply has nobody to talk to yet, buffers
+ * nothing, and starts participating when the others appear. That is the same
+ * code path a validator restarted mid-election takes.
  */
-export async function startCluster({ reset = false, quiet = false } = {}) {
-  requirePrerequisites();
-  if (reset) resetClusterData();
+export async function startCluster({ reset = false, quiet = false, topology = TOPOLOGY, binary = BINARY } = {}) {
+  const bft = topology === BFT_TOPOLOGY;
+  const dataRoot = bft ? BFT_DATA_ROOT : DATA_ROOT;
 
-  const nodes = TOPOLOGY.map((spec) => new ClusterNode(spec, { quiet }));
+  requirePrerequisites(topology, binary);
+  if (reset) resetClusterData(dataRoot);
+
+  const nodes = topology.map((spec) => new ClusterNode(spec, { quiet, topology, dataRoot, binary }));
   const cluster = {
     nodes,
+    bft,
+    dataRoot,
     byName: Object.fromEntries(nodes.map((n) => [n.name, n])),
     primary: nodes[0],
     replicas: nodes.slice(1),
+    validators: nodes,
     async stop() {
       // Replicas first: stopping the primary out from under a replica mid-pull
       // produces a burst of alarming (and meaningless) connection errors.
@@ -219,15 +321,16 @@ export async function startCluster({ reset = false, quiet = false } = {}) {
   return cluster;
 }
 
-export function resetClusterData() {
-  rmSync(DATA_ROOT, { recursive: true, force: true });
+export function resetClusterData(dataRoot = DATA_ROOT) {
+  rmSync(dataRoot, { recursive: true, force: true });
 }
 
-function requirePrerequisites() {
-  if (!existsSync(BINARY)) {
-    throw new Error(`node binary not found at ${BINARY}\nBuild it first:  make build`);
+function requirePrerequisites(topology = TOPOLOGY, binary = BINARY) {
+  if (!existsSync(binary)) {
+    const how = binary === BINARY ? "make build" : "make build-byzantine";
+    throw new Error(`node binary not found at ${binary}\nBuild it first:  ${how}`);
   }
-  const required = ["ca.crt", ...TOPOLOGY.map((n) => `${n.name}.crt`), ...TOPOLOGY.map((n) => `${n.name}.key`)];
+  const required = ["ca.crt", ...topology.map((n) => `${n.name}.crt`), ...topology.map((n) => `${n.name}.key`)];
   const missing = required.filter((file) => !existsSync(join(CERTS, file)));
   if (missing.length > 0) {
     throw new Error(`missing certificates in ${CERTS}: ${missing.join(", ")}\nGenerate them first:  make gen-certs`);
@@ -258,14 +361,22 @@ const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.arg
 if (isMain) {
   const reset = process.argv.includes("--reset");
   const quiet = process.argv.includes("--quiet");
+  const bft = process.argv.includes("--bft");
 
-  const cluster = await startCluster({ reset, quiet });
+  const cluster = await startCluster({ reset, quiet, topology: bft ? BFT_TOPOLOGY : TOPOLOGY });
 
-  console.log("\ncluster up:");
+  console.log(`\n${bft ? "BFT validator cluster" : "cluster"} up:`);
   for (const node of cluster.nodes) {
     console.log(`  ${node.name.padEnd(9)} rpc ${node.rpcUrl}   p2p ${node.p2pUrl}   data ${node.dataDir}`);
   }
-  console.log("\nPoint the app at the primary for writes, at any node for reads. Ctrl+C to stop.\n");
+  if (bft) {
+    console.log(
+      `\n${cluster.nodes.length} validators, quorum ${Math.ceil((2 * cluster.nodes.length) / 3)}: ` +
+        `writes may go to ANY node, and the chain survives losing one. Ctrl+C to stop.\n`,
+    );
+  } else {
+    console.log("\nPoint the app at the primary for writes, at any node for reads. Ctrl+C to stop.\n");
+  }
 
   let stopping = false;
   const shutdown = async () => {

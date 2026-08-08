@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -94,6 +95,18 @@ func DeriveQuorum(n int) int {
 	}
 	return (2*n + 2) / 3
 }
+
+// RoundTimeout is ROUND_TIMEOUT_MS as a duration. The engine grows it
+// linearly with the round number; this is the base.
+func (c *Config) RoundTimeout() time.Duration {
+	if c.RoundTimeoutMS <= 0 {
+		return DefaultRoundTimeoutMS * time.Millisecond
+	}
+	return time.Duration(c.RoundTimeoutMS) * time.Millisecond
+}
+
+// IsBFT reports whether this node runs multi-validator consensus.
+func (c *Config) IsBFT() bool { return c.ConsensusMode == ConsensusModeBFT }
 
 // EffectiveQuorum reports the quorum this node will actually enforce: the
 // QUORUM override when set, otherwise DeriveQuorum over the validator set.

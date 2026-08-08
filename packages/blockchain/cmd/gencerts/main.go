@@ -4,8 +4,9 @@
 //
 // Usage:
 //
-//	go run ./cmd/gencerts                                  # ca + primary,replica1,replica2 into ./certs
+//	go run ./cmd/gencerts                                  # ca + every local cluster name into ./certs
 //	go run ./cmd/gencerts -dir ./certs -nodes primary,replica1
+//	go run ./cmd/gencerts -nodes authority,jvp,unp,sjb     # the BFT validators only
 //	go run ./cmd/gencerts -hosts 10.0.0.7,node-a.internal  # extra SANs for a non-local cluster
 //	go run ./cmd/gencerts -days 30
 //
@@ -34,7 +35,13 @@ import (
 
 func main() {
 	dir := flag.String("dir", "./certs", "directory to write the CA and node certificates into")
-	nodes := flag.String("nodes", "primary,replica1,replica2", "comma-separated node names; one certificate is issued per name")
+	// The default covers both local clusters at once — the solo topology and
+	// the four BFT validators — so `make gen-certs` prepares whichever one
+	// you then run. Issuing seven certificates rather than three costs
+	// milliseconds and removes a class of "handshake failed" confusion when
+	// switching between them.
+	nodes := flag.String("nodes", "primary,replica1,replica2,authority,jvp,unp,sjb",
+		"comma-separated node names; one certificate is issued per name")
 	hosts := flag.String("hosts", "", "comma-separated extra hostnames/IPs to add to every certificate (localhost, 127.0.0.1, ::1 and the node name are always included)")
 	days := flag.Int("days", 365, "certificate lifetime in days")
 	flag.Parse()

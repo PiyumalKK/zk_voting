@@ -112,27 +112,54 @@ func main() {
 			Msg("chain head is ahead of wall clock; dev clock seeded from it so block timestamps continue from the head")
 	}
 
+	// Replication (M10) starts before the RPC server so that a primary's
+	// block subscription is in place before the first transaction can be
+	// accepted, and a replica is already following before it serves its
+	// first read. On a standalone node this does nothing at all.
+	//
+	// It also now comes before the RPC server is *built*, not just before it
+	// listens: under CONSENSUS_MODE=bft the engine it constructs is the write
+	// path the eth_ and dev namespaces drive, so the server cannot be
+	// assembled until it exists.
+	repl, err := startReplication(cfg, seq, db)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to start replication")
+	}
+
+	// The zk_ namespace is registered only for a validator. On a solo node
+	// zkSvc stays nil and zk_* answers -32601, exactly as a method that was
+	// never written would.
+	var zkSvc *rpc.ZkService
+	if cfg.IsBFT() {
+		zkSvc, err = zkService(cfg, seq, db, repl.Engine())
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to build the zk namespace")
+		}
+	}
+
 	rpcServer, err := rpc.NewJSONRPCServer(seq, rpc.ServerConfig{
 		ChainID:           cfg.ChainID,
 		LogRangeLimit:     cfg.LogRangeLimit,
 		DevRPC:            cfg.DevRPC,
 		ClientVersionMode: cfg.ClientVersionMode,
+		Writer:            repl.Writer(),
+		Zk:                zkSvc,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to build JSON-RPC server")
 	}
 	defer rpcServer.Stop()
 
-	// Replication (M10) starts before the RPC server so that a primary's
-	// block subscription is in place before the first transaction can be
-	// accepted, and a replica is already following before it serves its
-	// first read. On a standalone node this does nothing at all.
-	repl, err := startReplication(cfg, seq)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to start replication")
+	// A BFT node reports "validator" rather than "primary". Both are
+	// ROLE=primary in configuration — a replica cannot vote — but an operator
+	// reading /health across four machines needs to see which mode the
+	// cluster is actually in, and four nodes all calling themselves "primary"
+	// would say the opposite of what is true.
+	healthRole := string(cfg.Role)
+	if cfg.IsBFT() {
+		healthRole = "validator"
 	}
-
-	healthHandler := rpc.NewHealthHandler(cfg.ChainID, string(cfg.Role), func() uint64 { return state.Height(db) }).
+	healthHandler := rpc.NewHealthHandler(cfg.ChainID, healthRole, func() uint64 { return state.Height(db) }).
 		WithReplicaStatus(repl.ReplicaStatus())
 	handler := rpc.NewMux(healthHandler, rpcServer, rpc.MuxConfig{
 		CORSOrigins:    cfg.CORSOrigins,
