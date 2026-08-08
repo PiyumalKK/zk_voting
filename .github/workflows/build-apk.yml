@@ -42,15 +42,17 @@ jobs:
           node-version: '20'
       - name: Install EAS CLI
         run: npm install -g eas-cli
-      - name: Create .env with production URLs
+      - name: Inject AWS URLs into eas.json (preview.env is embedded by EAS at build time)
         run: |
-          cat > packages/mobile/.env << EOF
-          EXPO_PUBLIC_API_URL=http://${{ needs.get-alb-url.outputs.alb_dns }}
-          EXPO_PUBLIC_RPC_URL=http://${{ needs.get-alb-url.outputs.alb_dns }}/chain-api
-          EXPO_PUBLIC_CHAIN_ID=9494
-          EOF
-          echo "✅ Mobile .env configured with ALB: ${{ needs.get-alb-url.outputs.alb_dns }}"
-          cat packages/mobile/.env
+          cd packages/mobile
+          ALB="${{ needs.get-alb-url.outputs.alb_dns }}"
+          jq --arg api "http://$ALB" --arg rpc "http://$ALB/chain-api" \
+            '.build.preview.env.EXPO_PUBLIC_API_URL = $api
+             | .build.preview.env.EXPO_PUBLIC_RPC_URL = $rpc
+             | .build.preview.env.EXPO_PUBLIC_CHAIN_ID = "9494"' \
+            eas.json > eas.json.tmp && mv eas.json.tmp eas.json
+          echo "✅ eas.json preview.env now points at ALB: $ALB"
+          jq '.build.preview.env' eas.json
       - name: Install dependencies
         run: cd packages/mobile && yarn install
       - name: Build APK
@@ -58,7 +60,6 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           cd packages/mobile
-          eas init --force --non-interactive
           eas build --platform android --profile preview --non-interactive --no-wait
       - name: Show build info
         run: |

@@ -35,6 +35,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "piyumalkk",
+    "extra": {
+      "eas": {
+        "projectId": "b6064d0f-12f9-45d0-9851-808bfc55a900"
+      }
     }
   }
 }
