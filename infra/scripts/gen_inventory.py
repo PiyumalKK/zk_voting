@@ -47,15 +47,27 @@ VALIDATOR_NAMES = ["authority", "jvp", "unp", "sjb"]
 # --extra-vars from GitHub Actions secrets and are written to a 0600 file on
 # each host; they are never in this repository.
 #
-# The defaults below are the addresses of Hardhat's well-known test accounts
-# #0-#3, which is what the local cluster uses. Override them with
-# VALIDATOR_ADDRESSES for a real deployment, or the cluster will be running on
-# keys that are published in Hardhat's documentation.
+# These are the deployed cluster's real validator addresses. Each one must
+# correspond, in this order, to the key held in the matching GitHub secret:
+#
+#   node1 authority -> VALIDATOR_KEY_NODE1
+#   node2 jvp       -> VALIDATOR_KEY_NODE2
+#   node3 unp       -> VALIDATOR_KEY_NODE3
+#   node4 sjb       -> VALIDATOR_KEY_NODE4
+#
+# A node whose key does not derive to the address listed for its VALIDATOR_ID
+# refuses to boot and names both values, because a validator signing with an
+# unlisted identity is otherwise invisible: its messages verify as coming from
+# a stranger and are dropped, leaving the cluster one vote short with nothing
+# in any log to explain why.
+#
+# VALIDATOR_ADDRESSES overrides this list, for rotating keys without a code
+# change.
 DEFAULT_VALIDATOR_ADDRESSES = [
-    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-    "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+    "0x5417bec5f3E074FB4b734836967D42D967dE867A",  # node1  authority
+    "0xC6E427940dfBd693a005657c61e44241721D4D88",  # node2  jvp
+    "0x4Cb1f3Bbedf24a83aF2C8dB9796D01Bf30b5364D",  # node3  unp
+    "0x7F51e9E92e59e4E8a74643Ba6e46b0A2CCFE2Be7",  # node4  sjb
 ]
 
 ROUND_TIMEOUT_MS = os.environ.get("ROUND_TIMEOUT_MS", "4000")

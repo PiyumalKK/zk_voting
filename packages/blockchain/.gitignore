@@ -24,6 +24,13 @@ data-e2e/
 # in M10). NEVER commit these — private keys live here.
 certs/
 
+# Generated validator consensus signing keys, for transferring into GitHub
+# secrets. NEVER commit these: holding one is what it means to be one of the
+# four parties, and three of the four is control of finality. The matching
+# addresses are public and live in infra/scripts/gen_inventory.py.
+*.validator-keys.txt
+validator-keys*.txt
+
 # Go binaries
 *.exe
 *.exe~
