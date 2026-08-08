@@ -40,6 +40,18 @@ type Sequencer struct {
 	chainCfg *params.ChainConfig
 	gasLimit uint64
 
+	// scratch, when set, builds the copy-on-write database that speculative
+	// execution writes its trie nodes into — see work() and candidate.go.
+	// It is a factory rather than a database because each speculative
+	// execution needs its own throwaway scratch space.
+	scratch func(ethdb.Database) ethdb.Database
+
+	// adoptClock makes ApplyExternalBlock roll this node's dev clock forward
+	// to each accepted block's timestamp. Off in solo mode (where a replica's
+	// own clock is never consulted, so adopting would be a behaviour change
+	// for no benefit), on in BFT mode — see adoptTimestamp in follow.go.
+	adoptClock bool
+
 	mu sync.Mutex
 
 	// devOffset shifts nextTimestamp's wall-clock read. IncreaseTime (M07's
@@ -57,6 +69,40 @@ type Sequencer struct {
 	feed blockFeed
 }
 
+// Option configures a Sequencer at construction. Variadic so every existing
+// chain.New(db, chainCfg, gasLimit) call site keeps compiling unchanged —
+// options exist for the BFT consensus mode (CONSENSUS_MODE=bft), and a node
+// that passes none behaves exactly as it did before consensus was added.
+type Option func(*Sequencer)
+
+// WithScratchDB supplies the factory that builds the copy-on-write database
+// speculative execution writes into — in production
+// internal/storage.NewReplayOverlay, whose writes land in an in-memory
+// scratch store while reads fall through to the real database.
+//
+// Without it, BuildCandidate and VerifyCandidate execute against s.db
+// directly. That is *correct* — trie nodes are content-addressed, so a
+// candidate that is never sealed leaves only unreferenced nodes behind,
+// exactly the harmless orphans persist's crash-consistency note already
+// describes — but it is not free: a proposer that loses many rounds would
+// grow its database with state nobody references. The overlay makes
+// speculation leave no trace at all.
+//
+// internal/chain must not import internal/storage (see replay.go's package
+// boundary note), which is why this arrives as a function rather than as a
+// concrete type.
+func WithScratchDB(factory func(ethdb.Database) ethdb.Database) Option {
+	return func(s *Sequencer) { s.scratch = factory }
+}
+
+// WithClockAdoption makes this node roll its dev clock forward to the
+// timestamp of every block it accepts from elsewhere. Required in BFT mode
+// and wrong in solo mode — see adoptTimestamp in follow.go for the full
+// argument.
+func WithClockAdoption(on bool) Option {
+	return func(s *Sequencer) { s.adoptClock = on }
+}
+
 // New builds a Sequencer over an already-open database that already has a
 // genesis block — cmd/node calls internal/state.EnsureGenesis before
 // constructing a Sequencer, same ordering M02 already established.
@@ -66,10 +112,27 @@ type Sequencer struct {
 // appear to stall. Doing it here, instead of asking cmd/node to call a
 // separate setup method, means every construction site — the node, the
 // tests, M10's replicas — gets the behaviour without having to remember it.
-func New(db ethdb.Database, chainCfg *params.ChainConfig, blockGasLimit uint64) *Sequencer {
+func New(db ethdb.Database, chainCfg *params.ChainConfig, blockGasLimit uint64, opts ...Option) *Sequencer {
 	s := &Sequencer{db: db, chainCfg: chainCfg, gasLimit: blockGasLimit}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.seedDevClockFromHead()
 	return s
+}
+
+// work returns the database speculative execution should write into: a fresh
+// copy-on-write overlay when one was configured, otherwise the real database.
+// Callers hold s.mu.
+//
+// The returned overlay is single-use — each speculative execution gets its
+// own — and is never closed explicitly: it holds only an in-memory scratch
+// store, which becomes garbage as soon as the caller drops it.
+func (s *Sequencer) work() ethdb.Database {
+	if s.scratch == nil {
+		return s.db
+	}
+	return s.scratch(s.db)
 }
 
 // seedDevClockFromHead sets devOffset so the next block continues from

@@ -82,21 +82,24 @@ func buildHeader(parent *types.Header, gasLimit uint64, timestamp uint64, extra 
 	}
 }
 
-// finalizeBlock completes header (Root/Bloom/GasUsed/TxHash/ReceiptHash),
-// assembles the block, back-fills each receipt/log's BlockHash (only
+// assembleBlock completes header (Root/Bloom/GasUsed/TxHash/ReceiptHash),
+// assembles the block, and back-fills each receipt/log's BlockHash (only
 // knowable once the header — and therefore the block hash — is final;
 // none of these fields are part of the receipt trie's RLP encoding per
 // EIP-658, so setting them after hashing does not change Root/ReceiptHash;
-// MASTER's "receipt fields viem awaits" pitfall 5), and persists
-// block + receipts + canonical/head pointers atomically via a single rawdb
-// batch (M03 spec point 4: "Persist atomically via rawdb batch").
+// MASTER's "receipt fields viem awaits" pitfall 5).
 //
-// *** If `go build` fails around rawdb.Write*: *** these low-level
-// persistence calls (WriteBlock, WriteReceipts, WriteCanonicalHash,
-// WriteHeadBlockHash, WriteHeadHeaderHash, WriteTxLookupEntriesByBlock) are
-// this file's other high-risk spot — verify their exact signatures against
-// `github.com/ethereum/go-ethereum/core/rawdb` in $GOMODCACHE for v1.16.8.
-func finalizeBlock(db ethdb.Database, header *types.Header, root common.Hash, txs types.Transactions, receipts types.Receipts) (*types.Block, error) {
+// It writes nothing. finalizeBlock is assembleBlock followed by persist, and
+// the two are separate because a BFT proposer (internal/consensus) has to be
+// able to build a block it may never seal — a block that loses its round, or
+// whose round changes under it, must leave no trace. Solo mode always seals
+// what it builds and so always calls finalizeBlock.
+//
+// Everything that determines the block hash lives here, which is the property
+// that makes candidate blocks usable: BuildCandidate and SubmitTx produce
+// byte-identical blocks for the same input, pinned by
+// TestCandidateBlockHashMatchesTheSealedBlock in candidate_test.go.
+func assembleBlock(header *types.Header, root common.Hash, txs types.Transactions, receipts types.Receipts) *types.Block {
 	header.Root = root
 
 	var gasUsed uint64
@@ -130,7 +133,20 @@ func finalizeBlock(db ethdb.Database, header *types.Header, root common.Hash, tx
 	body := &types.Body{Transactions: txs, Withdrawals: []*types.Withdrawal{}}
 	block := types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
 	annotateReceipts(block, receipts)
+	return block
+}
 
+// finalizeBlock assembles the block and persists it with its receipts and the
+// canonical/head pointers, atomically via a single rawdb batch (M03 spec
+// point 4: "Persist atomically via rawdb batch").
+//
+// *** If `go build` fails around rawdb.Write*: *** these low-level
+// persistence calls (WriteBlock, WriteReceipts, WriteCanonicalHash,
+// WriteHeadBlockHash, WriteHeadHeaderHash, WriteTxLookupEntriesByBlock) are
+// this file's other high-risk spot — verify their exact signatures against
+// `github.com/ethereum/go-ethereum/core/rawdb` in $GOMODCACHE for v1.16.8.
+func finalizeBlock(db ethdb.Database, header *types.Header, root common.Hash, txs types.Transactions, receipts types.Receipts) (*types.Block, error) {
+	block := assembleBlock(header, root, txs, receipts)
 	if err := persist(db, block, receipts); err != nil {
 		return nil, err
 	}

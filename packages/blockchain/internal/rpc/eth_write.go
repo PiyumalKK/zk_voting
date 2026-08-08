@@ -29,13 +29,20 @@ import (
 // EthWriteService implements the JSON-RPC "eth" namespace's write and
 // transaction-query methods.
 type EthWriteService struct {
-	seq     *chain.Sequencer
+	// seq answers the transaction and receipt lookups, which are reads and
+	// are always local.
+	seq *chain.Sequencer
+	// writer commits transactions: the Sequencer itself in solo mode, the
+	// consensus engine in BFT mode. See proposer.go — both present the same
+	// error surface, so nothing below branches on the mode.
+	writer  Proposer
 	chainID uint64
 }
 
-// NewEthWriteService builds the write half of the eth_* method set over seq.
-func NewEthWriteService(seq *chain.Sequencer, chainID uint64) *EthWriteService {
-	return &EthWriteService{seq: seq, chainID: chainID}
+// NewEthWriteService builds the write half of the eth_* method set. Reads are
+// answered from seq; writes go through writer.
+func NewEthWriteService(seq *chain.Sequencer, writer Proposer, chainID uint64) *EthWriteService {
+	return &EthWriteService{seq: seq, writer: writer, chainID: chainID}
 }
 
 func (e *EthWriteService) chainIDBig() *big.Int { return new(big.Int).SetUint64(e.chainID) }
@@ -58,7 +65,7 @@ func (e *EthWriteService) SendRawTransaction(ctx context.Context, input hexutil.
 		return common.Hash{}, newCodedError(invalidInputCode, "Invalid transaction: %v", err)
 	}
 
-	if _, err := e.seq.SubmitTx(tx); err != nil {
+	if _, err := e.writer.SubmitTx(tx); err != nil {
 		return common.Hash{}, mapSubmitError(err, e.chainID)
 	}
 	return tx.Hash(), nil

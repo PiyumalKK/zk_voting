@@ -3,6 +3,7 @@ package chain
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -191,6 +192,8 @@ func (s *Sequencer) ApplyExternalBlock(block *types.Block) error {
 		return err
 	}
 
+	s.adoptTimestamp(block.Time())
+
 	// Publishing to the local feed lets a replica push to followers of its
 	// own (a chain of replicas), and costs nothing when there are none —
 	// blockFeed drops into a void with no subscribers. Nothing in the
@@ -199,4 +202,49 @@ func (s *Sequencer) ApplyExternalBlock(block *types.Block) error {
 	// primary.
 	s.feed.publish(block)
 	return nil
+}
+
+// adoptTimestamp rolls this node's dev clock forward to the timestamp of a
+// block produced elsewhere. It is commitTimestamp's body without the pin
+// bookkeeping (there is no pin to consume — this node did not build the
+// block), and it is a no-op unless WithClockAdoption enabled it. Callers hold
+// s.mu.
+//
+// *** Why this is off in solo mode and on under consensus ***
+//
+// In solo mode only the primary's clock is ever consulted, because only the
+// primary builds blocks. A replica's devOffset is dead state; adopting would
+// change replica behaviour for no benefit, and this file's contract is that
+// solo replicas behave exactly as they did in M10.
+//
+// Under consensus every validator is a potential proposer, so the clock that
+// matters is whichever one proposed — and it must be inherited, or a time
+// jump the cluster already agreed on is silently undone the moment the
+// proposership rotates. Concretely: `evm_increaseTime` pushes the proposer
+// days ahead (the M08 contract suite does exactly this to cross Voting.sol's
+// phase deadlines) and those blocks become chain history. If the next
+// proposer kept its own zero offset, nextTimestamp would take
+// max(wall clock, parent+1), wall clock would lose by days, and every
+// subsequent block would advance by exactly one second — a chain that had
+// jumped a week forward would need 604,800 blocks to catch up.
+//
+// That is the same failure seedDevClockFromHead was written to prevent across
+// a restart. This is the same fix across a proposer change: the chain's time
+// is a property of the chain, so it is read back from the chain.
+func (s *Sequencer) adoptTimestamp(sealedTime uint64) {
+	if !s.adoptClock {
+		return
+	}
+
+	delta := int64(sealedTime) - time.Now().Unix()
+	// Clamp rather than error, exactly as commitTimestamp does: the block is
+	// already durable at this point, so there is nothing left to reject, and
+	// the clamp leaves every chain invariant intact.
+	if delta > maxDevOffsetSeconds {
+		delta = maxDevOffsetSeconds
+	}
+	if delta < -maxDevOffsetSeconds {
+		delta = -maxDevOffsetSeconds
+	}
+	s.devOffset = time.Duration(delta) * time.Second
 }

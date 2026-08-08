@@ -32,6 +32,12 @@ type ServerConfig struct {
 	// (config.ClientVersionMode: "zkchain" or "anvil"). Empty means the
 	// default, "zkchain".
 	ClientVersionMode string
+	// Writer is the write path eth_sendRawTransaction and the dev namespaces
+	// drive. nil — every caller before CONSENSUS_MODE existed — means the
+	// Sequencer itself, i.e. seal directly, which is solo mode's behaviour
+	// unchanged. In BFT mode cmd/node passes the consensus engine. See
+	// proposer.go.
+	Writer Proposer
 }
 
 // NewJSONRPCServer builds a *gethrpc.Server with the eth/net/web3
@@ -44,6 +50,14 @@ type ServerConfig struct {
 // M04 spec, so none of that is reimplemented here.
 func NewJSONRPCServer(seq *chain.Sequencer, cfg ServerConfig) (*gethrpc.Server, error) {
 	srv := gethrpc.NewServer()
+
+	// Reads always come from seq directly; only writes are routed. A nil
+	// Writer is the pre-consensus behaviour: the Sequencer is its own
+	// proposer, sealing whatever it executes.
+	writer := cfg.Writer
+	if writer == nil {
+		writer = seq
+	}
 
 	if err := srv.RegisterName("eth", NewEthService(seq, cfg.ChainID)); err != nil {
 		return nil, fmt.Errorf("register eth namespace: %w", err)
@@ -61,7 +75,7 @@ func NewJSONRPCServer(seq *chain.Sequencer, cfg ServerConfig) (*gethrpc.Server, 
 	// how it handles duplicate names. internal/rpc's tests exercise a read
 	// method and a write method against the same server, so a regression
 	// here fails loudly rather than silently dropping half the namespace.
-	if err := srv.RegisterName("eth", NewEthWriteService(seq, cfg.ChainID)); err != nil {
+	if err := srv.RegisterName("eth", NewEthWriteService(seq, writer, cfg.ChainID)); err != nil {
 		return nil, fmt.Errorf("register eth write namespace: %w", err)
 	}
 	// Third receiver, same namespace (M06) — same merge behavior as the
@@ -84,17 +98,17 @@ func NewJSONRPCServer(seq *chain.Sequencer, cfg ServerConfig) (*gethrpc.Server, 
 	// is no code path on a production node that can reach a state mutation
 	// outside a transaction.
 	if cfg.DevRPC {
-		if err := srv.RegisterName("evm", NewEvmService(seq)); err != nil {
+		if err := srv.RegisterName("evm", NewEvmService(seq, writer)); err != nil {
 			return nil, fmt.Errorf("register evm namespace: %w", err)
 		}
-		if err := srv.RegisterName("hardhat", NewHardhatService(seq)); err != nil {
+		if err := srv.RegisterName("hardhat", NewHardhatService(writer)); err != nil {
 			return nil, fmt.Errorf("register hardhat namespace: %w", err)
 		}
 		// Alias namespace, same underlying service (MASTER §9 lists both
 		// spellings). Registered separately rather than as a fourth receiver
 		// on "hardhat" because these are genuinely different namespaces, not
 		// two halves of one.
-		if err := srv.RegisterName("anvil", NewAnvilService(seq)); err != nil {
+		if err := srv.RegisterName("anvil", NewAnvilService(writer)); err != nil {
 			return nil, fmt.Errorf("register anvil namespace: %w", err)
 		}
 		log.Warn().Msg("DEV_RPC is enabled: evm_*, hardhat_setBalance and anvil_setBalance can mutate chain state — never enable this on a production node")

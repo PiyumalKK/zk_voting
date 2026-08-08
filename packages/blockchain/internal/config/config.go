@@ -142,6 +142,37 @@ type Config struct {
 
 	LogLevel  string
 	LogFormat string
+
+	// --- BFT consensus (CONSENSUS_MODE=bft). See consensus.go for the
+	// parsing and validation of everything below; all of it must be empty
+	// when ConsensusMode is ConsensusModeSolo.
+
+	// ConsensusMode selects between the single-sequencer model every
+	// milestone through M14 used (ConsensusModeSolo, the default) and
+	// multi-validator BFT (ConsensusModeBFT).
+	ConsensusMode ConsensusMode
+	// ValidatorID is this node's name within ValidatorSet.
+	ValidatorID string
+	// ValidatorPrivateKey is this node's consensus signing key, hex, with or
+	// without a 0x prefix. Prefer ValidatorPrivateKeyFile in production —
+	// an env var is visible in `ps -e` output.
+	ValidatorPrivateKey string
+	// ValidatorPrivateKeyFile is a path to a file containing that key. When
+	// both are set, the file wins.
+	ValidatorPrivateKeyFile string
+	// ValidatorSet is the ordered validator registry. Order is protocol-
+	// significant: the proposer for a height is validators[(H+round) % N].
+	ValidatorSet []ValidatorEntry
+	// ConsensusPeers is how to reach every *other* validator's P2P port.
+	ConsensusPeers []ConsensusPeer
+	// ValidatorRPCURLs maps validator name to JSON-RPC URL, for forwarding a
+	// submitted transaction to the current proposer. Optional.
+	ValidatorRPCURLs map[string]string
+	// RoundTimeoutMS is how long a round waits before proposing a round
+	// change.
+	RoundTimeoutMS int
+	// Quorum overrides the derived ceil(2N/3). 0 means derive it.
+	Quorum int
 }
 
 // lookupFunc mirrors os.LookupEnv's signature so tests can inject a
@@ -250,6 +281,8 @@ func load(lookup lookupFunc) (*Config, error) {
 	cfg.LogLevel = strings.ToLower(get("LOG_LEVEL", DefaultLogLevel))
 	cfg.LogFormat = strings.ToLower(get("LOG_FORMAT", DefaultLogFormat))
 
+	loadConsensus(cfg, lookup, get, addf)
+
 	if err := cfg.Validate(); err != nil {
 		errs = append(errs, err)
 	}
@@ -351,6 +384,8 @@ func (c *Config) Validate() error {
 		addf("CLIENT_VERSION_MODE must be %q or %q, got %q",
 			ClientVersionModeZkchain, ClientVersionModeAnvil, c.ClientVersionMode)
 	}
+
+	c.validateConsensus(addf)
 
 	if len(errs) == 0 {
 		return nil

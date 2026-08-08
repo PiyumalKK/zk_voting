@@ -128,11 +128,25 @@ func numericLiteral(data []byte) (string, error) {
 // EvmService implements the JSON-RPC "evm" namespace (M07 deliverables
 // 1–3). Registered only when DEV_RPC=true.
 type EvmService struct {
+	// seq owns the dev clock. Time control stays node-local under every mode:
+	// evm_increaseTime shifts *this* node's offset, and the shift reaches the
+	// chain only when this node proposes a block. Under consensus that makes
+	// these two methods best-effort — a round change between the call and the
+	// next block leaves the pin unconsumed — which is acceptable because they
+	// are DEV_RPC-only and because a block's timestamp, once agreed, is
+	// adopted by every validator (see chain.Sequencer.adoptTimestamp).
 	seq *chain.Sequencer
+	// writer commits the blocks evm_mine produces. Under consensus a
+	// validator may not seal outside the protocol, so even a dev method goes
+	// to a vote.
+	writer Proposer
 }
 
-// NewEvmService builds the evm_* method set over seq.
-func NewEvmService(seq *chain.Sequencer) *EvmService { return &EvmService{seq: seq} }
+// NewEvmService builds the evm_* method set. Clock control acts on seq;
+// block production goes through writer.
+func NewEvmService(seq *chain.Sequencer, writer Proposer) *EvmService {
+	return &EvmService{seq: seq, writer: writer}
+}
 
 // IncreaseTime implements evm_increaseTime: shifts the dev clock forward by
 // seconds, affecting every block sealed afterward (MASTER §10 pitfall 7 —
@@ -190,9 +204,9 @@ func (e *EvmService) SetNextBlockTimestamp(ctx context.Context, timestamp devUin
 func (e *EvmService) Mine(ctx context.Context, timestamp *devUint64) (string, error) {
 	var err error
 	if timestamp != nil {
-		_, err = e.seq.MineEmptyBlockAt(uint64(*timestamp))
+		_, err = e.writer.MineEmptyBlockAt(uint64(*timestamp))
 	} else {
-		_, err = e.seq.MineEmptyBlock()
+		_, err = e.writer.MineEmptyBlock()
 	}
 	if err != nil {
 		return "", mapDevError(err)
@@ -203,11 +217,13 @@ func (e *EvmService) Mine(ctx context.Context, timestamp *devUint64) (string, er
 // HardhatService implements the JSON-RPC "hardhat" namespace (M07
 // deliverable 4). Registered only when DEV_RPC=true.
 type HardhatService struct {
-	seq *chain.Sequencer
+	// writer commits the system-op block. There is no read half here, so
+	// unlike the other services this one needs nothing but the write path.
+	writer Proposer
 }
 
-// NewHardhatService builds the hardhat_* method set over seq.
-func NewHardhatService(seq *chain.Sequencer) *HardhatService { return &HardhatService{seq: seq} }
+// NewHardhatService builds the hardhat_* method set over writer.
+func NewHardhatService(writer Proposer) *HardhatService { return &HardhatService{writer: writer} }
 
 // SetBalance implements hardhat_setBalance. The write is sealed as a
 // *system-op block* rather than applied directly to the trie — MASTER §10
@@ -217,7 +233,7 @@ func NewHardhatService(seq *chain.Sequencer) *HardhatService { return &HardhatSe
 //
 // Returns `true`, matching Hardhat.
 func (h *HardhatService) SetBalance(ctx context.Context, address common.Address, balance devBig) (bool, error) {
-	if _, err := h.seq.SetBalance(address, balance.toInt()); err != nil {
+	if _, err := h.writer.SetBalance(address, balance.toInt()); err != nil {
 		return false, mapDevError(err)
 	}
 	return true, nil
@@ -233,9 +249,9 @@ type AnvilService struct {
 	*HardhatService
 }
 
-// NewAnvilService builds the anvil_* alias namespace over seq.
-func NewAnvilService(seq *chain.Sequencer) *AnvilService {
-	return &AnvilService{HardhatService: NewHardhatService(seq)}
+// NewAnvilService builds the anvil_* alias namespace over writer.
+func NewAnvilService(writer Proposer) *AnvilService {
+	return &AnvilService{HardhatService: NewHardhatService(writer)}
 }
 
 // mapDevError translates internal/chain's dev-method errors into the

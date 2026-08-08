@@ -90,7 +90,16 @@ func main() {
 		Msg("chain head recovered")
 
 	chainCfg := state.ChainConfig(cfg.ChainID)
-	seq := chain.New(db, chainCfg, cfg.BlockGasLimit)
+	// The scratch overlay is passed unconditionally and is inert in solo
+	// mode: nothing calls the speculative-execution path unless
+	// CONSENSUS_MODE=bft. Passing it here rather than inside the consensus
+	// branch keeps "how a Sequencer is built" one statement rather than two.
+	// Clock adoption, by contrast, *is* a behaviour change and is gated —
+	// see chain.Sequencer.adoptTimestamp.
+	seq := chain.New(db, chainCfg, cfg.BlockGasLimit,
+		chain.WithScratchDB(storage.NewReplayOverlay),
+		chain.WithClockAdoption(cfg.ConsensusMode == config.ConsensusModeBFT),
+	)
 
 	// chain.New seeds the dev clock from the head when that head is ahead of
 	// wall clock (a chain that used evm_increaseTime, e.g. the data
