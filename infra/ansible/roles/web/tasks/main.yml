@@ -117,9 +117,13 @@
 
 - name: Copy public assets into standalone dir
   shell: |
-    cp -r public .next/standalone/packages/nextjs/public 2>/dev/null || true
-    cp -r .next/static .next/standalone/packages/nextjs/.next/static 2>/dev/null || true
-    cp .env.local .next/standalone/packages/nextjs/.env.local 2>/dev/null || true
+    set -e
+    dest=.next/standalone/packages/nextjs
+    mkdir -p "$dest/public" "$dest/.next/static"
+    # copy CONTENTS (trailing /.) so an existing dest/public isn't nested
+    cp -r public/. "$dest/public/"
+    cp -r .next/static/. "$dest/.next/static/"
+    cp .env.local "$dest/.env.local"
   args:
     chdir: /opt/zk-voting/packages/nextjs
   become_user: ubuntu
