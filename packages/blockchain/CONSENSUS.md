@@ -2,6 +2,12 @@
 
 How this chain decides what is true, when `CONSENSUS_MODE=bft`.
 
+> This is the **technical reference** — message formats, the safety argument,
+> storage layout, code map. If you want the explanation of *why* four
+> validators, what the keys are, how it maps onto the EC2s and how to
+> demonstrate it, start with
+> [`02-BFT-CONSENSUS.md`](../../02-BFT-CONSENSUS.md) instead.
+
 ---
 
 ## 1. Why

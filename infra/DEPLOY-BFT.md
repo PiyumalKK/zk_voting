@@ -3,9 +3,11 @@
 A one-time runbook for switching the four blockchain EC2s from the
 single-sequencer topology to 2/3 Byzantine-fault-tolerant consensus.
 
-For ordinary deployments see [`DEPLOY_STEPS.md`](DEPLOY_STEPS.md). For the
-protocol itself — how it works, why it is safe, and what the guarantees are —
-see [`../packages/blockchain/CONSENSUS.md`](../packages/blockchain/CONSENSUS.md).
+| If you want | Read |
+|---|---|
+| to understand what this is and why — keys, quorum, demos | [`../02-BFT-CONSENSUS.md`](../02-BFT-CONSENSUS.md) |
+| the protocol's technical detail | [`../packages/blockchain/CONSENSUS.md`](../packages/blockchain/CONSENSUS.md) |
+| an ordinary (non-BFT) deployment | [`DEPLOY_STEPS.md`](DEPLOY_STEPS.md) |
 
 ---
 
