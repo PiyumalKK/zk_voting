@@ -73,10 +73,30 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/zk-voting-key.pem
           chmod 400 ~/.ssh/zk-voting-key.pem
-      # All 3 nodes in one play so the fetch→copy cert distribution works on the same runner
+      # All nodes in one play so the fetch→copy cert distribution works on the same runner.
+      #
+      # The validator signing keys (CONSENSUS_MODE=bft) go in as a host-keyed
+      # dict, because --extra-vars sets one global value and each validator
+      # needs a different key. Same handling as deploy-nodes.yml: from
+      # repository secrets, never from git, written to a 0600 file with no_log.
+      # A validator whose key is missing stops the deploy rather than booting
+      # one vote short.
       - name: Deploy to all nodes
         working-directory: infra/ansible
-        run: ansible-playbook playbook.yml -i inventory.yml --limit nodes -v
+        env:
+          VALIDATOR_KEY_NODE1: ${{ secrets.VALIDATOR_KEY_NODE1 }}
+          VALIDATOR_KEY_NODE2: ${{ secrets.VALIDATOR_KEY_NODE2 }}
+          VALIDATOR_KEY_NODE3: ${{ secrets.VALIDATOR_KEY_NODE3 }}
+          VALIDATOR_KEY_NODE4: ${{ secrets.VALIDATOR_KEY_NODE4 }}
+        run: |
+          VALIDATOR_KEYS=$(jq -cn \
+            --arg n1 "$VALIDATOR_KEY_NODE1" \
+            --arg n2 "$VALIDATOR_KEY_NODE2" \
+            --arg n3 "$VALIDATOR_KEY_NODE3" \
+            --arg n4 "$VALIDATOR_KEY_NODE4" \
+            '{validator_keys: {node1: $n1, node2: $n2, node3: $n3, node4: $n4}}')
+          ansible-playbook playbook.yml -i inventory.yml --limit nodes -v \
+            -e "$VALIDATOR_KEYS"
 
   deploy-web:
     name: Deploy Web Server
