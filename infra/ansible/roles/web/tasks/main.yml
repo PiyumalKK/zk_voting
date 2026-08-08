@@ -115,16 +115,17 @@
   async: 900
   poll: 20
 
+# Copy CONTENTS (trailing /.) so an existing dest/public from the standalone
+# build isn't nested into dest/public/public.
 - name: Copy public assets into standalone dir
-  shell: |
-    set -e
-    dest=.next/standalone/packages/nextjs
-    mkdir -p "$dest/public" "$dest/.next/static"
-    # copy CONTENTS (trailing /.) so an existing dest/public isn't nested
-    cp -r public/. "$dest/public/"
-    cp -r .next/static/. "$dest/.next/static/"
-    cp .env.local "$dest/.env.local"
-  args:
+  shell:
+    cmd: |
+      set -e
+      dest=.next/standalone/packages/nextjs
+      mkdir -p "$dest/public" "$dest/.next/static"
+      cp -r public/. "$dest/public/"
+      cp -r .next/static/. "$dest/.next/static/"
+      cp .env.local "$dest/.env.local"
     chdir: /opt/zk-voting/packages/nextjs
   become_user: ubuntu
 
