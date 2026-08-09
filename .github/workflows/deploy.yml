@@ -30,18 +30,6 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: terraform init
-      # `terraform output` reads state; it does NOT contact AWS. An instance that is
-      # stopped and started is given a NEW public IP, so state silently goes stale and
-      # the generated inventory sends Ansible to addresses that no longer exist — which
-      # surfaces as "Connection timed out" on port 22, not a refusal, because the
-      # packets reach nothing at all. Refreshing first keeps the inventory truthful.
-      # -refresh-only updates state to match reality without changing infrastructure.
-      - name: Refresh Terraform state
-        working-directory: infra/terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: terraform apply -refresh-only -auto-approve
       - name: Get IPs
         id: ips
         working-directory: infra/terraform
