@@ -111,6 +111,17 @@ type AdminElectionValue = {
   handleResetElection: () => void;
 };
 
+/**
+ * What a division's candidate drafts are before anything has been typed or
+ * seeded. Module-level so its identity is stable: it is the fallback for every
+ * unvisited division, and a fresh array each render would make it look like an
+ * edit to everything that depends on it.
+ */
+const EMPTY_SLATE: string[] = ["", ""];
+
+/** Whether two candidate slates hold the same entries, so a no-op setState is not treated as an edit. */
+const sameSlate = (a: string[], b: string[]) => a.length === b.length && a.every((entry, i) => entry === b[i]);
+
 const AdminElectionContext = createContext<AdminElectionValue | null>(null);
 
 /** Read the shared admin state. Throws rather than silently rendering an empty panel. */
@@ -157,6 +168,15 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   );
 
   const [votingData, setVotingData] = useState<readonly unknown[] | undefined>(undefined);
+  /**
+   * The contract `votingData`/`candidates` were read from.
+   *
+   * Needed because those two lag the selection by a render: on the commit
+   * where the operator switches division, the effect that blanks them has not
+   * taken effect yet, so anything deriving from them is still describing the
+   * previous division.
+   */
+  const [dataContract, setDataContract] = useState<string | undefined>(undefined);
   const [candidates, setCandidates] = useState<readonly string[] | undefined>(undefined);
   const [ownerAddr, setOwnerAddr] = useState<string | undefined>(undefined);
 
@@ -197,6 +217,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       setVotingData(vd as readonly unknown[]);
       setCandidates(cands as readonly string[]);
       setOwnerAddr(owner as string);
+      // Which division this data describes. The per-division draft seeding
+      // needs it: on the render where the selection changes, `votingData` is
+      // still the *previous* division's, and a seed that trusted it would fill
+      // the new division's ballot with the old one's question.
+      setDataContract(selectedContract);
     } catch (e) {
       console.error("refetchDivision", e);
     }
@@ -214,6 +239,7 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   useEffect(() => {
     setVotingData(undefined);
     setCandidates(undefined);
+    setDataContract(undefined);
   }, [selectedContract]);
 
   useEffect(() => {
@@ -270,95 +296,148 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const ended = phase === 3;
 
   // --- Local form state ---
-  const [questionDraft, setQuestionDraft] = useState<string>("");
-  const [candidateDrafts, setCandidateDrafts] = useState<string[]>(["", ""]);
   const [voterDrafts, setVoterDrafts] = useState<VoterEntry[]>([{ address: "", status: true }]);
   const [registrationDuration, setRegistrationDuration] = useState<string>("01:00:00");
   const [votingDuration, setVotingDuration] = useState<string>("01:00:00");
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
+  /*
+   * *** Ballot drafts and save verdicts are held PER DIVISION. ***
+   *
+   * Both are keyed by the division's voting contract address — the same
+   * stable identity `selectedContract` already uses, and for the same reason:
+   * `useDivisions` rebuilds its objects on every poll, so anything keyed on a
+   * division's identity rather than its address would churn constantly.
+   *
+   * The drafts had to move with the verdicts, and that is not incidental. They
+   * used to be one shared pair that seeded only while empty, so switching from
+   * Kurunegala to Gampaha left Kurunegala's text on screen. Making only the
+   * verdict per-division would then have restored "✓ Saved" for Kurunegala
+   * above text belonging to Gampaha — a button asserting that what you are
+   * looking at is saved, when it is not. Per-division drafts are what make the
+   * restored verdict true rather than merely present.
+   */
+  const divKey = selectedContract ?? "";
+
+  const [questionDraftsByDiv, setQuestionDraftsByDiv] = useState<Record<string, string>>({});
+  const [candidateDraftsByDiv, setCandidateDraftsByDiv] = useState<Record<string, string[]>>({});
+
+  const questionDraft = questionDraftsByDiv[divKey] ?? "";
+  const candidateDrafts = candidateDraftsByDiv[divKey] ?? EMPTY_SLATE;
+
   /**
-   * How each action last finished, keyed by the same label `busy` uses.
-   * Absent means idle; `busy` supplies the in-flight state, so the two never
+   * How each action last finished, per division: `outcomes[divisionAddress][label]`.
+   *
+   * Nested rather than a flat `"address:label"` key so a whole division's
+   * verdicts can be read, replaced or dropped as one — which is what
+   * `saveStateOf` does on every render.
+   *
+   * Absent means idle. The in-flight state comes from `busy`, so the two never
    * have to be kept in sync.
    */
-  const [outcomes, setOutcomes] = useState<Record<string, "saved" | "error">>({});
+  const [outcomes, setOutcomes] = useState<Record<string, Record<string, "saved" | "error">>>({});
+  /**
+   * Which division the in-flight action belongs to. Without it, switching
+   * division mid-save would show the spinner on the division you switched *to*.
+   */
+  const [busyDiv, setBusyDiv] = useState<string | null>(null);
 
-  const saveStateOf = useCallback(
-    (label: string): SaveState => (busy === label ? "saving" : (outcomes[label] ?? "idle")),
-    [busy, outcomes],
-  );
+  const setOutcome = useCallback((key: string, label: string, outcome: "saved" | "error") => {
+    setOutcomes(prev => ({ ...prev, [key]: { ...(prev[key] ?? {}), [label]: outcome } }));
+  }, []);
 
-  const clearSaveState = useCallback((label: string) => {
+  const clearOutcome = useCallback((key: string, label: string) => {
     setOutcomes(prev => {
-      if (!(label in prev)) return prev; // no re-render for a no-op
-      const next = { ...prev };
+      const forDivision = prev[key];
+      if (!forDivision || !(label in forDivision)) return prev; // no re-render for a no-op
+      const next = { ...forDivision };
       delete next[label];
-      return next;
+      return { ...prev, [key]: next };
     });
   }, []);
+
+  const saveStateOf = useCallback(
+    (label: string): SaveState =>
+      busy === label && busyDiv === divKey ? "saving" : (outcomes[divKey]?.[label] ?? "idle"),
+    [busy, busyDiv, outcomes, divKey],
+  );
+
+  /** Drop a settled state for the division currently on screen. */
+  const clearSaveState = useCallback((label: string) => clearOutcome(divKey, label), [divKey, clearOutcome]);
 
   /*
    * Neither verdict expires on a timer.
    *
-   * "Saved" used to fade after a few seconds. It no longer does, because the
-   * verdict is a statement about the data currently on screen — and that
-   * statement stays true until the data changes. A timer made it stop being
-   * shown while it was still true, which left an operator who looked away
-   * unable to tell a saved question from an unsaved one, the exact ambiguity
-   * this feedback exists to remove.
+   * "Saved" is a statement about the data currently on screen, and that stays
+   * true until the data changes — a timer used to retire it while it was still
+   * true, leaving an operator who looked away unable to tell a saved question
+   * from an unsaved one. What retires a verdict is only what actually
+   * invalidates it: an edit to that division's data, or a fresh attempt.
    *
-   * What retires a verdict is the thing that actually invalidates it: an edit,
-   * a division change, or a fresh attempt. Those are the effects below and in
-   * `run`; there is deliberately no time-based path.
+   * Note what is *not* on that list any more: switching division. That used to
+   * clear everything, which is the bug this per-division state fixes — saving
+   * Kurunegala, working on Gampaha and coming back showed Kurunegala as
+   * unsaved when it was not.
    */
-
-  // Seed drafts from on-chain state once.
-  useEffect(() => {
-    if (question && !questionDraft) setQuestionDraft(question);
-  }, [question, questionDraft]);
-  useEffect(() => {
-    if (candList.length > 0 && candidateDrafts.every(c => c === "")) {
-      setCandidateDrafts(candList.slice());
-    }
-  }, [candList, candidateDrafts]);
 
   /*
-   * A verdict describes the value that was sent, so editing the value retires
-   * it. Without this, "Saved" would sit above a question the operator has since
-   * rewritten and not saved — the most misleading state the button can be in,
-   * because it asserts the opposite of the truth.
+   * The draft setters are where an edit retires a verdict.
    *
-   * Keying on the draft is safe precisely because nothing else writes to it
-   * during a save: the seeding effects above only fire into an empty draft, and
-   * `refetchDivision` does not touch them. So a change here is always the
-   * operator typing.
-   *
-   * Clearing an absent label is a no-op that returns the same object, so these
-   * cost nothing on the renders where there is no verdict to retire.
+   * This deliberately does not use an effect on the draft value. The drafts are
+   * now derived from a per-division map, so their value changes when the
+   * *selection* changes as well as when the operator types — and an effect
+   * could not tell those apart. It would clear the verdict of the division
+   * being switched *to*, reintroducing the bug from the other direction.
+   * Clearing in the setter means only a real edit clears.
    */
-  useEffect(() => {
-    clearSaveState("question");
-    clearSaveState("all-question");
-  }, [questionDraft, clearSaveState]);
+  const setQuestionDraft = useCallback<React.Dispatch<React.SetStateAction<string>>>(
+    value => {
+      const next = typeof value === "function" ? (value as (prev: string) => string)(questionDraft) : value;
+      if (next === questionDraft) return;
+      setQuestionDraftsByDiv(prev => ({ ...prev, [divKey]: next }));
+      clearOutcome(divKey, "question");
+      clearOutcome(divKey, "all-question");
+    },
+    [divKey, questionDraft, clearOutcome],
+  );
 
-  useEffect(() => {
-    clearSaveState("candidates");
-    clearSaveState("all-candidates");
-  }, [candidateDrafts, clearSaveState]);
+  const setCandidateDrafts = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(
+    value => {
+      const next = typeof value === "function" ? (value as (prev: string[]) => string[])(candidateDrafts) : value;
+      if (sameSlate(next, candidateDrafts)) return;
+      setCandidateDraftsByDiv(prev => ({ ...prev, [divKey]: next }));
+      clearOutcome(divKey, "candidates");
+      clearOutcome(divKey, "all-candidates");
+    },
+    [divKey, candidateDrafts, clearOutcome],
+  );
 
   /*
-   * The drafts deliberately survive a division change, so a verdict left on
-   * screen would be claiming that *this* division is saved when it describes
-   * the one before it.
+   * Seed each division's drafts from its own on-chain state, once.
+   *
+   * These write to the map directly rather than through the setters above,
+   * because seeding is not an edit: routing it through them would clear the
+   * verdict of the division being seeded.
    */
   useEffect(() => {
-    clearSaveState("question");
-    clearSaveState("candidates");
-    clearSaveState("all-question");
-    clearSaveState("all-candidates");
-  }, [selectedIdx, clearSaveState]);
+    // `dataContract !== divKey` is the guard that matters: on the commit where
+    // the selection changes, `question` still holds the *previous* division's
+    // value, and seeding from it would fill the new division's ballot with the
+    // old one's text — which is exactly the falsehood per-division drafts
+    // exist to prevent.
+    if (!divKey || dataContract !== divKey || !question) return;
+    setQuestionDraftsByDiv(prev => (prev[divKey] ? prev : { ...prev, [divKey]: question }));
+  }, [divKey, dataContract, question]);
+
+  useEffect(() => {
+    if (!divKey || dataContract !== divKey || candList.length === 0) return;
+    setCandidateDraftsByDiv(prev => {
+      const current = prev[divKey];
+      if (current && current.some(c => c !== "")) return prev;
+      return { ...prev, [divKey]: candList.slice() };
+    });
+  }, [divKey, dataContract, candList]);
 
   // Live countdown for the deadlines.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -378,27 +457,28 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
    * whether the transaction landed or the click never registered.
    */
   const run = async (label: string, fn: () => Promise<unknown>, successMessage?: string) => {
+    // The division this verdict belongs to, captured before any awaiting: an
+    // operator who switches division mid-save must not have the result landed
+    // against whichever one they switched to.
+    const key = divKey;
     try {
       setBusy(label);
+      setBusyDiv(key);
       // Any previous verdict is stale the moment a new attempt starts — most
       // visibly when retrying after a failure, where leaving it would render
       // the error state and the spinner at once.
-      setOutcomes(prev => {
-        if (!(label in prev)) return prev;
-        const next = { ...prev };
-        delete next[label];
-        return next;
-      });
+      clearOutcome(key, label);
       await fn();
       await refetchDivision();
-      setOutcomes(prev => ({ ...prev, [label]: "saved" }));
+      setOutcome(key, label, "saved");
       if (successMessage) notification.success(successMessage);
     } catch (e: any) {
       console.error(label, e);
-      setOutcomes(prev => ({ ...prev, [label]: "error" }));
+      setOutcome(key, label, "error");
       notification.error(e?.shortMessage || e?.message || "Transaction failed");
     } finally {
       setBusy(null);
+      setBusyDiv(null);
     }
   };
 
@@ -728,8 +808,12 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       } catch {}
 
       setSelectedIdx(0);
-      setQuestionDraft("");
-      setCandidateDrafts(["", ""]);
+      // Every division is gone, so every division's drafts and verdicts go with
+      // them — not just the one that happened to be on screen. The addresses
+      // these were keyed by no longer exist.
+      setQuestionDraftsByDiv({});
+      setCandidateDraftsByDiv({});
+      setOutcomes({});
       setVoterDrafts([{ address: "", status: true }]);
       setRegistrationDuration("01:00:00");
       setVotingDuration("01:00:00");

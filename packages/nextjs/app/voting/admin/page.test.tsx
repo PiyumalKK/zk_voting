@@ -22,54 +22,78 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Everything a `vi.mock` factory touches has to be hoisted with the mocks —
 // the factories run before module-level constants are initialised.
-const { DIVISION, OWNER, REGISTRY, VOTING_DATA, NIC_REGISTRY, NEW_DIVISION_ADDRESS, TARGET_NETWORK, mocks } =
-  vi.hoisted(() => {
-    const DIVISION = {
-      id: 0,
-      name: "Kaduwela",
-      votingContract: "0x0000000000000000000000000000000000000aa1",
-      gnOfficer: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      active: true,
-      phase: 0,
-      treeSize: 0,
-      root: 0n,
-    };
-    const OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-    return {
-      DIVISION,
-      OWNER,
-      REGISTRY: "0x0000000000000000000000000000000000000cc1",
-      /** The NicRegistry address the admin panel must authorise divisions against. */
-      NIC_REGISTRY: "0x0000000000000000000000000000000000000dd1",
-      /** The Voting contract `createDivision` deploys, read back from its receipt. */
-      NEW_DIVISION_ADDRESS: "0x0000000000000000000000000000000000000ee1",
-      /** `getVotingData()` in Setup phase: question, owner, phase, …, candidateCount. */
-      VOTING_DATA: ["Who should represent Kaduwela?", OWNER, 0, 0, 0, 0, 0, 0n, 2],
-      /**
-       * One object, reused. The real `useTargetNetwork` memoises off a zustand
-       * store, so its identity is stable across renders; a mock that rebuilt it
-       * each call would invalidate the `publicClient` memo on every render and
-       * manufacture churn the app does not have.
-       */
-      TARGET_NETWORK: {
-        id: 9494,
-        name: "ZK Election Chain",
-        rpcUrls: { default: { http: ["http://127.0.0.1:9545"] } },
-      },
-      mocks: {
-        auth: { mode: "hardhat" as "hardhat" | "custom", isAdmin: false, isLoading: false },
-        account: { address: undefined as string | undefined },
-        write: vi.fn(),
-        readContract: vi.fn(),
-        getLogs: vi.fn(),
-        getTransactionReceipt: vi.fn(),
-        refetch: vi.fn(),
-        notifyError: vi.fn(),
-        notifySuccess: vi.fn(),
-        notifyWarning: vi.fn(),
-      },
-    };
-  });
+const {
+  DIVISION,
+  DIVISION_B,
+  OWNER,
+  REGISTRY,
+  VOTING_DATA,
+  NIC_REGISTRY,
+  NEW_DIVISION_ADDRESS,
+  TARGET_NETWORK,
+  mocks,
+} = vi.hoisted(() => {
+  const DIVISION = {
+    id: 0,
+    name: "Kaduwela",
+    votingContract: "0x0000000000000000000000000000000000000aa1",
+    gnOfficer: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    active: true,
+    phase: 0,
+    treeSize: 0,
+    root: 0n,
+  };
+  /**
+   * A second division, for the per-division save-status tests. Every other
+   * test runs against `[DIVISION]` alone — `mocks.divisions` is what the
+   * `useDivisions` mock reads, and `beforeEach` resets it to one — so adding
+   * this changes no existing expectation about division counts.
+   */
+  const DIVISION_B = {
+    ...DIVISION,
+    id: 1,
+    name: "Gampaha",
+    votingContract: "0x0000000000000000000000000000000000000aa2",
+  };
+  const OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+  return {
+    DIVISION,
+    DIVISION_B,
+    OWNER,
+    REGISTRY: "0x0000000000000000000000000000000000000cc1",
+    /** The NicRegistry address the admin panel must authorise divisions against. */
+    NIC_REGISTRY: "0x0000000000000000000000000000000000000dd1",
+    /** The Voting contract `createDivision` deploys, read back from its receipt. */
+    NEW_DIVISION_ADDRESS: "0x0000000000000000000000000000000000000ee1",
+    /** `getVotingData()` in Setup phase: question, owner, phase, …, candidateCount. */
+    VOTING_DATA: ["Who should represent Kaduwela?", OWNER, 0, 0, 0, 0, 0, 0n, 2],
+    /**
+     * One object, reused. The real `useTargetNetwork` memoises off a zustand
+     * store, so its identity is stable across renders; a mock that rebuilt it
+     * each call would invalidate the `publicClient` memo on every render and
+     * manufacture churn the app does not have.
+     */
+    TARGET_NETWORK: {
+      id: 9494,
+      name: "ZK Election Chain",
+      rpcUrls: { default: { http: ["http://127.0.0.1:9545"] } },
+    },
+    mocks: {
+      /** Which divisions `useDivisions` reports. One, unless a test says otherwise. */
+      divisions: [DIVISION] as (typeof DIVISION)[],
+      auth: { mode: "hardhat" as "hardhat" | "custom", isAdmin: false, isLoading: false },
+      account: { address: undefined as string | undefined },
+      write: vi.fn(),
+      readContract: vi.fn(),
+      getLogs: vi.fn(),
+      getTransactionReceipt: vi.fn(),
+      refetch: vi.fn(),
+      notifyError: vi.fn(),
+      notifySuccess: vi.fn(),
+      notifyWarning: vi.fn(),
+    },
+  };
+});
 
 /** Also stable — `useTargetNetwork` wraps its return in a `useMemo`. */
 const TARGET_NETWORK_RESULT = { targetNetwork: TARGET_NETWORK };
@@ -82,7 +106,7 @@ vi.mock("~~/hooks/useElectionWriter", () => ({ useElectionWriter: () => ({ write
 // instead — see the "does not flicker" test at the bottom.
 vi.mock("~~/hooks/useDivisions", () => ({
   useDivisions: () => ({
-    divisions: [{ ...DIVISION }],
+    divisions: mocks.divisions.map(division => ({ ...division })),
     isLoading: false,
     error: null,
     refetch: mocks.refetch,
@@ -137,11 +161,20 @@ vi.mock("~~/app/voting/admin/_components/GnAccountsSection", () => ({
   GnAccountsSection: () => <div data-testid="gn-accounts-panel" />,
 }));
 
-/** `readContract` is called for getVotingData, getCandidates and owner. */
+/**
+ * `readContract` is called for getVotingData, getCandidates and owner.
+ *
+ * Answers per contract address, so the second division has a ballot of its own
+ * rather than an echo of the first — otherwise a test could not tell a draft
+ * that followed the selection from one that merely looked unchanged.
+ */
 const stubReads = () =>
-  mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
-    if (functionName === "getVotingData") return Promise.resolve(VOTING_DATA);
-    if (functionName === "getCandidates") return Promise.resolve(["Alice", "Bob"]);
+  mocks.readContract.mockImplementation(({ address, functionName }: { address: string; functionName: string }) => {
+    const isSecond = address === DIVISION_B.votingContract;
+    if (functionName === "getVotingData") {
+      return Promise.resolve(isSecond ? ["Who should represent Gampaha?", OWNER, 0, 0, 0, 0, 0, 0n, 2] : VOTING_DATA);
+    }
+    if (functionName === "getCandidates") return Promise.resolve(isSecond ? ["Chandra", "Dilani"] : ["Alice", "Bob"]);
     if (functionName === "owner") return Promise.resolve(OWNER);
     return Promise.resolve(undefined);
   });
@@ -150,6 +183,7 @@ const stubReads = () =>
 const renderAdmin = (ui: React.ReactNode) => render(<AdminElectionProvider>{ui}</AdminElectionProvider>);
 
 beforeEach(() => {
+  mocks.divisions = [DIVISION];
   mocks.auth = { mode: "hardhat", isAdmin: false, isLoading: false };
   mocks.account = { address: OWNER };
   mocks.write.mockReset().mockResolvedValue("0xdeadbeef");
@@ -728,19 +762,6 @@ describe("admin area — save buttons report their outcome", () => {
     });
   }
 
-  /*
-   * Not covered here: the verdict is also dropped when the operator retargets
-   * to a different division, because the drafts deliberately survive that
-   * change and a verdict left on screen would claim *this* division is saved
-   * while describing the one before it.
-   *
-   * These mocks expose a single division, so there is no second option to
-   * select — and widening the shared `useDivisions` mock would rewrite the
-   * expectations of every broadcast test in this file for one assertion. The
-   * effect is in AdminElectionProvider, keyed on `selectedIdx`; verify it by
-   * hand against a chain with two divisions.
-   */
-
   /**
    * One failing save must not make the other button look broken. They share a
    * component and a state container, so this is exactly the sort of thing that
@@ -761,6 +782,194 @@ describe("admin area — save buttons report their outcome", () => {
 
     // …and the question's failure is still on display.
     expect(screen.getByRole("button", { name: /save failed — retry/i })).toBeDefined();
+  });
+});
+
+/**
+ * Save status belongs to a division, not to the screen.
+ *
+ * The first version of this feature cleared every verdict on a division
+ * change, which made the common operator flow lie: configure Kaduwela, move to
+ * Gampaha, come back, and Kaduwela reported itself unsaved when it was not.
+ *
+ * The drafts had to become per-division alongside the verdicts, and that is
+ * not incidental. They used to be one shared pair, so switching divisions left
+ * the previous division's text on screen — restoring "✓ Saved" over it would
+ * have been a button asserting that what you are looking at is saved when it
+ * is not. These tests check both halves: the verdict comes back, and it comes
+ * back attached to the right data.
+ */
+describe("admin area — save status is tracked per division", () => {
+  /** Each division's on-chain question, per `stubReads`. */
+  const QUESTION = {
+    Kaduwela: "Who should represent Kaduwela?",
+    Gampaha: "Who should represent Gampaha?",
+  };
+  type DivisionName = keyof typeof QUESTION;
+
+  const questionField = () => document.querySelector("textarea") as HTMLTextAreaElement;
+
+  /** How many buttons currently report a completed save. */
+  const savedCount = () => screen.queryAllByRole("button", { name: /^saved$/i }).length;
+
+  /**
+   * Waits for the ballot on screen to be the named division's.
+   *
+   * The picker's own label updates from the divisions array immediately, but
+   * the drafts seed only once that division's contract reads resolve — so the
+   * text is the signal that a switch has actually landed.
+   */
+  const awaitBallot = async (name: DivisionName) => waitFor(() => expect(questionField().value).toBe(QUESTION[name]));
+
+  const renderTwoDivisions = async () => {
+    mocks.divisions = [DIVISION, DIVISION_B];
+    mocks.auth = { mode: "custom", isAdmin: true, isLoading: false };
+    renderAdmin(<AdminBallotPage />);
+    await screen.findByRole("heading", { name: /ballot question/i });
+    await awaitBallot("Kaduwela");
+    return userEvent.setup();
+  };
+
+  /** Point the whole admin area at another division, as the picker does. */
+  const switchTo = async (user: ReturnType<typeof userEvent.setup>, index: number, name: DivisionName) => {
+    await user.selectOptions(screen.getByRole("combobox", { name: /active division/i }), String(index));
+    await awaitBallot(name);
+  };
+
+  const saveBoth = async (user: ReturnType<typeof userEvent.setup>, name: DivisionName) => {
+    await user.click(screen.getByRole("button", { name: new RegExp(`save question for ${name}`, "i") }));
+    await waitFor(() => expect(savedCount()).toBe(1));
+    await user.click(screen.getByRole("button", { name: new RegExp(`save candidates for ${name}`, "i") }));
+    await waitFor(() => expect(savedCount()).toBe(2));
+  };
+
+  it("keeps each division's verdicts when the operator moves between them", async () => {
+    const user = await renderTwoDivisions();
+
+    await saveBoth(user, "Kaduwela");
+
+    // Gampaha starts clean — a fresh division has nothing saved.
+    await switchTo(user, 1, "Gampaha");
+    expect(savedCount()).toBe(0);
+    expect(screen.getByRole("button", { name: /save question for Gampaha/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /save candidates for Gampaha/i })).toBeDefined();
+
+    await saveBoth(user, "Gampaha");
+
+    // Back to Kaduwela: its verdicts are still there. This is the bug — the
+    // previous version cleared every verdict on a division change, so Kaduwela
+    // reported itself unsaved when it was not.
+    await switchTo(user, 0, "Kaduwela");
+    expect(savedCount()).toBe(2);
+
+    // And Gampaha's survived the round trip too.
+    await switchTo(user, 1, "Gampaha");
+    expect(savedCount()).toBe(2);
+  });
+
+  it("carries each division's ballot with it, so a restored verdict describes what is on screen", async () => {
+    const user = await renderTwoDivisions();
+
+    expect((screen.getByPlaceholderText("Candidate #1") as HTMLInputElement).value).toBe("Alice");
+
+    await switchTo(user, 1, "Gampaha");
+
+    // Each division shows its own ballot. Without this, a restored "✓ Saved"
+    // would sit above another division's text — a button claiming that what
+    // you are looking at is saved, when it is not.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText("Candidate #1") as HTMLInputElement).value).toBe("Chandra"),
+    );
+
+    await switchTo(user, 0, "Kaduwela");
+    await waitFor(() => expect((screen.getByPlaceholderText("Candidate #1") as HTMLInputElement).value).toBe("Alice"));
+  });
+
+  it("retires only the edited question's verdict, on only that division", async () => {
+    const user = await renderTwoDivisions();
+
+    await saveBoth(user, "Kaduwela");
+    await switchTo(user, 1, "Gampaha");
+    await saveBoth(user, "Gampaha");
+
+    // Edit Gampaha's question only.
+    await user.type(questionField(), "?");
+
+    // Gampaha: question back to idle and enabled, candidates still saved.
+    const back = screen.getByRole("button", { name: /save question for Gampaha/i });
+    expect((back as HTMLButtonElement).disabled).toBe(false);
+    expect(savedCount()).toBe(1);
+
+    // Kaduwela is untouched by an edit made on Gampaha.
+    await switchTo(user, 0, "Kaduwela");
+    expect(savedCount()).toBe(2);
+  });
+
+  it("retires only the candidate verdict when the slate is edited", async () => {
+    const user = await renderTwoDivisions();
+
+    await saveBoth(user, "Kaduwela");
+
+    await user.type(screen.getByPlaceholderText("Candidate #1"), "x");
+
+    // Candidates back to idle; the question's verdict is unaffected.
+    expect(screen.getByRole("button", { name: /save candidates for Kaduwela/i })).toBeDefined();
+    expect(savedCount()).toBe(1);
+
+    // And it did not leak onto the other division.
+    await switchTo(user, 1, "Gampaha");
+    expect(savedCount()).toBe(0);
+  });
+
+  it("keeps a failure on the division it happened to, and lets that division retry", async () => {
+    const user = await renderTwoDivisions();
+
+    await saveBoth(user, "Kaduwela");
+
+    // Gampaha's question save fails.
+    await switchTo(user, 1, "Gampaha");
+    mocks.write.mockRejectedValueOnce(new Error("relay refused"));
+    await user.click(screen.getByRole("button", { name: /save question for Gampaha/i }));
+    await screen.findByRole("button", { name: /save failed — retry/i });
+
+    // Kaduwela does not inherit Gampaha's failure.
+    await switchTo(user, 0, "Kaduwela");
+    expect(screen.queryByRole("button", { name: /save failed — retry/i })).toBeNull();
+    expect(savedCount()).toBe(2);
+
+    // The failure is still waiting on Gampaha, and retrying there works.
+    await switchTo(user, 1, "Gampaha");
+    await screen.findByRole("button", { name: /save failed — retry/i });
+    await user.click(screen.getByRole("button", { name: /save failed — retry/i }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: /save failed — retry/i })).toBeNull());
+    expect(savedCount()).toBe(1);
+  });
+
+  it("lands a mid-save division switch on the division that was saved", async () => {
+    const user = await renderTwoDivisions();
+
+    // Hold the write open, switch division while it is in flight, then let it
+    // land. The verdict must attach to the division the operator clicked on,
+    // not to whatever is on screen when it resolves.
+    let land: (value: string) => void = () => {};
+    mocks.write.mockReturnValueOnce(
+      new Promise<string>(resolve => {
+        land = resolve;
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /save question for Kaduwela/i }));
+    await screen.findByRole("button", { name: /saving/i });
+
+    await switchTo(user, 1, "Gampaha");
+    // Gampaha shows no spinner: the in-flight save is not its own.
+    expect(screen.queryByRole("button", { name: /saving/i })).toBeNull();
+
+    land("0xdeadbeef");
+
+    await switchTo(user, 0, "Kaduwela");
+    await waitFor(() => expect(savedCount()).toBe(1));
   });
 });
 
