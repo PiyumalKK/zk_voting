@@ -16,25 +16,49 @@ import Constants, { ExecutionEnvironment } from "expo-constants";
  * Nothing sensitive is ever sent to a server.
  */
 
-const KEY_PRIVATE = "slvote.privateKey"; // biometric-gated
+const KEY_PRIVATE = "slvote.privateKey"; // auth-gated when biometrics are available
 const KEY_ADDRESS = "slvote.address"; // public, no auth
-const KEY_NULLIFIER = "slvote.nullifier"; // biometric-gated
-const KEY_SECRET = "slvote.secret"; // biometric-gated
+const KEY_NULLIFIER = "slvote.nullifier"; // auth-gated when biometrics are available
+const KEY_SECRET = "slvote.secret"; // auth-gated when biometrics are available
 const KEY_REGISTERED = "slvote.registered"; // public flag, set ONLY after a confirmed on-chain register
 const KEY_DIVISION = "slvote.division"; // public: the voter's chosen division contract
 const KEY_VOTED = "slvote.voted"; // public: JSON array of division contracts this identity has voted in
+const KEY_AUTH_GATED = "slvote.authGated"; // "1" if the sensitive keys were written behind a biometric gate
 
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-
-const AUTH_OPTIONS: SecureStore.SecureStoreOptions = {
-  requireAuthentication: !isExpoGo,
-  authenticationPrompt: "Unlock your voting identity",
-  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-};
 
 const PUBLIC_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
+
+// SecureStore options that force a biometric check on read/write.
+const GATED_OPTIONS: SecureStore.SecureStoreOptions = {
+  requireAuthentication: true,
+  authenticationPrompt: "Unlock your voting identity",
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+
+// Whether this device can biometric-gate secure storage. `requireAuthentication`
+// on Android needs an ENROLLED BIOMETRIC: phones with no fingerprint/face
+// hardware (or none enrolled) reject the write with "No hardware available for
+// biometric authentication". So we gate only when it is truly available and fall
+// back to un-gated (still hardware-backed, device-only) storage otherwise, so the
+// app works on every phone. Expo Go cannot gate at all.
+async function canGate(): Promise<boolean> {
+  if (isExpoGo) return false;
+  const cap = await getBiometricCapability();
+  return cap.supported;
+}
+
+// Options for the sensitive keys, matching how they were written. The decision is
+// persisted (KEY_AUTH_GATED) at identity creation so reads always use the same
+// options the writes used, even if the user later enrolls or removes a fingerprint.
+async function sensitiveOptions(): Promise<SecureStore.SecureStoreOptions> {
+  const flag = await SecureStore.getItemAsync(KEY_AUTH_GATED, PUBLIC_OPTIONS).catch(() => null);
+  if (flag === "1") return GATED_OPTIONS;
+  if (flag === "0") return PUBLIC_OPTIONS;
+  return (await canGate()) ? GATED_OPTIONS : PUBLIC_OPTIONS;
+}
 
 export interface BiometricCapability {
   hasHardware: boolean;
@@ -74,8 +98,10 @@ export async function hasIdentity(): Promise<boolean> {
 export async function createIdentity(): Promise<`0x${string}`> {
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
-  await SecureStore.setItemAsync(KEY_PRIVATE, privateKey, AUTH_OPTIONS);
+  const gated = await canGate();
+  await SecureStore.setItemAsync(KEY_PRIVATE, privateKey, gated ? GATED_OPTIONS : PUBLIC_OPTIONS);
   await SecureStore.setItemAsync(KEY_ADDRESS, account.address, PUBLIC_OPTIONS);
+  await SecureStore.setItemAsync(KEY_AUTH_GATED, gated ? "1" : "0", PUBLIC_OPTIONS);
   return account.address;
 }
 
@@ -84,22 +110,24 @@ export async function getAddress(): Promise<`0x${string}` | null> {
   return (addr as `0x${string}`) ?? null;
 }
 
-/** Retrieve the private key — triggers the biometric / passcode prompt. */
+/** Retrieve the private key — triggers the biometric prompt when the device is gated. */
 export async function getPrivateKey(): Promise<`0x${string}`> {
-  const pk = await SecureStore.getItemAsync(KEY_PRIVATE, AUTH_OPTIONS);
+  const pk = await SecureStore.getItemAsync(KEY_PRIVATE, await sensitiveOptions());
   if (!pk) throw new Error("No voting identity on this device");
   return pk as `0x${string}`;
 }
 
 /** Store the ZK commitment secrets generated during registration. */
 export async function storeVoterSecrets(nullifier: string, secret: string): Promise<void> {
-  await SecureStore.setItemAsync(KEY_NULLIFIER, nullifier, AUTH_OPTIONS);
-  await SecureStore.setItemAsync(KEY_SECRET, secret, AUTH_OPTIONS);
+  const options = await sensitiveOptions();
+  await SecureStore.setItemAsync(KEY_NULLIFIER, nullifier, options);
+  await SecureStore.setItemAsync(KEY_SECRET, secret, options);
 }
 
 export async function getVoterSecrets(): Promise<{ nullifier: string; secret: string } | null> {
-  const nullifier = await SecureStore.getItemAsync(KEY_NULLIFIER, AUTH_OPTIONS);
-  const secret = await SecureStore.getItemAsync(KEY_SECRET, AUTH_OPTIONS);
+  const options = await sensitiveOptions();
+  const nullifier = await SecureStore.getItemAsync(KEY_NULLIFIER, options);
+  const secret = await SecureStore.getItemAsync(KEY_SECRET, options);
   if (!nullifier || !secret) return null;
   return { nullifier, secret };
 }
