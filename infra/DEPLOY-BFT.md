@@ -5,7 +5,7 @@ single-sequencer topology to 2/3 Byzantine-fault-tolerant consensus.
 
 | If you want | Read |
 |---|---|
-| to understand what this is and why — keys, quorum, demos | [`../02-BFT-CONSENSUS.md`](../02-BFT-CONSENSUS.md) |
+| to understand what this is and why — keys, quorum, demos | [`../packages/blockchain/02-BFT-CONSENSUS.md`](../packages/blockchain/02-BFT-CONSENSUS.md) |
 | the protocol's technical detail | [`../packages/blockchain/CONSENSUS.md`](../packages/blockchain/CONSENSUS.md) |
 | an ordinary (non-BFT) deployment | [`DEPLOY_STEPS.md`](DEPLOY_STEPS.md) |
 

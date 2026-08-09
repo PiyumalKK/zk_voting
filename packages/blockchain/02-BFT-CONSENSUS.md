@@ -7,8 +7,8 @@ This is the explanatory document. Two companions:
 
 | Document | Purpose |
 |---|---|
-| [`packages/blockchain/CONSENSUS.md`](packages/blockchain/CONSENSUS.md) | technical reference — message formats, safety proof, code map |
-| [`infra/DEPLOY-BFT.md`](infra/DEPLOY-BFT.md) | the deployment runbook — do these steps in this order |
+| [`CONSENSUS.md`](CONSENSUS.md) | technical reference — message formats, safety proof, code map |
+| [`infra/DEPLOY-BFT.md`](../../infra/DEPLOY-BFT.md) | the deployment runbook — do these steps in this order |
 
 ---
 
@@ -767,7 +767,7 @@ deployment property rather than a design flaw.
 
 ## Where to go next
 
-- **Technical detail** → [`packages/blockchain/CONSENSUS.md`](packages/blockchain/CONSENSUS.md)
-- **Deploying it** → [`infra/DEPLOY-BFT.md`](infra/DEPLOY-BFT.md)
-- **The code** → `packages/blockchain/internal/consensus/`
+- **Technical detail** → [`CONSENSUS.md`](CONSENSUS.md)
+- **Deploying it** → [`infra/DEPLOY-BFT.md`](../../infra/DEPLOY-BFT.md)
+- **The code** → `internal/consensus/`
 - **The tests** → `go test ./internal/consensus/ -v` and `make bft-cluster-test`
