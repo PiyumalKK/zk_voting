@@ -1,6 +1,6 @@
 \chapter{Smart Contracts and Custom Blockchain}\label{ch:contracts}
 
-This chapter presents the complete implementation of our smart contract layer and custom Go blockchain. We analyze each contract in detail---state variables, events, modifiers, and functions---then describe the custom blockchain architecture: a contract-agnostic node that embeds the go-ethereum EVM behind an Ethereum JSON-RPC interface, providing gasless execution, replicated persistence, independent auditability, and wallet-free administration.
+This chapter presents the complete implementation of our smart contract layer and custom Go blockchain. We analyze each contract in detail---state variables, events, modifiers, and functions---then describe the custom blockchain architecture: a contract-agnostic node that embeds the go-ethereum EVM behind an Ethereum JSON-RPC interface, providing gasless execution, Byzantine fault tolerant block production across four independently-operated validators, independent auditability, and wallet-free administration.
 
 \section{Smart Contract Overview}
 
@@ -446,11 +446,13 @@ The consequences are far-reaching:
 \hline
 \texttt{internal/state} & Chain configuration (all EVM forks active from genesis), genesis construction, and StateDB lifecycle \\
 \hline
-\texttt{internal/chain} & The sequencer: transaction validation, EVM execution, block sealing, and atomic persistence \\
+\texttt{internal/chain} & Transaction validation, EVM execution, block assembly, verification by re-execution, and atomic persistence \\
 \hline
-\texttt{internal/rpc} & JSON-RPC server (namespaces \texttt{eth}, \texttt{net}, \texttt{web3}, plus gated dev methods), CORS, and rate limiting \\
+\texttt{internal/consensus} & The BFT state machine: validator registry, signed protocol messages, round management, and the commit-certificate store \\
 \hline
-\texttt{internal/p2p} & mTLS block replication between the sequencer and replicas \\
+\texttt{internal/rpc} & JSON-RPC server (namespaces \texttt{eth}, \texttt{net}, \texttt{web3}, the additive \texttt{zk} namespace, plus gated dev methods), CORS, and rate limiting \\
+\hline
+\texttt{internal/p2p} & mTLS transport between validators: block transfer for catch-up, and consensus message exchange \\
 \hline
 \texttt{cmd/audit} & Standalone replay-verification tool for independent auditing \\
 \hline
@@ -459,7 +461,7 @@ The consequences are far-reaching:
 
 \subsection{Transaction Lifecycle and Block Production}
 
-The node uses \emph{auto-mining with one transaction per block}, the same model the Hardhat development network popularized. There is no mempool and, because a single sequencer orders all transactions, there are no forks and no reorganizations---every sealed block is instantly final.
+The node uses \emph{auto-mining with one transaction per block}, the same model the Hardhat development network popularized. There is no mempool, and every committed block is final the moment it is committed---there are no forks and no reorganizations. Under the consensus protocol described in Section~\ref{sec:consensus} that finality is \emph{single-slot}: a block is immutable once a quorum of validators has signed it, rather than becoming progressively safer with depth as on a public chain.
 
 \begin{figure}[H]
 \centering
@@ -470,7 +472,7 @@ The node uses \emph{auto-mining with one transaction per block}, the same model 
 
 A submitted raw transaction passes through four stages. \emph{Validation} recovers the sender from the signature (rejecting wrong-chain-id transactions), enforces the exact expected nonce, and checks the gas limit against the block gas limit of 60~million---comfortably above the ${\sim}15$~million gas a proof-verifying vote may consume. \emph{Execution} applies the transaction to a copy of current state through go-ethereum's transition logic, producing a receipt with logs and bloom filter. \emph{Sealing} assembles a post-merge-style header (strictly increasing timestamps, zero base fee, transaction/receipt/state roots) around the single transaction. \emph{Persistence} writes block, receipts, lookup entries, and the committed state trie in one atomic batch, ordered so that a crash mid-write always leaves the previous head intact.
 
-If execution reverts, the sequencer rolls back and returns the revert data through the RPC error---the transaction is never mined. This mirrors Hardhat's auto-mine behavior exactly, which is what keeps client error handling backend-agnostic.
+If execution reverts, the node rolls back and returns the revert data through the RPC error---the transaction is never mined. This mirrors Hardhat's auto-mine behavior exactly, which is what keeps client error handling backend-agnostic. Under consensus this rejection deliberately happens at \emph{submission} time, before any peer is asked to vote: the proposing validator executes the transaction while building its candidate block, so a reverting ballot is refused with its revert data intact rather than being discovered three protocol phases later, when there would be no channel on which to report it.
 
 \subsection{Gasless Execution Model}
 
@@ -514,23 +516,47 @@ Dev (gated) & \texttt{evm\_increaseTime}, \texttt{evm\_mine}, \texttt{evm\_setNe
 
 The development namespace is disabled by default in production and exists so that the \emph{entire Hardhat contract test suite} can run unmodified against the node---the strongest possible compatibility evidence (Chapter~\ref{ch:testing}). WebSocket subscriptions are deliberately out of scope: every client in the system polls over HTTP.
 
-\subsection{Replicated Topology: Sequencer and Verifying Replicas}
+\subsection{Byzantine Fault Tolerant Consensus}\label{sec:consensus}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{Images/fig_chain_v2_replication.png}
-\caption{Three-node topology: the sequencer pushes each sealed block over mutually authenticated TLS; replicas independently re-execute every transaction and refuse any block whose state root does not match, making history tampering immediately evident.}
+\caption{Four-validator topology: every node may propose, and each independently re-executes a proposed block before signing it. A block is committed only once a quorum of three validators has signed it, and those signatures are stored alongside the block as a verifiable certificate.}
 \label{fig:replication}
 \end{figure}
 
-The production deployment runs three nodes: one \textbf{sequencer} and two \textbf{verifying replicas} (the replica count is configuration, not code). Replication serves two distinct purposes:
+An earlier iteration of this chain used a \textbf{single sequencer}: one node ordered and sealed every transaction, and the others were verifying replicas that re-executed each block and refused any whose state root did not match. That arrangement made history tampering evident---a sequencer could not silently falsify the record---but it left two weaknesses that are unacceptable for a national election.
 
 \begin{enumerate}
-    \item \textbf{Read scalability and availability.} Replicas serve the full read RPC surface locally---results dashboards, audit queries, and explorer traffic never load the sequencer. Write transactions submitted to a replica are transparently forwarded.
-    \item \textbf{Tamper evidence.} Replicas are not passive mirrors. Each received block is fully \emph{re-executed} on the replica's own state, and the resulting state root is compared against the header. A sequencer that alters history or fabricates state produces a root mismatch that every honest replica rejects and logs loudly. Combined with deterministic replay (below), this gives the permissioned deployment an honest integrity story without the complexity of Byzantine consensus: the sequencer is a liveness single point, but it \emph{cannot silently falsify} the record.
+    \item \textbf{Availability.} If the sequencer stopped, the chain stopped, even with every other node healthy. Replicas could copy blocks but had no mechanism to produce one. For a system whose function is to accept ballots within a fixed window, a single reboot ending the election is not a survivable property.
+    \item \textbf{Unilateral control of contents.} Detection is not prevention. A replica could prove a state root wrong, but could not stop the sequencer from omitting a valid ballot, reordering transactions, or otherwise deciding what the chain contained. Whoever operated that node decided the election's contents---and in a real deployment that operator is the electoral authority, which is precisely the trust assumption a verifiable system exists to remove.
 \end{enumerate}
 
-Node-to-node traffic runs over mutual TLS with a private certificate authority; replicas catch up after downtime by pulling missed block ranges and re-verifying each one.
+The production deployment therefore runs \textbf{four co-equal validators} operating a QBFT/IBFT-style consensus protocol~\cite{castro1999practical}: the electoral authority and three political parties, each holding an independent secp256k1 consensus signing key. All four may propose; none may commit alone.
+
+\subsubsection{Quorum and fault tolerance}
+
+With $N$ validators, a quorum of $Q$ signatures, and up to $f$ faulty participants, two requirements pull against each other. \emph{Liveness} requires that the survivors of $f$ failures can still reach a quorum, $Q \leq N - f$. \emph{Safety} requires that any two quorums overlap in at least one \emph{honest} validator, and since two sets of $Q$ drawn from $N$ share at least $2Q - N$ members, $2Q - N > f$. Substituting the first into the second yields
+
+\begin{equation}
+2(N - f) - N > f \;\Longrightarrow\; N > 3f,
+\end{equation}
+
+so tolerating a single fault requires $N = 4$, with the smallest admissible quorum $Q = \lceil 2N/3 \rceil = 3$. Three validators would not suffice: with $N=3, Q=2$ two quorums overlap in exactly one member, and if that member is the faulty one it can sign for two different blocks at the same height---a fork. The fourth validator is what guarantees an honest witness in every overlap.
+
+The deployed configuration is therefore $N=4$, $Q=3$, $f=1$: the election continues with any one validator down, \emph{including the electoral authority's own node}, and halts rather than weakening if two are lost.
+
+\subsubsection{Protocol}
+
+Block production proceeds in four phases per height, with a fifth for recovery. The proposer for a height is $\text{validators}[(H + r) \bmod N]$ for round $r$---a pure function of the block number that every validator and every later auditor computes identically, with no leader election. The proposer builds a candidate block and broadcasts a signed \textsc{pre-prepare}; each validator \emph{re-executes that block on its own state} and, if every value the header commits to follows from its contents, broadcasts a signed \textsc{prepare}. On $Q$ prepares a validator locks onto the block and broadcasts a \textsc{commit}; on $Q$ commits the block is committed. If the proposer is silent or the round times out, $Q$ signed \textsc{round-change} messages advance the round and rotate the proposership---which is the mechanism by which a failed validator is routed around.
+
+Two properties deserve emphasis. First, a \textsc{prepare} does not mean ``the proposer says this is valid''; it means \emph{``I executed this block myself and reproduced its state root''}, using the same replay code the offline audit tool runs. The tamper-evidence property of the earlier design is therefore retained in full and strengthened: verification is no longer merely detection after the fact, but a precondition of the block existing at all. Second, the \emph{lock} is what makes forking impossible: once a validator commits to a block at a height it will never vote for a different one there, in any later round. Since any two quorums share at least one honest validator, two distinct blocks reaching $Q$ commits at one height would require that honest node to have committed to both.
+
+\subsubsection{Commit certificates}
+
+The $Q$ signatures that finalized a block are stored alongside it and served over an additive \texttt{zk\_getCommitSeals} JSON-RPC method, which recovers each signer's address from its signature server-side---so a scrutineer can verify the quorum arithmetic without trusting the node that answered. The certificate is stored in a \emph{sidecar} keyed by block height and hash rather than packed into the block header as IBFT chains conventionally do. This is deliberate: the block hash and state root are what the audit tool, the catch-up path and the replay verifier all check against, so placing signatures inside the hashed header would change every block hash and require a second code path through machinery that already worked. The honest cost is that a block's validity does not depend on its seals---re-execution proves the \emph{state} is correct, while the seals prove \emph{who agreed to it}.
+
+Node-to-node traffic continues to run over mutual TLS with a private certificate authority. A validator that was offline catches up by pulling the blocks it missed from any peer and re-executing each one itself, then rejoins voting automatically; it never votes at a height it has not yet evaluated, because messages for heights beyond its own are buffered rather than tallied.
 
 \subsection{Independent Auditability}
 
@@ -561,4 +587,4 @@ Switching the entire application between the Hardhat network and the custom chai
 
 \section{Summary}
 
-This chapter presented the complete smart contract layer---\texttt{Voting.sol}'s phased state machine with five-layer vote validation, \texttt{ElectionRegistry.sol}'s on-chain division factory with national aggregation, \texttt{NicRegistry.sol}'s peppered-hash Sybil prevention, and the auto-generated \texttt{HonkVerifier}---and the custom Go blockchain that executes it. By embedding a real EVM behind the standard Ethereum JSON-RPC interface, the chain remains completely contract-agnostic: it provides gasless voting, instant finality, replicated tamper-evident persistence, full-history auditability, and wallet-free administration, while every application component (Chapter~\ref{ch:applications}) interacts with it exactly as it would with any Ethereum node.
+This chapter presented the complete smart contract layer---\texttt{Voting.sol}'s phased state machine with five-layer vote validation, \texttt{ElectionRegistry.sol}'s on-chain division factory with national aggregation, \texttt{NicRegistry.sol}'s peppered-hash Sybil prevention, and the auto-generated \texttt{HonkVerifier}---and the custom Go blockchain that executes it. By embedding a real EVM behind the standard Ethereum JSON-RPC interface, the chain remains completely contract-agnostic: it provides gasless voting, single-slot finality under Byzantine fault tolerant consensus across four independently-operated validators, full-history auditability, and wallet-free administration, while every application component (Chapter~\ref{ch:applications}) interacts with it exactly as it would with any Ethereum node. Distributing block production across the electoral authority and three political parties removes the last component of the system in which a single operator held unilateral power---no one party can halt the election, and no one party can decide its contents.

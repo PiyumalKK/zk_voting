@@ -89,7 +89,7 @@ Four Solidity contracts implement the election logic:
 A custom Go blockchain provides the execution environment:
 \begin{itemize}
     \item Embedded go-ethereum EVM for Solidity execution
-    \item PBFT consensus among election commission nodes
+    \item Byzantine fault tolerant consensus (QBFT/IBFT-style) across four independently-operated validators---the electoral authority and three political parties---requiring a quorum of three signatures to commit a block
     \item BoltDB persistence for block storage
     \item REST API for application interaction
     \item Gasless execution model (no transaction fees)
@@ -129,7 +129,7 @@ An adversary who can observe a voter during the voting process and demand proof 
 Our system makes the following minimal trust assumptions:
 \begin{enumerate}
     \item The voter's device hardware is not compromised (TEE/Secure Enclave intact)
-    \item At least $2n/3 + 1$ validator nodes are honest (PBFT threshold)
+    \item More than $2n/3$ validator nodes are honest---for the deployed set of $n=4$, at least $3$, so the system tolerates one faulty or unreachable validator
     \item The BN254 discrete logarithm assumption holds
     \item The Poseidon hash function is collision-resistant
     \item The voter performs the voting action in a private environment
@@ -161,7 +161,7 @@ Front-running & Observe proof, change vote & Vote-binding in circuit \\
 \hline
 Replay attack & Resubmit valid proof & Nullifier consumed on-chain \\
 \hline
-State rollback & Revert blockchain state & PBFT finality (no reorgs) \\
+State rollback & Revert blockchain state & Single-slot BFT finality (no reorgs) \\
 \hline
 Admin abuse & Authority manipulates results & Public verifiability + E2E audit \\
 \hline
@@ -497,7 +497,7 @@ The complete data flow from voter action to on-chain state change follows this p
     \item \textbf{API Handler}: Go HTTP handler validates format, applies rate limits
     \item \textbf{EVM Execution}: Embedded go-ethereum EVM executes Solidity bytecode
     \item \textbf{State Transition}: Contract logic validates and updates state
-    \item \textbf{Block Commit}: PBFT consensus finalizes the state change
+    \item \textbf{Block Commit}: BFT consensus finalizes the state change once three of the four validators have independently re-executed and signed the block
     \item \textbf{Persistence}: BoltDB stores the committed block
     \item \textbf{Event Emission}: Blockchain events propagate to listening clients
 \end{enumerate}

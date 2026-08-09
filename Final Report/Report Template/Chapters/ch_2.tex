@@ -354,7 +354,9 @@ Public blockchains using Proof-of-Work (PoW) or Proof-of-Stake (PoS) introduce p
 
 \subsection{PBFT in Election Context}
 
-Practical Byzantine Fault Tolerance~\cite{castro1999practical} tolerates up to $\lfloor(n-1)/3\rfloor$ Byzantine nodes in a network of $n$ validators. For our election context, validators are election commission nodes in different geographic regions, providing geographic distribution of trust.
+Practical Byzantine Fault Tolerance~\cite{castro1999practical} tolerates up to $\lfloor(n-1)/3\rfloor$ Byzantine nodes in a network of $n$ validators. The IBFT and QBFT variants used by permissioned chains such as Hyperledger Besu simplify this into a leader-based protocol with single-slot finality over a small, fixed validator set, which is the shape our deployment adopts (Section~\ref{sec:consensus}).
+
+The more consequential design question for an election is not the protocol but \emph{who holds the validator keys}. Distributing them geographically across nodes of a single election commission protects against machine failure but not against the commission itself---the trust assumption that a verifiable voting system exists to remove. Our deployment therefore distributes them \emph{institutionally}, across the electoral authority and three political parties, so that the adversary the quorum defends against includes the operator of the system.
 
 \section{Mobile ZK Proving}
 

@@ -176,7 +176,7 @@ The custom chain's correctness claim---``behaves exactly like an Ethereum node f
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{Images/fig_chain_v2_testing.png}
-\caption{Blockchain verification methodology: unit tests, differential testing against a reference Hardhat node, the unmodified contract test suite executed against the Go node, deterministic audit replay, and multi-node replication checks.}
+\caption{Blockchain verification methodology: unit tests, differential testing against a reference Hardhat node, the unmodified contract test suite executed against the Go node, deterministic audit replay, and four-validator consensus checks under induced validator failure.}
 \label{fig:chain-testing}
 \end{figure}
 
@@ -185,7 +185,7 @@ The custom chain's correctness claim---``behaves exactly like an Ethereum node f
     \item \textbf{Differential testing.} A harness issues identical viem calls to a live Hardhat node and to our node, then diffs the JSON responses after normalizing legitimately volatile fields (hashes, timestamps). This covers read methods, write receipts, and---critically---\emph{error shapes}: a revert with \texttt{Voting\_\_WrongPhase} must decode to the same custom error on both backends, since the applications' error handling depends on it. Response-shape checks additionally run viem's own formatters over the node's JSON to catch field-level deviations.
     \item \textbf{The Hardhat contract suite against the node.} The strongest compatibility evidence: the same 55-test suite from Table~\ref{tab:test-distribution} is executed unmodified with \texttt{--network custom}, so every assertion written for the reference EVM must also hold on ours---including time manipulation via the \texttt{evm\_increaseTime} development methods.
     \item \textbf{Deterministic audit replay.} The standalone audit tool re-executes the full block history on a fresh state database and verifies every block's state root, receipt root, transaction root, and linkage; deliberately corrupted test fixtures are detected at the exact offending block.
-    \item \textbf{Replication checks.} Three-node cluster scenarios verify that replicas re-execute and accept honest blocks, reject blocks with tampered state roots, catch up correctly after downtime, and transparently forward writes to the sequencer.
+    \item \textbf{Consensus checks.} Two independent levels. \emph{In process}, four consensus engines run against four real databases, verifying that a block commits only with a quorum of signatures from distinct validators; that the chain continues with any one validator down (asserted over every validator in turn, including the electoral authority's); that it freezes rather than committing below quorum with two down, and resumes when one returns; that the proposership rotates past a failed proposer; and that a Byzantine proposer sending two different blocks for the same height cannot fork the cluster. \emph{At the process level}, the same scenarios are driven against four real node binaries communicating over mutual TLS, with processes killed and restarted mid-run, followed by a full audit replay of the resulting chain.
 \end{enumerate}
 
 \section{Performance Characteristics}
@@ -208,9 +208,9 @@ ZK proof generation & 3.1 s & Node.js (bb.js WASM) \\
 \hline
 Vote transaction (incl.\ on-chain verify) & 16 ms & Custom chain (EVM Honk verify) \\
 \hline
-Block finality & Immediate & 1 tx/block, no reorgs \\
+Block finality & $\sim$1--2 s & 1 tx/block; single-slot on 3-of-4 quorum \\
 \hline
-Replica propagation & $<$1 s & mTLS push, LAN \\
+Consensus round (4 validators) & $\sim$1--2 s & 4 signed phases over mTLS, LAN \\
 \hline
 National result query & tens of ms & View call (no gas) \\
 \hline
@@ -226,14 +226,14 @@ Merkle path retrieval & $<$100 ms & API route over event logs \\
 \label{fig:latency-chart}
 \end{figure}
 
-Because the node auto-mines one transaction per block with instant finality, there is no block-interval waiting time and no confirmation-depth heuristic: a transaction is final the moment its receipt exists.
+Because the node auto-mines one transaction per block, there is no block-interval waiting time and no confirmation-depth heuristic: a transaction is final the moment its receipt exists. Consensus makes that receipt cost a round of signed messages rather than a local seal, which is the one place the move to Byzantine fault tolerance is visible in the latency budget---roughly one to two seconds instead of milliseconds. It is not the bottleneck: generating a single ZK vote proof takes 3.1~seconds under the most favourable measurement conditions and 15--25~seconds on a handset, so consensus remains an order of magnitude below the dominant cost of casting a ballot.
 
 \subsection{Throughput Analysis}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.85\textwidth]{Images/fig_throughput_chart.png}
-\caption{System throughput by operation class: reads scale across replicas; vote throughput is bounded by on-chain proof verification.}
+\caption{System throughput by operation class: reads are answered locally by any validator and scale across all four; vote throughput is bounded by on-chain proof verification.}
 \label{fig:throughput}
 \end{figure}
 
@@ -249,7 +249,7 @@ Registrations & Hundreds of tx/s & LeanIMT Merkle insert \\
 \hline
 Vote submissions & Tens of tx/s & On-chain Honk verification \\
 \hline
-Read queries & Thousands of req/s & Scales across read replicas \\
+Read queries & Thousands of req/s & Scales across all four validators \\
 \hline
 \end{tabular}
 \end{table}
@@ -348,7 +348,11 @@ Front-running & Node operator & Vote bound in proof & Prevented & None (cryptogr
 \hline
 Sybil (multi-div) & Voter & NicRegistry (peppered hash) & Prevented & Fake NIC document \\
 \hline
-History tampering & Infrastructure & Replica re-execution + audit replay & Detected & Sequencer liveness (censorship is detectable) \\
+History tampering & Infrastructure & Per-validator re-execution before voting + audit replay & Prevented & Collusion of 3 of 4 validators \\
+\hline
+Election halted & Node operator & 3-of-4 quorum; proposer rotation & Prevented & Loss of 2 of 4 validators \\
+\hline
+Ballot censorship & Node operator & Any validator may propose; round change & Mitigated & Collusion of 3 of 4 validators \\
 \hline
 Relay compromise & External/insider & Function whitelist + audit log; votes never pass through relay & Bounded & Lifecycle disruption (detectable); cannot forge votes \\
 \hline
@@ -360,7 +364,13 @@ Replay attack & External & Nullifier consumed & Prevented & None (one-time) \\
 }
 \end{table}
 
-Two rows deserve elaboration. \emph{History tampering}: the single sequencer cannot silently rewrite the record, because every replica re-executes every block and rejects state-root mismatches, and the offline audit tool re-derives the full election from genesis; what remains is a liveness risk (a malicious sequencer could stall or censor), which is externally observable. \emph{Relay compromise}: the administrative relay signs only whitelisted lifecycle functions and structurally cannot sign \texttt{register} or \texttt{vote}, so even full server compromise cannot manufacture or alter a single ballot.
+Three rows deserve elaboration.
+
+\emph{History tampering} moved from \emph{detected} to \emph{prevented} with the adoption of consensus. Under the earlier single-sequencer design, a dishonest node could not rewrite the record silently---replicas re-executed every block and rejected state-root mismatches---but it could still \emph{author} what went in, so the residual risk was a liveness and censorship one borne entirely by one operator. Now every validator re-executes a proposed block \emph{before} signing it, and a block cannot exist without a quorum of three such signatures, so falsification is no longer merely detectable after the fact: it is refused at proposal time.
+
+\emph{Election halted} and \emph{ballot censorship} are the two risks the change was made to address, and their residual columns state the new bound honestly. Halting the election now requires losing two of four validators rather than one machine. Censorship requires three of the four operators---the electoral authority and two opposition parties---to collude, since any single validator that refuses to include a ballot is simply rotated past by a round change, and any other validator may propose it. Note also what even three colluding validators cannot do: finalize a block with an invalid state root, because the honest validator re-executes before voting. The attack surface is ordering and omission, not arithmetic.
+
+\emph{Relay compromise}: the administrative relay signs only whitelisted lifecycle functions and structurally cannot sign \texttt{register} or \texttt{vote}, so even full server compromise cannot manufacture or alter a single ballot.
 
 \subsection{Coercion Resistance Analysis}
 
@@ -459,7 +469,7 @@ Single-cluster vote rate & Tens/sec & On-chain Honk verification \\
 \end{tabular}
 \end{table}
 
-The circuit never needs modification: capacity scales by \emph{adding divisions}, not by deepening the tree. The gap between the required national rate and a single cluster's vote throughput is closed by parallelism, which the architecture provides for free---divisions are fully independent contracts, so district-level chain clusters (each a sequencer with replicas, carrying a subset of divisions) can process votes concurrently, with the registry aggregation performed off-chain across clusters. Complementary future optimizations include proof batching and recursive aggregation (Chapter~\ref{ch:conclusion}).
+The circuit never needs modification: capacity scales by \emph{adding divisions}, not by deepening the tree. The gap between the required national rate and a single cluster's vote throughput is closed by parallelism, which the architecture provides for free---divisions are fully independent contracts, so district-level chain clusters (each a four-validator consensus group carrying a subset of divisions) can process votes concurrently, with the registry aggregation performed off-chain across clusters. Each cluster would carry its own validator set, so the trust distribution replicates per district rather than concentrating nationally. Complementary future optimizations include proof batching and recursive aggregation (Chapter~\ref{ch:conclusion}).
 
 \subsection{Storage Requirements}
 
@@ -546,8 +556,8 @@ Our comprehensive evaluation demonstrates:
 \begin{enumerate}
     \item \textbf{Correctness}: All 55 contract unit tests pass---on the reference Hardhat network \emph{and} unmodified against the custom Go chain; cross-layer test vectors verify cryptographic consistency
     \item \textbf{Compatibility}: Differential testing shows the custom chain is JSON-RPC-indistinguishable from an Ethereum node for every operation the system performs
-    \item \textbf{Performance}: Vote submission completes in $<$30 seconds end-to-end, dominated by mobile proof generation; on-chain steps are sub-second with instant finality
-    \item \textbf{Security}: All identified attack vectors are either prevented cryptographically or rendered detectable through replication and audit replay
+    \item \textbf{Performance}: Vote submission completes in $<$30 seconds end-to-end, dominated by mobile proof generation; on-chain execution is sub-second and a consensus round adds one to two seconds to finality
+    \item \textbf{Security}: All identified attack vectors are either prevented cryptographically or rendered detectable through audit replay; no single validator can halt the election or decide its contents, and falsifying history requires three of the four operators to collude
     \item \textbf{Scalability}: 10.5M voters at 160 divisions with no circuit modification; national scale reached by adding divisions and parallel district clusters
     \item \textbf{Cost}: Zero gas fees for voters (gasless chain), removing both the economic barrier and the funding-trail deanonymization vector
     \item \textbf{Privacy}: Formal voter--ballot unlinkability (Theorem~\ref{thm:unlinkability})
