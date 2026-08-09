@@ -11,6 +11,11 @@ import { CheckIcon, ExclamationTriangleIcon } from "@heroicons/react/24/outline"
  * only evidence was a toast, which is gone in four seconds and missed entirely
  * by an operator who looked away — exactly when they are most likely to click
  * twice and send a second transaction.
+ *
+ * Both settled states persist. Neither expires on a timer, because each is a
+ * statement about the data currently on screen and stays true until that data
+ * changes — see the provider, which retires a verdict on an edit, a division
+ * change, or a fresh attempt, and never on a clock.
  */
 export type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -49,12 +54,16 @@ export const SaveButton = ({
 }) => {
   const isSaving = state === "saving";
 
-  // Only `saving` disables on this component's own account. A settled state
-  // stays clickable: after a failure the operator's next move is to retry, and
-  // after a success re-saving is harmless and occasionally wanted (an operator
-  // who is unsure whether the value they see is the one that landed). The
-  // caller's `disabled` still wins.
-  const isDisabled = disabled || isSaving;
+  // `saving` and `saved` both disable; `error` deliberately does not.
+  //
+  // A persistent "Saved" means "what is on screen is what was written", so
+  // there is nothing left to do until the operator changes something — and an
+  // enabled button there invites a second, identical transaction from someone
+  // unsure whether the first landed, which is the very doubt this state
+  // exists to settle. Editing the data clears the verdict and re-enables it.
+  //
+  // A failure is the opposite: unfinished work, whose next move is to retry.
+  const isDisabled = disabled || isSaving || state === "saved";
 
   const tone =
     state === "error"

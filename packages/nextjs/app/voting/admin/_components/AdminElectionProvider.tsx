@@ -111,15 +111,6 @@ type AdminElectionValue = {
   handleResetElection: () => void;
 };
 
-/**
- * How long a "Saved" badge stays before the button returns to idle.
- *
- * Long enough for an operator who clicked and looked away to come back and see
- * it; short enough that it cannot be mistaken for a description of a value
- * they have since changed. An edit clears it sooner regardless.
- */
-const SAVED_LINGER_MS = 4000;
-
 const AdminElectionContext = createContext<AdminElectionValue | null>(null);
 
 /** Read the shared admin state. Throws rather than silently rendering an empty panel. */
@@ -308,30 +299,20 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     });
   }, []);
 
-  /**
-   * A success fades; a failure does not.
+  /*
+   * Neither verdict expires on a timer.
    *
-   * "Saved" is a confirmation, and a confirmation that never leaves stops being
-   * one — it becomes part of the furniture, and an operator returning to the
-   * screen cannot tell whether it refers to what is on it now. A failure is the
-   * opposite: it is unfinished work, and it stays until the operator does
-   * something about it (retries, or edits the value).
+   * "Saved" used to fade after a few seconds. It no longer does, because the
+   * verdict is a statement about the data currently on screen — and that
+   * statement stays true until the data changes. A timer made it stop being
+   * shown while it was still true, which left an operator who looked away
+   * unable to tell a saved question from an unsaved one, the exact ambiguity
+   * this feedback exists to remove.
+   *
+   * What retires a verdict is the thing that actually invalidates it: an edit,
+   * a division change, or a fresh attempt. Those are the effects below and in
+   * `run`; there is deliberately no time-based path.
    */
-  useEffect(() => {
-    const settled = Object.keys(outcomes).filter(label => outcomes[label] === "saved");
-    if (settled.length === 0) return;
-
-    const id = setTimeout(() => {
-      setOutcomes(prev => {
-        const next = { ...prev };
-        for (const label of settled) {
-          if (next[label] === "saved") delete next[label];
-        }
-        return next;
-      });
-    }, SAVED_LINGER_MS);
-    return () => clearTimeout(id);
-  }, [outcomes]);
 
   // Seed drafts from on-chain state once.
   useEffect(() => {

@@ -627,14 +627,47 @@ describe("admin area — save buttons report their outcome", () => {
   ];
 
   for (const { what, idle } of SAVE_BUTTONS) {
-    it(`${what}: settles on "Saved" once the write lands`, async () => {
+    it(`${what}: settles on "Saved" once the write lands, and stays there`, async () => {
       const user = await renderBallot();
 
       await user.click(screen.getByRole("button", { name: idle }));
 
       // The button itself carries the verdict — not only the toast.
-      await screen.findByRole("button", { name: /^saved$/i });
+      const saved = await screen.findByRole("button", { name: /^saved$/i });
       expect(screen.queryByRole("button", { name: idle })).toBeNull();
+
+      // Settled, so there is nothing left to do until the data changes. An
+      // enabled button here invites a second identical transaction from an
+      // operator unsure whether the first landed.
+      expect((saved as HTMLButtonElement).disabled).toBe(true);
+
+      // And it does not expire. "Saved" describes the data on screen, which
+      // has not changed — a timer used to retire the verdict while it was
+      // still true.
+      await new Promise(resolve => setTimeout(resolve, 250));
+      expect(screen.getByRole("button", { name: /^saved$/i })).toBeDefined();
+      expect(screen.queryByRole("button", { name: idle })).toBeNull();
+    });
+
+    it(`${what}: shows a spinner and "Saving…" while the write is in flight`, async () => {
+      // Hold the write open so the in-flight state can be observed rather than
+      // raced past.
+      let land: (value: string) => void = () => {};
+      mocks.write.mockReturnValueOnce(
+        new Promise<string>(resolve => {
+          land = resolve;
+        }),
+      );
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+
+      const saving = await screen.findByRole("button", { name: /saving/i });
+      expect((saving as HTMLButtonElement).disabled).toBe(true);
+      expect(saving.querySelector(".loading-spinner")).not.toBeNull();
+
+      land("0xdeadbeef");
+      await screen.findByRole("button", { name: /^saved$/i });
     });
 
     it(`${what}: says the save failed, and keeps saying it`, async () => {
@@ -647,9 +680,9 @@ describe("admin area — save buttons report their outcome", () => {
       // Still clickable: after a failure the operator's next move is to retry.
       expect((failed as HTMLButtonElement).disabled).toBe(false);
 
-      // A failure must not quietly fade back to the original label the way a
-      // success does — that would leave the operator believing it worked.
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // A failure must never quietly fade back to the original label — that
+      // would leave the operator believing it worked.
+      await new Promise(resolve => setTimeout(resolve, 250));
       expect(screen.getByRole("button", { name: /save failed — retry/i })).toBeDefined();
       expect(screen.queryByRole("button", { name: idle })).toBeNull();
     });
@@ -674,8 +707,10 @@ describe("admin area — save buttons report their outcome", () => {
           : screen.getByPlaceholderText("Candidate #1");
       await user.type(field, "x");
 
-      await screen.findByRole("button", { name: idle });
+      const back = await screen.findByRole("button", { name: idle });
       expect(screen.queryByRole("button", { name: /^saved$/i })).toBeNull();
+      // Re-enabled: there is something new to save again.
+      expect((back as HTMLButtonElement).disabled).toBe(false);
     });
 
     it(`${what}: clears a failure when the operator retries`, async () => {
