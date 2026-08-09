@@ -31,6 +31,9 @@ export async function GET() {
       username: session.username,
       role: session.role,
       divisionId: session.divisionId,
+      // Lets a page that mounts on a restored session route to the change-password
+      // form itself, instead of discovering the gate through a failed relay call.
+      mustChangePassword: session.mustChangePassword === true,
       loggedInAt: session.loggedInAt,
     },
   });

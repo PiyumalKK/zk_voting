@@ -40,6 +40,26 @@ export const GnAccountsSection = () => {
   const [divisionId, setDivisionId] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedAccount | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  /**
+   * Puts the one-time password on the clipboard.
+   *
+   * Falls back to selecting nothing and telling the admin to copy by hand:
+   * `navigator.clipboard` is undefined on insecure origins, which includes
+   * reaching this dev server over plain HTTP from another machine. Silently
+   * doing nothing there would look like the button is broken at exactly the
+   * moment the password is unrecoverable.
+   */
+  const copyPassword = async (password: string) => {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      notification.error("Could not reach the clipboard — select the password and copy it by hand.");
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -95,6 +115,7 @@ export const GnAccountsSection = () => {
       })) as CreatedAccount;
 
       setCreated(body);
+      setCopied(false);
       setUsername("");
       await load();
       refetchDivisions();
@@ -159,23 +180,46 @@ export const GnAccountsSection = () => {
       )}
 
       {created && (
-        <div className="alert alert-success flex-col items-start gap-2 text-sm" role="status">
-          <div className="font-bold">Account created — copy the password now, it is not stored.</div>
-          <div className="font-mono text-xs break-all">
-            <div>username: {created.username}</div>
-            <div>password: {created.password}</div>
-            <div>address: {created.address}</div>
-            <div>division: {created.divisionName}</div>
-          </div>
-          {!created.assigned && (
-            <div className="text-xs opacity-80">
-              On-chain assignment failed ({created.assignError ?? "unknown error"}). Assign the address above from
-              section 6 before this officer enrols anyone.
+        // DaisyUI's `.alert` is `display: grid; grid-auto-flow: column`, so every
+        // direct child becomes its own column — `flex-col` sets a flex-direction
+        // the grid ignores. A single wrapper keeps the alert to one column and
+        // lets the layout below actually stack; without it the password gets
+        // squeezed into a few pixels and wraps one character per line.
+        <div className="alert alert-success text-sm" role="status">
+          <div className="flex flex-col items-start gap-2 w-full min-w-0">
+            <div className="font-bold">Account created — copy the password now, it is not stored.</div>
+
+            <div className="font-mono text-xs w-full min-w-0 space-y-1">
+              <div className="break-all">username: {created.username}</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="break-all">password: {created.password}</span>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  onClick={() => void copyPassword(created.password)}
+                  aria-label="Copy password to clipboard"
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div className="break-all">address: {created.address}</div>
+              <div className="break-all">division: {created.divisionName}</div>
             </div>
-          )}
-          <button className="btn btn-xs" onClick={() => setCreated(null)}>
-            I have saved it
-          </button>
+
+            <div className="text-xs opacity-80">
+              This password gets the officer through the door once. They must set their own before they can enrol
+              anyone, which is what makes the audit log name them and not you.
+            </div>
+            {!created.assigned && (
+              <div className="text-xs opacity-80">
+                On-chain assignment failed ({created.assignError ?? "unknown error"}). Assign the address above from
+                section 6 before this officer enrols anyone.
+              </div>
+            )}
+            <button className="btn btn-xs" onClick={() => setCreated(null)}>
+              I have saved it
+            </button>
+          </div>
         </div>
       )}
 
@@ -268,6 +312,16 @@ export const GnAccountsSection = () => {
                   <td>
                     {account.disabled ? (
                       <span className="badge badge-ghost badge-xs">Suspended</span>
+                    ) : account.mustChangePassword ? (
+                      // Worth showing plainly: this officer cannot enrol anyone
+                      // yet, and until they sign in and set a password, the
+                      // credential is still one you have seen.
+                      <span
+                        className="badge badge-warning badge-xs"
+                        title="Still on the issued password. They cannot enrol voters until they set their own."
+                      >
+                        Awaiting first sign-in
+                      </span>
                     ) : (
                       <span className="badge badge-success badge-xs">Active</span>
                     )}
