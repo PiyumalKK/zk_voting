@@ -21,8 +21,11 @@ const BlockExplorer: NextPage = () => {
   }, [targetNetwork.id]);
 
   useEffect(() => {
-    setHasError(isLocalChainId(targetNetwork.id) && error !== null);
-  }, [targetNetwork.id, error]);
+    // Only a genuine connection failure counts: an error while no blocks have
+    // loaded. A stray per-block/receipt failure mid-stream (common behind a
+    // load balancer) must not raise the "node is down" alarm.
+    setHasError(isLocalChainId(targetNetwork.id) && error !== null && blocks.length === 0);
+  }, [targetNetwork.id, error, blocks.length]);
 
   useEffect(() => {
     if (!isLocalNetwork) {
