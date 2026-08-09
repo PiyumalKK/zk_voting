@@ -100,7 +100,7 @@ jobs:
 
   deploy-web:
     name: Deploy Web Server
-    needs: inventory
+    needs: [inventory, deploy-nodes]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
