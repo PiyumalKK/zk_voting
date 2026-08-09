@@ -598,6 +598,137 @@ describe("admin area — the ballot question, per division and across all of the
   });
 });
 
+/**
+ * What the save buttons say about themselves.
+ *
+ * These used to report nothing: a click ran "Save question" → "Saving…" →
+ * "Save question", so the button looked identical whether the transaction
+ * landed or the click never registered. The only evidence was a toast, which
+ * an operator who looked away never sees — and an operator who is unsure
+ * whether a save worked clicks again, which on a chain is a second
+ * transaction.
+ *
+ * Both buttons are driven from one component and one piece of provider state,
+ * so each case is asserted on both: a settled state that behaved differently
+ * between two controls a few pixels apart would be worse than none.
+ */
+describe("admin area — save buttons report their outcome", () => {
+  const renderBallot = async () => {
+    mocks.auth = { mode: "custom", isAdmin: true, isLoading: false };
+    renderAdmin(<AdminBallotPage />);
+    await screen.findByRole("heading", { name: /ballot question/i });
+    return userEvent.setup();
+  };
+
+  /** The per-division save for each of the two panels. */
+  const SAVE_BUTTONS = [
+    { what: "question", idle: /save question for Kaduwela/i },
+    { what: "candidates", idle: /save candidates for Kaduwela/i },
+  ];
+
+  for (const { what, idle } of SAVE_BUTTONS) {
+    it(`${what}: settles on "Saved" once the write lands`, async () => {
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+
+      // The button itself carries the verdict — not only the toast.
+      await screen.findByRole("button", { name: /^saved$/i });
+      expect(screen.queryByRole("button", { name: idle })).toBeNull();
+    });
+
+    it(`${what}: says the save failed, and keeps saying it`, async () => {
+      mocks.write.mockRejectedValueOnce(new Error("relay refused"));
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+
+      const failed = await screen.findByRole("button", { name: /save failed — retry/i });
+      // Still clickable: after a failure the operator's next move is to retry.
+      expect((failed as HTMLButtonElement).disabled).toBe(false);
+
+      // A failure must not quietly fade back to the original label the way a
+      // success does — that would leave the operator believing it worked.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(screen.getByRole("button", { name: /save failed — retry/i })).toBeDefined();
+      expect(screen.queryByRole("button", { name: idle })).toBeNull();
+    });
+
+    it(`${what}: drops a stale verdict as soon as the value is edited again`, async () => {
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+      await screen.findByRole("button", { name: /^saved$/i });
+
+      // Edit the thing that was just saved. "Saved" now describes a value that
+      // is no longer on screen, which is the most misleading state the button
+      // can be in — it asserts the opposite of the truth.
+      //
+      // The question is the page's only <textarea>; the candidate rows are
+      // <input>s. Querying by role would match both (they are all `textbox`),
+      // and an earlier version of this test silently typed into a candidate
+      // row while asserting on the question's button.
+      const field =
+        what === "question"
+          ? (document.querySelector("textarea") as HTMLTextAreaElement)
+          : screen.getByPlaceholderText("Candidate #1");
+      await user.type(field, "x");
+
+      await screen.findByRole("button", { name: idle });
+      expect(screen.queryByRole("button", { name: /^saved$/i })).toBeNull();
+    });
+
+    it(`${what}: clears a failure when the operator retries`, async () => {
+      mocks.write.mockRejectedValueOnce(new Error("relay refused"));
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+      const failed = await screen.findByRole("button", { name: /save failed — retry/i });
+
+      // The retry must not render the error state and the spinner at once.
+      await user.click(failed);
+
+      await screen.findByRole("button", { name: /^saved$/i });
+      expect(screen.queryByRole("button", { name: /save failed — retry/i })).toBeNull();
+    });
+  }
+
+  /*
+   * Not covered here: the verdict is also dropped when the operator retargets
+   * to a different division, because the drafts deliberately survive that
+   * change and a verdict left on screen would claim *this* division is saved
+   * while describing the one before it.
+   *
+   * These mocks expose a single division, so there is no second option to
+   * select — and widening the shared `useDivisions` mock would rewrite the
+   * expectations of every broadcast test in this file for one assertion. The
+   * effect is in AdminElectionProvider, keyed on `selectedIdx`; verify it by
+   * hand against a chain with two divisions.
+   */
+
+  /**
+   * One failing save must not make the other button look broken. They share a
+   * component and a state container, so this is exactly the sort of thing that
+   * breaks when the state is keyed too coarsely.
+   */
+  it("keeps the two buttons' verdicts separate", async () => {
+    mocks.write.mockRejectedValueOnce(new Error("relay refused"));
+    const user = await renderBallot();
+
+    await user.click(screen.getByRole("button", { name: /save question for Kaduwela/i }));
+    await screen.findByRole("button", { name: /save failed — retry/i });
+
+    // The candidates button is untouched by the question's failure.
+    expect(screen.getByRole("button", { name: /save candidates for Kaduwela/i })).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: /save candidates for Kaduwela/i }));
+    await screen.findByRole("button", { name: /^saved$/i });
+
+    // …and the question's failure is still on display.
+    expect(screen.getByRole("button", { name: /save failed — retry/i })).toBeDefined();
+  });
+});
+
 describe("admin area — an officer who cannot sign is not shown as staffed", () => {
   /**
    * On the custom chain an officer signs with a server-held key tied to a

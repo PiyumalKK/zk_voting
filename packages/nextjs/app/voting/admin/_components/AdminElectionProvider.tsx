@@ -7,6 +7,7 @@ import { createPublicClient, http } from "viem";
 import type { Abi } from "viem";
 import { useAccount } from "wagmi";
 import { AdminTabs } from "~~/app/voting/admin/_components/AdminTabs";
+import type { SaveState } from "~~/app/voting/admin/_components/SaveButton";
 import {
   CLEAR_DIVISIONS_ABI,
   CLEAR_NIC_HASHES_ABI,
@@ -78,6 +79,22 @@ type AdminElectionValue = {
    * of a page that otherwise says only "Starting…".
    */
   progress: { done: number; total: number } | null;
+  /**
+   * The lifecycle of one action's button, for the same `label` strings `busy`
+   * uses: `idle` → `saving` → `saved` | `error`.
+   *
+   * It lives here rather than in the page because this is where the outcome is
+   * actually known — `run` catches its own errors so the promise it returns
+   * always resolves, which leaves a caller unable to tell a landed transaction
+   * from a reverted one. A page-local `useState` around the handler would have
+   * had to guess.
+   */
+  saveStateOf: (label: string) => SaveState;
+  /**
+   * Drop a settled state early. The drafts clear their own on edit (see the
+   * effect below); this is for anything that needs to do it by hand.
+   */
+  clearSaveState: (label: string) => void;
   handleSetQuestion: () => void;
   /** Broadcasts the current question draft to every division. */
   handleSetQuestionAll: () => void;
@@ -93,6 +110,15 @@ type AdminElectionValue = {
   handleEndAll: () => void;
   handleResetElection: () => void;
 };
+
+/**
+ * How long a "Saved" badge stays before the button returns to idle.
+ *
+ * Long enough for an operator who clicked and looked away to come back and see
+ * it; short enough that it cannot be mistaken for a description of a value
+ * they have since changed. An edit clears it sooner regardless.
+ */
+const SAVED_LINGER_MS = 4000;
 
 const AdminElectionContext = createContext<AdminElectionValue | null>(null);
 
@@ -261,6 +287,52 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
+  /**
+   * How each action last finished, keyed by the same label `busy` uses.
+   * Absent means idle; `busy` supplies the in-flight state, so the two never
+   * have to be kept in sync.
+   */
+  const [outcomes, setOutcomes] = useState<Record<string, "saved" | "error">>({});
+
+  const saveStateOf = useCallback(
+    (label: string): SaveState => (busy === label ? "saving" : (outcomes[label] ?? "idle")),
+    [busy, outcomes],
+  );
+
+  const clearSaveState = useCallback((label: string) => {
+    setOutcomes(prev => {
+      if (!(label in prev)) return prev; // no re-render for a no-op
+      const next = { ...prev };
+      delete next[label];
+      return next;
+    });
+  }, []);
+
+  /**
+   * A success fades; a failure does not.
+   *
+   * "Saved" is a confirmation, and a confirmation that never leaves stops being
+   * one — it becomes part of the furniture, and an operator returning to the
+   * screen cannot tell whether it refers to what is on it now. A failure is the
+   * opposite: it is unfinished work, and it stays until the operator does
+   * something about it (retries, or edits the value).
+   */
+  useEffect(() => {
+    const settled = Object.keys(outcomes).filter(label => outcomes[label] === "saved");
+    if (settled.length === 0) return;
+
+    const id = setTimeout(() => {
+      setOutcomes(prev => {
+        const next = { ...prev };
+        for (const label of settled) {
+          if (next[label] === "saved") delete next[label];
+        }
+        return next;
+      });
+    }, SAVED_LINGER_MS);
+    return () => clearTimeout(id);
+  }, [outcomes]);
+
   // Seed drafts from on-chain state once.
   useEffect(() => {
     if (question && !questionDraft) setQuestionDraft(question);
@@ -270,6 +342,42 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       setCandidateDrafts(candList.slice());
     }
   }, [candList, candidateDrafts]);
+
+  /*
+   * A verdict describes the value that was sent, so editing the value retires
+   * it. Without this, "Saved" would sit above a question the operator has since
+   * rewritten and not saved — the most misleading state the button can be in,
+   * because it asserts the opposite of the truth.
+   *
+   * Keying on the draft is safe precisely because nothing else writes to it
+   * during a save: the seeding effects above only fire into an empty draft, and
+   * `refetchDivision` does not touch them. So a change here is always the
+   * operator typing.
+   *
+   * Clearing an absent label is a no-op that returns the same object, so these
+   * cost nothing on the renders where there is no verdict to retire.
+   */
+  useEffect(() => {
+    clearSaveState("question");
+    clearSaveState("all-question");
+  }, [questionDraft, clearSaveState]);
+
+  useEffect(() => {
+    clearSaveState("candidates");
+    clearSaveState("all-candidates");
+  }, [candidateDrafts, clearSaveState]);
+
+  /*
+   * The drafts deliberately survive a division change, so a verdict left on
+   * screen would be claiming that *this* division is saved when it describes
+   * the one before it.
+   */
+  useEffect(() => {
+    clearSaveState("question");
+    clearSaveState("candidates");
+    clearSaveState("all-question");
+    clearSaveState("all-candidates");
+  }, [selectedIdx, clearSaveState]);
 
   // Live countdown for the deadlines.
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -291,11 +399,22 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const run = async (label: string, fn: () => Promise<unknown>, successMessage?: string) => {
     try {
       setBusy(label);
+      // Any previous verdict is stale the moment a new attempt starts — most
+      // visibly when retrying after a failure, where leaving it would render
+      // the error state and the spinner at once.
+      setOutcomes(prev => {
+        if (!(label in prev)) return prev;
+        const next = { ...prev };
+        delete next[label];
+        return next;
+      });
       await fn();
       await refetchDivision();
+      setOutcomes(prev => ({ ...prev, [label]: "saved" }));
       if (successMessage) notification.success(successMessage);
     } catch (e: any) {
       console.error(label, e);
+      setOutcomes(prev => ({ ...prev, [label]: "error" }));
       notification.error(e?.shortMessage || e?.message || "Transaction failed");
     } finally {
       setBusy(null);
@@ -708,6 +827,8 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     setVotingDuration,
     busy,
     progress,
+    saveStateOf,
+    clearSaveState,
     handleSetQuestion,
     handleSetQuestionAll,
     handleSetCandidates,

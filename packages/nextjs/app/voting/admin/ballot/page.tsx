@@ -5,6 +5,7 @@ import { AddressInput } from "@scaffold-ui/components";
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useAdminElection } from "~~/app/voting/admin/_components/AdminElectionProvider";
 import { DivisionPicker, PhaseBadge } from "~~/app/voting/admin/_components/DivisionStatusPanel";
+import { SaveButton } from "~~/app/voting/admin/_components/SaveButton";
 import { GroupHeading, Section } from "~~/app/voting/admin/_components/Section";
 
 /**
@@ -35,6 +36,7 @@ const AdminBallotPage = () => {
     setCandidateDrafts,
     voterDrafts,
     setVoterDrafts,
+    saveStateOf,
     handleSetQuestion,
     handleSetQuestionAll,
     handleSetCandidates,
@@ -116,17 +118,12 @@ const AdminBallotPage = () => {
                 ? "Applying…"
                 : `Apply question to all ${divisions.length} division${divisions.length === 1 ? "" : "s"}`}
             </button>
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={!inSetup || busy === "question" || !questionDraft.trim()}
+            <SaveButton
+              state={saveStateOf("question")}
+              disabled={!inSetup || !questionDraft.trim()}
               onClick={handleSetQuestion}
-            >
-              {busy === "question"
-                ? "Saving..."
-                : selectedDiv
-                  ? `Save question for ${selectedDiv.name}`
-                  : "Save question"}
-            </button>
+              idleLabel={selectedDiv ? `Save question for ${selectedDiv.name}` : "Save question"}
+            />
           </div>
         </div>
       </Section>
@@ -190,17 +187,12 @@ const AdminBallotPage = () => {
                 ? "Applying…"
                 : `Apply candidates to all ${divisions.length} division${divisions.length === 1 ? "" : "s"}`}
             </button>
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={!inSetup || busy === "candidates"}
+            <SaveButton
+              state={saveStateOf("candidates")}
+              disabled={!inSetup}
               onClick={handleSetCandidates}
-            >
-              {busy === "candidates"
-                ? "Saving..."
-                : selectedDiv
-                  ? `Save candidates for ${selectedDiv.name}`
-                  : "Save candidates"}
-            </button>
+              idleLabel={selectedDiv ? `Save candidates for ${selectedDiv.name}` : "Save candidates"}
+            />
           </div>
         </div>
 
