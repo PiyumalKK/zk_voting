@@ -25,9 +25,20 @@ export interface SessionData {
    * division input, and it comes from the signed cookie.
    */
   divisionId?: number;
+  /**
+   * Set while this officer is still on the password their admin generated.
+   *
+   * The session is real — they are authenticated — but `requireSession()`
+   * refuses every privileged call until they replace it. Mirrored from the
+   * account record at login so the check costs no store read per request.
+   */
+  mustChangePassword?: boolean;
   /** Epoch ms, for display and for the audit log. */
   loggedInAt: number;
 }
+
+/** Where an officer is sent, and the only page they may use, until they set their own password. */
+export const CHANGE_PASSWORD_PATH = "/change-password";
 
 /** 8 hours — `01-AUTH-DESIGN.md` §2. An election shift, not a persistent login. */
 export const SESSION_TTL_SECONDS = 8 * 60 * 60;
@@ -104,6 +115,24 @@ export const isCustomChainMode = (): boolean => isCustomMode();
  * table — a route that is gated in one place and not the other is the classic
  * way authorization drifts.
  */
+/**
+ * Whether a path stays open to a session that has not yet changed its password.
+ *
+ * Deliberately a tiny allowlist — everything not named here is closed. The
+ * three entries are what the change-password page itself needs to function:
+ * the page, the endpoint that performs the change, and the session read the
+ * client seam does on mount. Signing out must also keep working, or an officer
+ * who cannot complete the change is stuck with no way back to the login form.
+ *
+ * Pure and shared with `requireSession()` so the Edge redirect and the Node
+ * enforcement cannot disagree about which paths are exempt.
+ */
+export const isPathAllowedWhilePasswordPending = (pathname: string): boolean =>
+  pathname === CHANGE_PASSWORD_PATH ||
+  pathname === "/api/auth/password" ||
+  pathname === "/api/auth/session" ||
+  pathname === "/api/auth/logout";
+
 export const isPathAllowedForRole = (pathname: string, role: AuthRole): boolean => {
   if (pathname.startsWith("/voting/admin") || pathname.startsWith("/api/gn-accounts")) return role === "admin";
   // The GN portal reads its division from the session, which admins do not have.

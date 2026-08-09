@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
-import { getSessionOptions, isCustomChainMode, isPathAllowedForRole } from "~~/services/auth/session";
+import {
+  CHANGE_PASSWORD_PATH,
+  getSessionOptions,
+  isCustomChainMode,
+  isPathAllowedForRole,
+  isPathAllowedWhilePasswordPending,
+} from "~~/services/auth/session";
 import type { SessionData } from "~~/services/auth/session";
 import { homePathForRole } from "~~/utils/chainMode";
 
@@ -51,6 +57,27 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  // An officer still on the password their admin generated goes nowhere but the
+  // change-password page. This is the friendly half of the rule: `requireSession()`
+  // refuses the same requests with a 403 regardless of whether they arrived
+  // through a browser, so bypassing this redirect gains nothing.
+  if (session.mustChangePassword && !isPathAllowedWhilePasswordPending(pathname)) {
+    if (isApiPath(pathname)) {
+      return NextResponse.json(
+        { error: "Set your own password before continuing.", code: "password_change_required" },
+        { status: 403 },
+      );
+    }
+    return NextResponse.redirect(new URL(CHANGE_PASSWORD_PATH, req.url));
+  }
+
+  // GN officers may return to the page voluntarily to rotate a password later —
+  // that is a feature, not a leak. Admins cannot: theirs lives in the server
+  // environment, so the page would only offer them a form that always fails.
+  if (pathname === CHANGE_PASSWORD_PATH && session.role === "admin") {
+    return NextResponse.redirect(new URL(homePathForRole(session.role), req.url));
+  }
+
   if (!isPathAllowedForRole(pathname, session.role)) {
     if (isApiPath(pathname)) {
       return NextResponse.json({ error: "Your account may not perform this action." }, { status: 403 });
@@ -65,5 +92,13 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/voting/admin/:path*", "/gn/:path*", "/api/relay/:path*", "/api/gn-accounts/:path*"],
+  matcher: [
+    "/voting/admin/:path*",
+    "/gn/:path*",
+    "/api/relay/:path*",
+    "/api/gn-accounts/:path*",
+    // Matched so an unauthenticated visitor is bounced to /login rather than
+    // shown a password form with no session behind it.
+    "/change-password",
+  ],
 };

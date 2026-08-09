@@ -79,6 +79,11 @@ export async function POST(req: NextRequest) {
 
   let role: AuthRole;
   let divisionId: number | undefined;
+  // Admins are never gated: their credential lives in `ADMIN_PASSWORD_HASH`, so
+  // there is no second party who was handed it by this application and nothing
+  // this endpoint could rotate. Changing it means editing the environment and
+  // restarting, which is the deployment's business, not the app's.
+  let mustChangePassword = false;
 
   const adminUsername = process.env.ADMIN_USERNAME?.trim().toLowerCase();
   const adminHash = process.env.ADMIN_PASSWORD_HASH?.trim();
@@ -107,6 +112,7 @@ export async function POST(req: NextRequest) {
     if (!(await verifyPassword(password, account.passwordHash))) return fail();
     role = "gn";
     divisionId = account.divisionId;
+    mustChangePassword = account.mustChangePassword;
   }
 
   guard.recordSuccess(username);
@@ -119,8 +125,12 @@ export async function POST(req: NextRequest) {
   session.username = username;
   session.role = role;
   session.divisionId = divisionId;
+  session.mustChangePassword = mustChangePassword;
   session.loggedInAt = Date.now();
   await session.save();
 
-  return NextResponse.json({ username, role, divisionId });
+  // A gated session is still a successful sign-in — the credential was correct.
+  // The client uses the flag to route to `/change-password` rather than the
+  // portal; the server enforces it regardless of where the client goes.
+  return NextResponse.json({ username, role, divisionId, mustChangePassword });
 }

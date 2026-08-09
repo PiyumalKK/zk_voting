@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useElectionAuth } from "~~/hooks/useElectionAuth";
+import { CHANGE_PASSWORD_PATH } from "~~/services/auth/session";
 import { getChainMode, homePathForRole } from "~~/utils/chainMode";
 import { safeNextPath } from "~~/utils/navigation";
 
@@ -66,6 +67,17 @@ const LoginForm = () => {
       // before the route changes; otherwise the destination renders its
       // "not signed in" state for a frame.
       await refresh();
+
+      // An officer still on the password their admin generated has a valid
+      // session but no authority: every privileged call is refused until they
+      // set their own. Send them there directly rather than to a portal that
+      // would answer 403 on its first action. `next` is deliberately dropped —
+      // it points at a page they cannot use yet.
+      if (body?.mustChangePassword === true) {
+        router.replace(CHANGE_PASSWORD_PATH);
+        return;
+      }
+
       router.replace(safeNextPath(searchParams.get("next"), homePathForRole(role)));
     } catch {
       setError("Could not reach the sign-in service. Is the Next.js server running?");
