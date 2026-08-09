@@ -23,7 +23,11 @@ const AdminDivisionsPage = () => {
         subtitle="Divisions and the officers who staff them. Changes here affect the whole election, not one ballot."
       />
 
-      <GNManagementSection />
+      {/* Hardhat/dev only: a GN officer is a wallet address there. In custom
+          (production) mode officers have credentials, so GnAccountsSection below
+          is the single source of truth and this raw-address form is hidden to
+          avoid creating orphaned officers that can never sign. */}
+      {!isCustom && <GNManagementSection />}
 
       <AddDivisionSection />
 
