@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How This Election Reaches Agreement — Single Sequencer vs. BFT Consensus</title>
+<style>
+/* ---------------------------------------------------------------------------
+   Tokens.
+
+   Light is the base on bare :root. Dark redefines ONLY tokens, twice: once
+   behind prefers-color-scheme (guarded so an explicit light choice wins) and
+   once behind the explicit dark stamp. Nothing below styles a component from
+   inside a media or [data-theme] block, so every colour resolves in all three
+   viewer states.
+
+   Two accents, and they are load-bearing rather than decorative: the old
+   single-writer model is drawn in RUST throughout, the new quorum model in
+   INDIGO. The colour is the argument — every rust element on this page is
+   something that can stop the election.
+--------------------------------------------------------------------------- */
+:root {
+  --paper:        #f6f7f9;
+  --surface:      #ffffff;
+  --surface-sunk: #eef0f4;
+  --line:         #dde1e8;
+  --line-strong:  #c3c9d4;
+
+  --ink:          #151824;
+  --ink-soft:     #3d4557;
+  --ink-mute:     #6a7285;
+
+  --indigo:       #3f51d6;
+  --indigo-soft:  #e8ebfb;
+  --indigo-deep:  #2c3aa8;
+
+  --rust:         #b0512c;
+  --rust-soft:    #fbeae2;
+
+  --jade:         #147a5b;
+  --jade-soft:    #e2f3ec;
+
+  --amber:        #9a6b0d;
+  --amber-soft:   #fbf0d9;
+
+  --code-bg:      #171b28;
+  --code-ink:     #dde3f2;
+
+  --shadow: 0 1px 2px rgb(21 24 36 / .05), 0 8px 24px -12px rgb(21 24 36 / .18);
+
+  --display: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --body:    ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --mono:    ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --s-1: .8125rem;
+  --s0:  1.0625rem;
+  --s1:  1.25rem;
+  --s2:  1.5rem;
+  --s3:  1.9375rem;
+  --s4:  2.625rem;
+
+  --measure: 68ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:        #0e1017;
+    --surface:      #161a25;
+    --surface-sunk: #1c2130;
+    --line:         #2a3040;
+    --line-strong:  #3b4356;
+
+    --ink:          #e8ebf2;
+    --ink-soft:     #b3bacb;
+    --ink-mute:     #838ca0;
+
+    --indigo:       #8b98f5;
+    --indigo-soft:  #1e2440;
+    --indigo-deep:  #aab4f8;
+
+    --rust:         #e08f66;
+    --rust-soft:    #2e1d15;
+
+    --jade:         #5fc79f;
+    --jade-soft:    #12271f;
+
+    --amber:        #d9ab54;
+    --amber-soft:   #2a2113;
+
+    --code-bg:      #0a0d15;
+    --code-ink:     #d3daea;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / .5), 0 8px 24px -12px rgb(0 0 0 / .7);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper:        #0e1017;
+  --surface:      #161a25;
+  --surface-sunk: #1c2130;
+  --line:         #2a3040;
+  --line-strong:  #3b4356;
+
+  --ink:          #e8ebf2;
+  --ink-soft:     #b3bacb;
+  --ink-mute:     #838ca0;
+
+  --indigo:       #8b98f5;
+  --indigo-soft:  #1e2440;
+  --indigo-deep:  #aab4f8;
+
+  --rust:         #e08f66;
+  --rust-soft:    #2e1d15;
+
+  --jade:         #5fc79f;
+  --jade-soft:    #12271f;
+
+  --amber:        #d9ab54;
+  --amber-soft:   #2a2113;
+
+  --code-bg:      #0a0d15;
+  --code-ink:     #d3daea;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / .5), 0 8px 24px -12px rgb(0 0 0 / .7);
+}
+
+/* --------------------------------------------------------------------- base */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: var(--s0);
+  line-height: 1.66;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--display);
+  font-weight: 750;
+  letter-spacing: -.021em;
+  line-height: 1.15;
+  text-wrap: balance;
+  margin: 0;
+}
+
+p { margin: 0; }
+strong { font-weight: 700; color: var(--ink); }
+em { font-style: italic; }
+
+code, kbd, samp {
+  font-family: var(--mono);
+  font-size: .875em;
+  font-variant-ligatures: none;
+}
+
+p code, li code, td code {
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: .08em .34em;
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------- layout */
+.wrap {
+  max-width: 1120px;
+  margin-inline: auto;
+  padding: 0 clamp(1.15rem, 4vw, 2.5rem);
+}
+
+/* Prose is measure-limited; figures break out wider. */
+.prose { max-width: var(--measure); display: flex; flex-direction: column; gap: 1.15rem; }
+
+section { padding-block: clamp(2.75rem, 6vw, 4.5rem); }
+section + section { border-top: 1px solid var(--line); }
+
+.stack     { display: flex; flex-direction: column; gap: 1.15rem; }
+.stack-lg  { display: flex; flex-direction: column; gap: 2.25rem; }
+.stack-sm  { display: flex; flex-direction: column; gap: .6rem; }
+
+/* --------------------------------------------------------------- masthead */
+.masthead {
+  padding-block: clamp(3rem, 8vw, 5.5rem) clamp(2.5rem, 6vw, 4rem);
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: var(--s-1);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+h1 { font-size: var(--s4); font-weight: 800; }
+
+.standfirst {
+  font-size: var(--s1);
+  color: var(--ink-soft);
+  max-width: 58ch;
+  line-height: 1.55;
+}
+
+/* The thesis, stated as the two models side by side. */
+.thesis {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: 1fr;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 2.25rem;
+}
+@media (min-width: 720px) { .thesis { grid-template-columns: 1fr 1fr; } }
+
+.thesis > div { background: var(--surface); padding: 1.35rem 1.5rem; display: flex; flex-direction: column; gap: .5rem; }
+.thesis .label { font-family: var(--mono); font-size: var(--s-1); letter-spacing: .1em; text-transform: uppercase; }
+.thesis .old .label { color: var(--rust); }
+.thesis .new .label { color: var(--indigo); }
+.thesis .claim { font-family: var(--display); font-weight: 700; font-size: var(--s1); line-height: 1.3; }
+.thesis .note { font-size: var(--s-1); color: var(--ink-mute); font-family: var(--display); }
+
+/* ------------------------------------------------------------------ section */
+.sec-head { display: flex; flex-direction: column; gap: .55rem; margin-bottom: 1.9rem; max-width: var(--measure); }
+.sec-num {
+  font-family: var(--mono);
+  font-size: var(--s-1);
+  letter-spacing: .12em;
+  color: var(--indigo);
+}
+h2 { font-size: var(--s3); }
+h3 { font-size: var(--s1); margin-top: .4rem; }
+.sec-sub { color: var(--ink-soft); font-size: var(--s0); }
+
+/* ------------------------------------------------------------------- figure */
+figure { margin: 0; display: flex; flex-direction: column; gap: .75rem; }
+
+.fig-frame {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: clamp(1rem, 3vw, 1.85rem);
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+.fig-frame svg { display: block; margin-inline: auto; max-width: 100%; height: auto; }
+
+figcaption {
+  font-family: var(--display);
+  font-size: var(--s-1);
+  color: var(--ink-mute);
+  line-height: 1.55;
+  max-width: 76ch;
+}
+figcaption b { color: var(--ink-soft); font-weight: 650; }
+
+/* SVG text roles — every diagram draws from the same set. */
+.d-title  { font-family: var(--display); font-weight: 700; font-size: 15px; fill: var(--ink); }
+.d-label  { font-family: var(--display); font-weight: 650; font-size: 13px; fill: var(--ink); }
+.d-sub    { font-family: var(--display); font-weight: 500; font-size: 11.5px; fill: var(--ink-mute); }
+.d-mono   { font-family: var(--mono); font-size: 11px; fill: var(--ink-soft); }
+.d-mono-s { font-family: var(--mono); font-size: 10px; fill: var(--ink-mute); }
+
+/* -------------------------------------------------------------------- cards */
+.grid { display: grid; gap: 1rem; }
+@media (min-width: 700px) { .cols-2 { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 940px) { .cols-3 { grid-template-columns: repeat(3, 1fr); } }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.15rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+.card h4 { font-size: var(--s0); font-weight: 700; }
+.card p { font-size: var(--s-1); color: var(--ink-soft); font-family: var(--display); line-height: 1.6; }
+
+/* A callout carries a judgement, so it is tinted by which model it concerns. */
+.note-box {
+  border-left: 3px solid var(--indigo);
+  background: var(--indigo-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  max-width: var(--measure);
+}
+.note-box.risk  { border-left-color: var(--rust);  background: var(--rust-soft); }
+.note-box.good  { border-left-color: var(--jade);  background: var(--jade-soft); }
+.note-box.warn  { border-left-color: var(--amber); background: var(--amber-soft); }
+.note-box .nb-label {
+  font-family: var(--mono);
+  font-size: .6875rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--indigo-deep);
+}
+.note-box.risk .nb-label { color: var(--rust); }
+.note-box.good .nb-label { color: var(--jade); }
+.note-box.warn .nb-label { color: var(--amber); }
+.note-box p { font-size: var(--s-1); font-family: var(--display); line-height: 1.62; color: var(--ink-soft); }
+.note-box strong { color: var(--ink); }
+
+/* -------------------------------------------------------------------- table */
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-family: var(--display); font-size: var(--s-1); }
+th, td { text-align: left; padding: .72rem .95rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th {
+  font-family: var(--mono);
+  font-size: .6875rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  background: var(--surface-sunk);
+  white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: .35rem;
+  font-family: var(--mono); font-size: .6875rem; letter-spacing: .04em;
+  padding: .16rem .5rem; border-radius: 999px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.pill.ok    { background: var(--jade-soft);   color: var(--jade);   border-color: var(--jade); }
+.pill.stop  { background: var(--amber-soft);  color: var(--amber);  border-color: var(--amber); }
+.pill.bad   { background: var(--rust-soft);   color: var(--rust);   border-color: var(--rust); }
+
+/* --------------------------------------------------------------------- code */
+pre {
+  margin: 0;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: .8125rem;
+  line-height: 1.62;
+  border: 1px solid var(--line);
+}
+pre .c { color: #7f8aa8; }
+pre .k { color: #9db4ff; }
+pre .s { color: #86d3a8; }
+
+/* --------------------------------------------------------------------- list */
+ul.clean, ol.clean { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: .5rem; }
+ul.clean li, ol.clean li { padding-left: .2rem; }
+ul.clean li::marker { color: var(--indigo); }
+ol.clean li::marker { color: var(--indigo); font-family: var(--mono); font-size: .85em; }
+
+dl.defs { margin: 0; display: grid; gap: .9rem; }
+dl.defs > div { display: flex; flex-direction: column; gap: .2rem; }
+dl.defs dt { font-family: var(--mono); font-size: var(--s-1); color: var(--indigo-deep); }
+dl.defs dd { margin: 0; font-family: var(--display); font-size: var(--s-1); color: var(--ink-soft); line-height: 1.6; }
+
+/* ------------------------------------------------------------------- footer */
+footer {
+  border-top: 1px solid var(--line);
+  padding-block: 2.25rem 3.5rem;
+  color: var(--ink-mute);
+  font-family: var(--display);
+  font-size: var(--s-1);
+}
+footer a { color: var(--indigo); }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap stack">
+    <div class="eyebrow">ZK Voting · Custom blockchain · Consensus</div>
+    <h1>How this election reaches agreement</h1>
+    <p class="standfirst">
+      The chain used to have one writer. It now has four validators who vote, and a block counts
+      only when three of them sign it. This is what changed, why it had to, and how to prove it works.
+    </p>
+
+    <div class="thesis">
+      <div class="old">
+        <div class="label">Before · single sequencer</div>
+        <div class="claim">One machine decides, and one machine can stop it.</div>
+        <div class="note">Replicas could detect a bad block. They could not produce a good one.</div>
+      </div>
+      <div class="new">
+        <div class="label">Now · 2/3 BFT consensus</div>
+        <div class="claim">Three of four parties must agree before a vote is final.</div>
+        <div class="note">Survives losing any one validator. Halts rather than weaken if it loses two.</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- =================================================================== 01 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">01</div>
+      <h2>The old model, and the two things wrong with it</h2>
+      <p class="sec-sub">
+        It is worth being precise about the weakness, because the fix is shaped exactly around it.
+      </p>
+    </div>
+
+    <div class="prose">
+      <p>
+        Until now the chain had <strong>one writer</strong>. A single machine — <code>node1</code>, the
+        <em>primary</em> or <em>sequencer</em> — received every transaction, executed it, and sealed it
+        into a block. The other three were <em>replicas</em>: they received each finished block,
+        re-executed it to check it was honest, and stored it.
+      </p>
+      <p>
+        That design has real virtues. There are no forks, because only one machine ever writes. And the
+        replicas are not gullible — they re-execute everything, so a primary that lied about a state root
+        would be caught immediately.
+      </p>
+    </div>
+
+    <figure style="margin-top:1.9rem">
+      <div class="fig-frame">
+        <svg viewBox="0 0 720 300" role="img" aria-label="Diagram: one primary node seals blocks and pushes them to three replicas; if the primary stops, nothing can be written.">
+          <!-- primary -->
+          <rect x="270" y="26" width="180" height="66" rx="9" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.6"/>
+          <text x="360" y="52" class="d-label" text-anchor="middle" fill="var(--rust)">node1 — PRIMARY</text>
+          <text x="360" y="72" class="d-sub" text-anchor="middle">the only machine that may write</text>
+
+          <!-- crown / single point marker -->
+          <text x="360" y="16" class="d-mono-s" text-anchor="middle" fill="var(--rust)">SINGLE POINT OF FAILURE · AND OF TRUST</text>
+
+          <!-- arrows down -->
+          <g stroke="var(--line-strong)" stroke-width="1.4" fill="none" marker-end="url(#arrowGrey)">
+            <path d="M300 96 L 150 150"/>
+            <path d="M360 96 L 360 150"/>
+            <path d="M420 96 L 570 150"/>
+          </g>
+          <text x="360" y="128" class="d-mono-s" text-anchor="middle">one-way: sealed blocks pushed out</text>
+
+          <!-- replicas -->
+          <g>
+            <rect x="70" y="156" width="160" height="62" rx="9" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1.3"/>
+            <text x="150" y="180" class="d-label" text-anchor="middle">node2 — replica</text>
+            <text x="150" y="199" class="d-sub" text-anchor="middle">verifies · copies · cannot propose</text>
+
+            <rect x="280" y="156" width="160" height="62" rx="9" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1.3"/>
+            <text x="360" y="180" class="d-label" text-anchor="middle">node3 — replica</text>
+            <text x="360" y="199" class="d-sub" text-anchor="middle">verifies · copies · cannot propose</text>
+
+            <rect x="490" y="156" width="160" height="62" rx="9" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1.3"/>
+            <text x="570" y="180" class="d-label" text-anchor="middle">node4 — replica</text>
+            <text x="570" y="199" class="d-sub" text-anchor="middle">verifies · copies · cannot propose</text>
+          </g>
+
+          <!-- failure band -->
+          <rect x="70" y="244" width="580" height="40" rx="8" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <text x="360" y="269" class="d-label" text-anchor="middle" fill="var(--rust)">
+            node1 stops → the whole chain stops, with three healthy machines watching
+          </text>
+
+          <defs>
+            <marker id="arrowGrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The single-sequencer topology.</b> Every arrow points away from node1. A replica has no path
+        by which it could ever extend the chain — that is not a configuration gap, it is the design.
+      </figcaption>
+    </figure>
+
+    <div class="grid cols-2" style="margin-top:1.9rem">
+      <div class="note-box risk">
+        <div class="nb-label">Weakness 1 — availability</div>
+        <p>
+          If <strong>node1 dies, the election stops.</strong> Not degrades — stops. The three healthy
+          replicas can copy blocks but have no mechanism to propose one. Nobody can vote until it
+          comes back. For a system whose whole job is accepting votes inside a fixed window, "one
+          server reboot ends the election" is not survivable.
+        </p>
+      </div>
+      <div class="note-box risk">
+        <div class="nb-label">Weakness 2 — trust</div>
+        <p>
+          Detection is not prevention. A replica can prove a state root is wrong, but it cannot stop
+          node1 from <strong>omitting a valid vote</strong>, reordering transactions, or otherwise
+          deciding what the chain contains. Whoever runs node1 decides the election's contents — and
+          in a real vote that party is the electoral authority.
+        </p>
+      </div>
+    </div>
+
+    <div class="note-box" style="margin-top:1.15rem">
+      <div class="nb-label">What we want instead</div>
+      <p>
+        <strong>No single party can stop the election. No single party can decide its contents.</strong>
+        Everything below is the machinery for those two sentences.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 02 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">02</div>
+      <h2>The new model: four validators, three signatures</h2>
+      <p class="sec-sub">
+        The same four machines. What changed is that all four may now write, and none of them may
+        write alone.
+      </p>
+    </div>
+
+    <div class="prose">
+      <p>
+        Instead of one machine that writes and three that watch, there are <strong>four machines that
+        vote</strong>. They take turns proposing blocks, and a block becomes real only when a quorum
+        agrees. The four are the parties with a stake in the outcome:
+      </p>
+    </div>
+
+    <figure style="margin-top:1.75rem">
+      <div class="fig-frame">
+        <svg viewBox="0 0 720 330" role="img" aria-label="Diagram: four co-equal validators in a full mesh, each able to propose, each verifying and voting.">
+          <!-- mesh links first, so nodes sit on top -->
+          <g stroke="var(--indigo)" stroke-width="1.1" opacity=".38">
+            <line x1="180" y1="92"  x2="540" y2="92"/>
+            <line x1="180" y1="238" x2="540" y2="238"/>
+            <line x1="180" y1="92"  x2="180" y2="238"/>
+            <line x1="540" y1="92"  x2="540" y2="238"/>
+            <line x1="180" y1="92"  x2="540" y2="238"/>
+            <line x1="540" y1="92"  x2="180" y2="238"/>
+          </g>
+
+          <g>
+            <!-- authority -->
+            <rect x="72" y="62" width="216" height="60" rx="9" fill="var(--indigo-soft)" stroke="var(--indigo)" stroke-width="1.6"/>
+            <text x="180" y="86" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">node1 · authority</text>
+            <text x="180" y="105" class="d-sub" text-anchor="middle">proposes · verifies · votes</text>
+
+            <!-- jvp -->
+            <rect x="432" y="62" width="216" height="60" rx="9" fill="var(--indigo-soft)" stroke="var(--indigo)" stroke-width="1.6"/>
+            <text x="540" y="86" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">node2 · jvp</text>
+            <text x="540" y="105" class="d-sub" text-anchor="middle">proposes · verifies · votes</text>
+
+            <!-- unp -->
+            <rect x="72" y="208" width="216" height="60" rx="9" fill="var(--indigo-soft)" stroke="var(--indigo)" stroke-width="1.6"/>
+            <text x="180" y="232" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">node3 · unp</text>
+            <text x="180" y="251" class="d-sub" text-anchor="middle">proposes · verifies · votes</text>
+
+            <!-- sjb -->
+            <rect x="432" y="208" width="216" height="60" rx="9" fill="var(--indigo-soft)" stroke="var(--indigo)" stroke-width="1.6"/>
+            <text x="540" y="232" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">node4 · sjb</text>
+            <text x="540" y="251" class="d-sub" text-anchor="middle">proposes · verifies · votes</text>
+          </g>
+
+          <!-- centre badge -->
+          <rect x="300" y="139" width="120" height="52" rx="26" fill="var(--surface)" stroke="var(--indigo)" stroke-width="1.6"/>
+          <text x="360" y="161" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">quorum 3</text>
+          <text x="360" y="178" class="d-mono-s" text-anchor="middle">of 4</text>
+
+          <text x="360" y="26" class="d-mono-s" text-anchor="middle" fill="var(--indigo)">EVERY LINK TWO-WAY · mTLS ON PORT 4001</text>
+          <text x="360" y="306" class="d-label" text-anchor="middle" fill="var(--jade)">
+            any one validator may stop — the other three still reach 3 and continue
+          </text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The BFT topology.</b> Same four EC2 machines, same ports, same certificates. The security
+        group already allowed node-to-node traffic on 4001 in both directions; the old design simply
+        never used it that way.
+      </figcaption>
+    </figure>
+
+    <div class="note-box good" style="margin-top:1.5rem">
+      <div class="nb-label">The political point, not just the technical one</div>
+      <p>
+        Names are cosmetic to the protocol — the code only ever deals in addresses. But the arrangement
+        is deliberate: <strong>the parties who would otherwise have to trust the authority are inside
+        the machine that decides.</strong>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 03 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">03</div>
+      <h2>Why four validators, and why three signatures</h2>
+      <p class="sec-sub">
+        These numbers are not a preference. They fall out of two requirements that pull in opposite
+        directions.
+      </p>
+    </div>
+
+    <div class="prose">
+      <p>
+        Let <strong>N</strong> be the number of validators, <strong>Q</strong> the signatures a block
+        needs to be final, and <strong>f</strong> the number that may be faulty — crashed, unreachable,
+        or actively lying.
+      </p>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:1.5rem">
+      <div class="card">
+        <h4>Requirement A — liveness</h4>
+        <p>
+          The election must continue when <em>f</em> validators are down. The survivors must still be
+          able to reach <em>Q</em>:
+        </p>
+        <pre><code>Q ≤ N − f</code></pre>
+      </div>
+      <div class="card">
+        <h4>Requirement B — safety</h4>
+        <p>
+          Two different blocks must never both be finalized at one height. Any two groups of <em>Q</em>
+          drawn from <em>N</em> overlap in at least <em>2Q − N</em> members, and at least one of those
+          must be honest:
+        </p>
+        <pre><code>2Q − N &gt; f</code></pre>
+      </div>
+    </div>
+
+    <div class="prose" style="margin-top:1.5rem">
+      <p>Substituting A into B gives the whole answer:</p>
+    </div>
+
+    <div style="max-width:var(--measure); margin-top:.9rem">
+      <pre><code>2(N − f) − N &gt; f    →    N − 2f &gt; f    →    <strong>N &gt; 3f</strong></code></pre>
+    </div>
+
+    <div class="prose" style="margin-top:1.15rem">
+      <p>
+        You need <strong>more than three times as many validators as faults you want to survive.</strong>
+        To survive one: N &gt; 3, so <strong>N = 4</strong> is the minimum. The smallest Q satisfying
+        both is <strong>Q = ⌈2N∕3⌉ = 3</strong>.
+      </p>
+    </div>
+
+    <figure style="margin-top:1.9rem">
+      <div class="fig-frame">
+        <svg viewBox="0 0 720 250" role="img" aria-label="Diagram comparing three validators, where two quorums overlap in one member who might be the traitor, with four validators, where the overlap is two members and at least one is honest.">
+          <!-- N=3 -->
+          <text x="175" y="24" class="d-title" text-anchor="middle" fill="var(--rust)">N = 3, Q = 2 — fails</text>
+          <circle cx="120" cy="110" r="52" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.5" opacity=".9"/>
+          <circle cx="230" cy="110" r="52" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.5" opacity=".9"/>
+          <text x="88"  y="115" class="d-mono" text-anchor="middle">quorum A</text>
+          <text x="262" y="115" class="d-mono" text-anchor="middle">quorum B</text>
+          <circle cx="175" cy="110" r="15" fill="var(--rust)" opacity=".9"/>
+          <text x="175" y="114" class="d-mono-s" text-anchor="middle" fill="var(--surface)">1</text>
+          <text x="175" y="188" class="d-sub" text-anchor="middle">overlap = 2Q − N = <tspan class="d-mono">1</tspan> member</text>
+          <text x="175" y="208" class="d-sub" text-anchor="middle" fill="var(--rust)">if that one is the traitor,</text>
+          <text x="175" y="225" class="d-sub" text-anchor="middle" fill="var(--rust)">it signs for both → the chain forks</text>
+
+          <line x1="360" y1="46" x2="360" y2="220" stroke="var(--line)" stroke-width="1"/>
+
+          <!-- N=4 -->
+          <text x="545" y="24" class="d-title" text-anchor="middle" fill="var(--jade)">N = 4, Q = 3 — works</text>
+          <circle cx="490" cy="110" r="56" fill="var(--jade-soft)" stroke="var(--jade)" stroke-width="1.5" opacity=".9"/>
+          <circle cx="600" cy="110" r="56" fill="var(--jade-soft)" stroke="var(--jade)" stroke-width="1.5" opacity=".9"/>
+          <text x="452" y="115" class="d-mono" text-anchor="middle">quorum A</text>
+          <text x="638" y="115" class="d-mono" text-anchor="middle">quorum B</text>
+          <circle cx="545" cy="93"  r="15" fill="var(--jade)" opacity=".95"/>
+          <text x="545" y="97" class="d-mono-s" text-anchor="middle" fill="var(--surface)">1</text>
+          <circle cx="545" cy="129" r="15" fill="var(--jade)" opacity=".95"/>
+          <text x="545" y="133" class="d-mono-s" text-anchor="middle" fill="var(--surface)">2</text>
+          <text x="545" y="188" class="d-sub" text-anchor="middle">overlap = 2Q − N = <tspan class="d-mono">2</tspan> members</text>
+          <text x="545" y="208" class="d-sub" text-anchor="middle" fill="var(--jade)">at most one can be the traitor,</text>
+          <text x="545" y="225" class="d-sub" text-anchor="middle" fill="var(--jade)">so at least one honest node is in both</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Why three validators is not enough.</b> The overlap between two quorums is the entire safety
+        argument. With N=3 that overlap is one member — and if it happens to be the faulty one, it can
+        sign for two different blocks. The fourth validator is what guarantees an honest witness in
+        every overlap.
+      </figcaption>
+    </figure>
+
+    <div class="table-scroll" style="margin-top:1.75rem">
+      <table>
+        <thead>
+          <tr><th>Validators (N)</th><th>Quorum Q = ⌈2N∕3⌉</th><th>Tolerates f = N − Q</th><th>Verdict</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">3</td><td class="num">2</td><td class="num">1</td><td><span class="pill bad">unsafe</span> 2Q−N = 1, not &gt; f</td></tr>
+          <tr><td class="num"><strong>4</strong></td><td class="num"><strong>3</strong></td><td class="num"><strong>1</strong></td><td><span class="pill ok">deployed</span> the minimum that works</td></tr>
+          <tr><td class="num">7</td><td class="num">5</td><td class="num">2</td><td><span class="pill ok">safe</span> survives two failures</td></tr>
+          <tr><td class="num">10</td><td class="num">7</td><td class="num">3</td><td><span class="pill ok">safe</span> survives three failures</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 04 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">04</div>
+      <h2>What the validator keys are</h2>
+      <p class="sec-sub">
+        Four keys were generated before anything was deployed. They are not accounts, and it is worth
+        being exact about what they do.
+      </p>
+    </div>
+
+    <div class="prose">
+      <p>
+        Each validator holds a <strong>secp256k1 private key</strong> — the same cryptography as an
+        Ethereum account key. But it is <strong>not an account</strong>: it holds no funds, sends no
+        transactions, and never appears on-chain. Its only job is to <strong>sign that validator's
+        votes</strong>.
+      </p>
+      <p>
+        Every node needs the <em>addresses</em> of all four in order to check signatures. That list is
+        <code>VALIDATOR_SET</code>, identical on all four machines — which is why four keys produce four
+        addresses, and why the addresses are published while the keys are not.
+      </p>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:1.6rem">
+      <div class="card">
+        <h4>Private key — secret</h4>
+        <p>
+          One per machine. Held in a GitHub Actions secret, written to
+          <code>data_3001/keys/validator.key</code> at mode <code>0600</code>. Never in git, never in an
+          <code>Environment=</code> line — so it appears in neither <code>ps -e</code> nor
+          <code>systemctl show</code>.
+        </p>
+      </div>
+      <div class="card">
+        <h4>Address — public</h4>
+        <p>
+          Derived from the key by a one-way function. Published in
+          <code>gen_inventory.py</code> and held by every node. Publishing it lets everyone verify
+          signatures; it does not let anyone produce them.
+        </p>
+      </div>
+    </div>
+
+    <div class="note-box warn" style="margin-top:1.15rem">
+      <div class="nb-label">Order is protocol-significant</div>
+      <p>
+        <code>VALIDATOR_SET</code> is an ordered list, because whose turn it is to propose is computed
+        as <code>validators[(height + round) % 4]</code>. Two nodes given the same members in a
+        different order would disagree about whose turn it is at <em>every</em> height, and the chain
+        would never move. A node also refuses to boot if its key does not derive to the address listed
+        for its own ID — a validator signing with an unlisted identity is otherwise invisible.
+      </p>
+    </div>
+
+    <h3 style="margin-top:2.1rem">Not to be confused with the project's other keys</h3>
+    <div class="table-scroll" style="margin-top:.9rem">
+      <table>
+        <thead>
+          <tr><th>Key</th><th>Question it answers</th><th>Where it lives</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Validator consensus key</strong></td>
+            <td>whose <em>vote</em> counts?</td>
+            <td><code>data_3001/keys/validator.key</code></td>
+          </tr>
+          <tr>
+            <td>mTLS certificate + key</td>
+            <td>who may <em>connect</em> to port 4001?</td>
+            <td><code>data_3001/certs/</code></td>
+          </tr>
+          <tr>
+            <td>Admin relay key</td>
+            <td>a real account that <em>sends transactions</em> and pays gas</td>
+            <td><code>group_vars/all.yml</code></td>
+          </tr>
+          <tr>
+            <td>ZK circuit keys</td>
+            <td>voter privacy — unrelated to consensus</td>
+            <td><code>packages/circuits/</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note-box" style="margin-top:1.15rem">
+      <div class="nb-label">The instructive pair</div>
+      <p>
+        <strong>mTLS decides who may speak. The consensus key decides whose word counts toward a
+        quorum.</strong> Someone holding a stolen certificate can connect and be completely ignored.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 05 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">05</div>
+      <h2>What happens when someone votes</h2>
+      <p class="sec-sub">
+        The full journey for one ballot, from tap to final. Four phases, and a fifth that only runs
+        when something goes wrong.
+      </p>
+    </div>
+
+    <figure>
+      <div class="fig-frame">
+        <svg viewBox="0 0 760 430" role="img" aria-label="Sequence diagram: the proposer builds a block, broadcasts a proposal, each validator re-executes it and sends a prepare, then on three prepares each sends a commit, and on three commits the block is final.">
+          <!-- lifelines -->
+          <g>
+            <rect x="30"  y="14" width="140" height="34" rx="7" fill="var(--indigo-soft)" stroke="var(--indigo)" stroke-width="1.4"/>
+            <text x="100" y="36" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">PROPOSER</text>
+            <rect x="212" y="14" width="140" height="34" rx="7" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1.2"/>
+            <text x="282" y="36" class="d-label" text-anchor="middle">validator B</text>
+            <rect x="394" y="14" width="140" height="34" rx="7" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1.2"/>
+            <text x="464" y="36" class="d-label" text-anchor="middle">validator C</text>
+            <rect x="576" y="14" width="140" height="34" rx="7" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1.2"/>
+            <text x="646" y="36" class="d-label" text-anchor="middle">validator D</text>
+          </g>
+          <g stroke="var(--line)" stroke-width="1.2" stroke-dasharray="3 4">
+            <line x1="100" y1="48" x2="100" y2="392"/>
+            <line x1="282" y1="48" x2="282" y2="392"/>
+            <line x1="464" y1="48" x2="464" y2="392"/>
+            <line x1="646" y1="48" x2="646" y2="392"/>
+          </g>
+
+          <defs>
+            <marker id="aInd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--indigo)"/>
+            </marker>
+            <marker id="aJade" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--jade)"/>
+            </marker>
+          </defs>
+
+          <!-- 0. build -->
+          <rect x="34" y="62" width="132" height="26" rx="6" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1"/>
+          <text x="100" y="79" class="d-mono-s" text-anchor="middle">execute · build · don't save</text>
+
+          <!-- 1. pre-prepare -->
+          <g stroke="var(--indigo)" stroke-width="1.5" marker-end="url(#aInd)">
+            <line x1="104" y1="112" x2="278" y2="112"/>
+            <line x1="104" y1="126" x2="460" y2="126"/>
+            <line x1="104" y1="140" x2="642" y2="140"/>
+          </g>
+          <text x="100" y="105" class="d-mono" fill="var(--indigo)">1 · PRE-PREPARE — here is a block, signed</text>
+
+          <!-- re-execute band -->
+          <rect x="212" y="158" width="504" height="28" rx="6" fill="var(--indigo-soft)" stroke="var(--indigo)" stroke-width="1.1" stroke-dasharray="4 3"/>
+          <text x="464" y="176" class="d-label" text-anchor="middle" fill="var(--indigo-deep)">each re-executes the block itself and compares its own state root</text>
+
+          <!-- 2. prepare -->
+          <g stroke="var(--indigo)" stroke-width="1.5" marker-end="url(#aInd)">
+            <line x1="278" y1="212" x2="106" y2="212"/>
+            <line x1="460" y1="226" x2="106" y2="226"/>
+            <line x1="642" y1="240" x2="106" y2="240"/>
+          </g>
+          <text x="716" y="205" class="d-mono" text-anchor="end" fill="var(--indigo)">2 · PREPARE — "I ran it, it is valid"</text>
+
+          <!-- lock -->
+          <rect x="34" y="258" width="132" height="26" rx="6" fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="1.1"/>
+          <text x="100" y="275" class="d-mono-s" text-anchor="middle" fill="var(--amber)">3 prepares → LOCK</text>
+
+          <!-- 3. commit -->
+          <g stroke="var(--jade)" stroke-width="1.5" marker-end="url(#aJade)">
+            <line x1="104" y1="304" x2="278" y2="304"/>
+            <line x1="104" y1="318" x2="460" y2="318"/>
+            <line x1="104" y1="332" x2="642" y2="332"/>
+          </g>
+          <text x="100" y="297" class="d-mono" fill="var(--jade)">3 · COMMIT — "this block is the one for this height"</text>
+
+          <!-- 4. final -->
+          <rect x="30" y="352" width="686" height="34" rx="7" fill="var(--jade-soft)" stroke="var(--jade)" stroke-width="1.5"/>
+          <text x="373" y="374" class="d-label" text-anchor="middle" fill="var(--jade)">
+            4 · FINALIZE — on 3 commits the block is saved, together with the 3 signatures that made it final
+          </text>
+
+          <text x="373" y="412" class="d-sub" text-anchor="middle">
+            no proposal, or no quorum, within the round timeout → ROUND-CHANGE rotates to the next proposer
+          </text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>One block, four phases.</b> Single-slot final: once three commits exist for a height, that
+        block is immutable and no reorganisation above it is possible.
+      </figcaption>
+    </figure>
+
+    <div class="grid cols-2" style="margin-top:1.9rem">
+      <div class="note-box good">
+        <div class="nb-label">The part that matters most</div>
+        <p>
+          A PREPARE does not mean "the proposer says this is fine". It means <strong>"I executed this
+          block myself and reproduced every value its header commits to"</strong> — using the same code
+          the offline auditor runs. A validator never takes a peer's word for anything, including while
+          catching up after a restart.
+        </p>
+      </div>
+      <div class="note-box warn">
+        <div class="nb-label">The lock — why a traitor cannot fork the chain</div>
+        <p>
+          The instant a validator broadcasts a COMMIT it <strong>locks</strong> onto that block for that
+          height, and will never vote for a different one there in any later round. Since any two groups
+          of three share at least one honest member, two different blocks would need that honest node to
+          have committed to both. It cannot.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 06 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">06</div>
+      <h2>What happens as validators fail</h2>
+      <p class="sec-sub">
+        The threshold is the whole design. Below it, the correct behaviour is to stop.
+      </p>
+    </div>
+
+    <figure>
+      <div class="fig-frame">
+        <svg viewBox="0 0 720 340" role="img" aria-label="Ladder showing outcomes with zero, one, two and three validators down: normal, continues, halts safely, and halts.">
+          <g>
+            <!-- row builder: y = 40, 116, 192, 268 -->
+            <!-- ROW 0 -->
+            <text x="14" y="34" class="d-mono-s">0 DOWN</text>
+            <g>
+              <circle cx="130" cy="30" r="13" fill="var(--jade)"/><circle cx="168" cy="30" r="13" fill="var(--jade)"/>
+              <circle cx="206" cy="30" r="13" fill="var(--jade)"/><circle cx="244" cy="30" r="13" fill="var(--jade)"/>
+            </g>
+            <text x="286" y="35" class="d-mono" fill="var(--jade)">4 available ≥ 3</text>
+            <rect x="430" y="14" width="276" height="32" rx="7" fill="var(--jade-soft)" stroke="var(--jade)" stroke-width="1.3"/>
+            <text x="568" y="35" class="d-label" text-anchor="middle" fill="var(--jade)">normal operation</text>
+
+            <!-- ROW 1 -->
+            <text x="14" y="110" class="d-mono-s">1 DOWN</text>
+            <g>
+              <circle cx="130" cy="106" r="13" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="3 2"/>
+              <circle cx="168" cy="106" r="13" fill="var(--jade)"/>
+              <circle cx="206" cy="106" r="13" fill="var(--jade)"/><circle cx="244" cy="106" r="13" fill="var(--jade)"/>
+            </g>
+            <text x="286" y="111" class="d-mono" fill="var(--jade)">3 available ≥ 3</text>
+            <rect x="430" y="90" width="276" height="32" rx="7" fill="var(--jade-soft)" stroke="var(--jade)" stroke-width="1.3"/>
+            <text x="568" y="111" class="d-label" text-anchor="middle" fill="var(--jade)">election continues</text>
+
+            <!-- ROW 2 -->
+            <text x="14" y="186" class="d-mono-s">2 DOWN</text>
+            <g>
+              <circle cx="130" cy="182" r="13" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="3 2"/>
+              <circle cx="168" cy="182" r="13" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="3 2"/>
+              <circle cx="206" cy="182" r="13" fill="var(--jade)"/><circle cx="244" cy="182" r="13" fill="var(--jade)"/>
+            </g>
+            <text x="286" y="187" class="d-mono" fill="var(--amber)">2 available &lt; 3</text>
+            <rect x="430" y="166" width="276" height="32" rx="7" fill="var(--amber-soft)" stroke="var(--amber)" stroke-width="1.3"/>
+            <text x="568" y="187" class="d-label" text-anchor="middle" fill="var(--amber)">HALTS — safely, by design</text>
+
+            <!-- ROW 3 -->
+            <text x="14" y="262" class="d-mono-s">3 DOWN</text>
+            <g>
+              <circle cx="130" cy="258" r="13" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="3 2"/>
+              <circle cx="168" cy="258" r="13" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="3 2"/>
+              <circle cx="206" cy="258" r="13" fill="none" stroke="var(--rust)" stroke-width="1.6" stroke-dasharray="3 2"/>
+              <circle cx="244" cy="258" r="13" fill="var(--jade)"/>
+            </g>
+            <text x="286" y="263" class="d-mono" fill="var(--rust)">1 available &lt; 3</text>
+            <rect x="430" y="242" width="276" height="32" rx="7" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.3"/>
+            <text x="568" y="263" class="d-label" text-anchor="middle" fill="var(--rust)">halted</text>
+          </g>
+
+          <!-- threshold line -->
+          <line x1="118" y1="144" x2="706" y2="144" stroke="var(--amber)" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text x="706" y="138" class="d-mono-s" text-anchor="end" fill="var(--amber)">QUORUM THRESHOLD — 3 SIGNATURES</text>
+
+          <rect x="14" y="296" width="692" height="34" rx="7" fill="var(--surface-sunk)" stroke="var(--line-strong)" stroke-width="1"/>
+          <text x="360" y="318" class="d-label" text-anchor="middle">
+            no block is ever finalized with fewer than 3 signatures — in any row
+          </text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The failure ladder.</b> Crossing the threshold does not degrade the guarantee; it stops
+        production. A halted election can be resumed. A forged one cannot be undone.
+      </figcaption>
+    </figure>
+
+    <h3 style="margin-top:2.1rem">And if keys are compromised rather than machines lost</h3>
+    <div class="table-scroll" style="margin-top:.9rem">
+      <table>
+        <thead>
+          <tr><th>Keys stolen</th><th>What the attacker can do</th><th>Outcome</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="num">1</td>
+            <td>Nothing. This is exactly the fault the system is built to absorb.</td>
+            <td><span class="pill ok">absorbed</span></td>
+          </tr>
+          <tr>
+            <td class="num">2</td>
+            <td>Cannot finalize anything (2 &lt; 3). Can <em>halt</em> the election by refusing to vote.</td>
+            <td><span class="pill stop">denial of service</span></td>
+          </tr>
+          <tr>
+            <td class="num">3</td>
+            <td>Controls ordering; can censor. Still <strong>cannot</strong> finalize an invalid state root — honest validators re-execute before voting.</td>
+            <td><span class="pill bad">control</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note-box good" style="margin-top:1.15rem">
+      <div class="nb-label">The security claim, stated plainly</div>
+      <p>
+        <strong>Three of the four parties must collude.</strong> Compare that with the previous design,
+        where compromising one machine was enough. Note also what even three cannot do: forge a vote
+        count. The attack surface is ordering and censorship, not arithmetic.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 07 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">07</div>
+      <h2>The commit certificate</h2>
+      <p class="sec-sub">
+        The three signatures are stored with the block. This is what makes the whole design auditable
+        from outside.
+      </p>
+    </div>
+
+    <div class="prose">
+      <p>
+        Ask any node for any block's certificate and you get the signatures, the addresses they recover
+        to, and how many were required. The addresses are <strong>recovered from the signatures by the
+        server</strong>, not read from a configuration file — so a scrutineer can check the arithmetic
+        without trusting the node that served it.
+      </p>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:1.5rem; align-items:start">
+      <div class="stack-sm">
+        <div class="eyebrow">Request</div>
+        <pre><code>curl -s http://&lt;node&gt;:3001 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,
+       "method":<span class="s">"zk_getCommitSeals"</span>,
+       "params":["latest"]}'</code></pre>
+      </div>
+      <div class="stack-sm">
+        <div class="eyebrow">Response</div>
+<pre><code>{
+  <span class="k">"number"</span>: "0x2a",
+  <span class="k">"blockHash"</span>: "0x9f3c…",
+  <span class="k">"quorum"</span>: "0x3",
+  <span class="k">"validatorSetSize"</span>: "0x4",
+  <span class="k">"seals"</span>: [
+    { "validator": <span class="s">"authority"</span>, "address": "0x5417…" },
+    { "validator": <span class="s">"jvp"</span>,       "address": "0xC6E4…" },
+    { "validator": <span class="s">"unp"</span>,       "address": "0x4Cb1…" }
+  ]
+}</code></pre>
+      </div>
+    </div>
+
+    <div class="note-box" style="margin-top:1.5rem">
+      <div class="nb-label">Why the signatures sit beside the block, not inside it</div>
+      <p>
+        Most IBFT chains pack seals into the block header. This one cannot: the block hash and state
+        root are what the auditor, the replicas and the replay engine all verify against, so putting
+        signatures into the hashed header would change <strong>every block hash</strong> — the same
+        votes would produce a different chain, and every piece of existing verification code would need
+        a second path. The certificate is therefore a <em>sidecar</em>, keyed by block height and hash.
+      </p>
+    </div>
+
+    <div class="note-box warn" style="margin-top:1.15rem">
+      <div class="nb-label">The honest cost of that choice</div>
+      <p>
+        <strong>A block's validity does not depend on its seals.</strong> Re-executing the chain proves
+        the <em>state</em> is right; the seals prove <em>who agreed to it</em>. Losing a seal record
+        loses audit trail, not the block — which is why a missing certificate returns <code>null</code>
+        rather than an error.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 08 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">08</div>
+      <h2>How it maps onto the AWS machines</h2>
+      <p class="sec-sub">
+        Nothing new was provisioned. Four <code>t3.small</code> instances in <code>ap-south-1</code>,
+        same ports, same certificates.
+      </p>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th></th><th>Before</th><th>After</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>ROLE</code></td><td>node1 <code>primary</code>, rest <code>replica</code></td><td><strong>all four <code>primary</code></strong></td></tr>
+          <tr><td><code>CONSENSUS_MODE</code></td><td>— (did not exist)</td><td><code>bft</code></td></tr>
+          <tr><td><code>/health</code> reports</td><td><code>"role":"primary"</code> / <code>"replica"</code></td><td><code>"role":"validator"</code></td></tr>
+          <tr><td>Port 4001 traffic</td><td>node1 → replicas, one way</td><td>all ↔ all, both ways</td></tr>
+          <tr><td>Who may accept a vote</td><td>node1 only</td><td><strong>any of the four</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid cols-2" style="margin-top:1.5rem">
+      <div class="card">
+        <h4>Why the network needed no change</h4>
+        <p>
+          The security group already carried <code>from_port 4001, self = true</code>. That rule is
+          membership-based rather than pair-based, so <strong>the full mesh already existed</strong> —
+          the single-sequencer design simply never used it in both directions.
+        </p>
+      </div>
+      <div class="card">
+        <h4>There is no replica in a BFT cluster</h4>
+        <p>
+          A replica cannot propose, so a validator configured as one would hold a key, be counted in the
+          quorum, and never take its turn — leaving the cluster permanently one vote short. The node
+          refuses to boot in that configuration.
+        </p>
+      </div>
+    </div>
+
+    <div class="prose" style="margin-top:1.5rem">
+      <p>
+        Ansible generates the inventory from Terraform's output. Under BFT, <strong>every</strong> host
+        gets its own peer list — previously only node1 got one:
+      </p>
+    </div>
+
+    <div style="margin-top:.9rem">
+<pre><code><span class="k">node2:</span>
+  validator_id:       jvp
+  consensus_peers:    <span class="c"># where to send votes — mTLS, :4001</span>
+    "authority=https://10.0.1.11:4001,unp=https://10.0.1.13:4001,sjb=https://10.0.1.14:4001"
+  validator_rpc_urls: <span class="c"># where to forward a vote when not the proposer — :3001</span>
+    "authority=http://10.0.1.11:3001,unp=http://10.0.1.13:3001,sjb=http://10.0.1.14:3001"</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 09 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">09</div>
+      <h2>Demonstrating it</h2>
+      <p class="sec-sub">
+        The whole value is that these are observable on real machines. Rehearse them; do not run them
+        for the first time on the day.
+      </p>
+    </div>
+
+    <ol class="clean" style="max-width:var(--measure); font-family:var(--display); font-size:var(--s-1)">
+      <li>
+        <strong>Baseline.</strong> <code>/health</code> shows <code>"role":"validator"</code> on all
+        four — not <code>"primary"</code>. Cast a vote; its certificate shows three distinct addresses.
+        <em>Say: "three of the four parties independently re-executed this block and signed it."</em>
+      </li>
+      <li>
+        <strong>Kill the authority.</strong> <code>sudo systemctl stop zk-node</code> on node1. Cast a
+        vote — <strong>it lands.</strong> <code>zk_consensusStatus</code> shows the proposer has rotated
+        away, and the new block's seals do not include the authority's.
+        <em>Say: "the electoral authority's server is off and voting continues. Under the old design
+        this stopped the election entirely."</em>
+      </li>
+      <li>
+        <strong>Kill a second.</strong> Cast a vote — it fails after roughly 24 seconds with
+        <code>consensus did not reach quorum… it was not mined</code>. Heights on the survivors are
+        frozen; every block still shows three seals.
+        <em>Say: "it stops rather than letting two parties agree a result between themselves."</em>
+      </li>
+      <li>
+        <strong>Restore one.</strong> It re-executes every block it missed, verifying each itself, then
+        rejoins voting. Resubmit; it lands.
+      </li>
+      <li>
+        <strong>Run the audit.</strong> <code>go run ./cmd/audit -data-dir ./data_3001</code> — every
+        block re-executes to the state root it always did.
+        <em>Say: "consensus changed who decides the order. It did not touch execution."</em>
+      </li>
+    </ol>
+
+    <div class="note-box good" style="margin-top:1.6rem">
+      <div class="nb-label">The demo that matters most is number 3</div>
+      <p>
+        Anyone can build something that keeps going. <strong>Stopping for the right reason is the
+        engineering.</strong> Two of four gone means the remaining two must not be able to decide an
+        election between themselves — and the system enforces that rather than degrading.
+      </p>
+    </div>
+
+    <h3 style="margin-top:2.1rem">Automated evidence</h3>
+    <div class="grid cols-2" style="margin-top:.9rem">
+      <div class="card">
+        <h4>In process — the protocol's logic</h4>
+        <p>
+          Four consensus engines against four real databases, covering quorum signing, one-down
+          liveness, two-down safety, leader rotation and Byzantine equivocation.
+        </p>
+        <pre><code>go test ./internal/consensus/ -v</code></pre>
+      </div>
+      <div class="card">
+        <h4>Process level — the deployment working</h4>
+        <p>
+          Four real binaries over real mTLS on real sockets, killed and revived, plus a full
+          <code>cmd/audit</code> replay at the end.
+        </p>
+        <pre><code>make bft-cluster-test</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =================================================================== 10 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">10</div>
+      <h2>Honest limitations</h2>
+      <p class="sec-sub">
+        Every one of these is a deliberate trade rather than an oversight. Being able to name them is
+        part of the work.
+      </p>
+    </div>
+
+    <dl class="defs" style="max-width:var(--measure)">
+      <div>
+        <dt>The validator set is fixed at configuration</dt>
+        <dd>
+          There is no on-chain membership management. Changing the set means deciding at which block it
+          changes, which affects the certificates of blocks either side — so it is a coordinated
+          restart of all four.
+        </dd>
+      </div>
+      <div>
+        <dt>Two validators down halts the election</dt>
+        <dd>
+          Correct by design: two of four must not be able to decide anything. It is a liveness cost
+          accepted in exchange for the safety guarantee.
+        </dd>
+      </div>
+      <div>
+        <dt>The proposer executes each transaction twice</dt>
+        <dd>
+          Once building the candidate, once committing it through the same path a follower uses. Bought
+          deliberately: it leaves exactly one durable write path, so a block this node proposed and a
+          block it received are indistinguishable on disk.
+        </dd>
+      </div>
+      <div>
+        <dt>The audit does not verify seals</dt>
+        <dd>
+          It re-executes the chain, which is the stronger check. Cross-checking every historical
+          certificate is possible future work.
+        </dd>
+      </div>
+      <div>
+        <dt>One operator generated all four keys</dt>
+        <dd>
+          A convenience of this deployment. In a real election each party generates its own key on its
+          own hardware and publishes only the address — <strong>the protocol does not assume
+          otherwise.</strong> This is a property of the deployment, not a flaw in the design.
+        </dd>
+      </div>
+    </dl>
+  </div>
+</section>
+
+<!-- =================================================================== 11 -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">11</div>
+      <h2>In one paragraph</h2>
+    </div>
+    <div class="prose">
+      <p style="font-size:var(--s1); line-height:1.6; color:var(--ink-soft)">
+        The chain previously had a single writer, which meant one machine could stop the election and
+        one party decided its contents. It now runs QBFT-style Byzantine fault tolerant consensus across
+        four validators — the electoral authority and three political parties — each holding a
+        cryptographic signing key. Validators take turns proposing blocks by a formula every node
+        computes independently; each validator re-executes a proposed block itself before voting; and a
+        block becomes final only when three of the four have signed a commit for it, with those three
+        signatures stored alongside it as a verifiable certificate. With four validators and a threshold
+        of three, the system survives any one validator failing — the election continues even with the
+        authority's server switched off — and halts rather than weakening if two fail, because allowing
+        two parties to agree a result would defeat the point. Forking is impossible even against an
+        actively malicious validator, because any two groups of three share at least one honest member,
+        and an honest validator never commits to two blocks at the same height.
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap stack-sm">
+    <div>
+      Companion documents in the repository —
+      <code>packages/blockchain/02-BFT-CONSENSUS.md</code> (long-form),
+      <code>packages/blockchain/CONSENSUS.md</code> (technical reference),
+      <code>infra/DEPLOY-BFT.md</code> (deployment runbook).
+    </div>
+    <div>Implementation: <code>packages/blockchain/internal/consensus/</code></div>
+  </div>
+</footer>
+
+</body>
+</html>
