@@ -21,9 +21,7 @@ const BlockExplorer: NextPage = () => {
   }, [targetNetwork.id]);
 
   useEffect(() => {
-    if (isLocalChainId(targetNetwork.id) && error) {
-      setHasError(true);
-    }
+    setHasError(isLocalChainId(targetNetwork.id) && error !== null);
   }, [targetNetwork.id, error]);
 
   useEffect(() => {
