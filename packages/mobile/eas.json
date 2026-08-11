@@ -21,7 +21,12 @@
     },
     "production": {
       "android": {
-        "buildType": "apk"
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://zk-voting-alb-1406750063.ap-south-1.elb.amazonaws.com",
+        "EXPO_PUBLIC_RPC_URL": "http://zk-voting-alb-1406750063.ap-south-1.elb.amazonaws.com/chain-api",
+        "EXPO_PUBLIC_CHAIN_ID": "9494"
       }
     }
   },
