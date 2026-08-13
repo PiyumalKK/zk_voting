@@ -36,6 +36,46 @@ extension) is replaced by:
 Free gas (chain accepts `gasPrice=0`) is what makes voter self-signing workable without a
 faucet or paymaster: an unfunded burner can submit `vote()` directly.
 
+### 2.1 First-login password change (GN officers)
+
+A GN account is created by the admin, and its first password is generated server-side and
+displayed to that admin once. For as long as the officer keeps it, **two people know the
+credential** — which makes the relay audit log's `username` field ambiguous: an `addVoters`
+call in that window could have come from either of them. Confidentiality is not the issue;
+attribution is.
+
+So a freshly created account carries `mustChangePassword: true`, mirrored into the session
+at login. While it is set:
+
+- the officer is authenticated — the credential was correct — but `requireSession()` refuses
+  every privileged call with `403 {code: "password_change_required"}`. That covers
+  `POST /api/relay` (and therefore `addVoters`), `POST /api/nic/hash`, and `/api/gn-accounts`,
+  because all of them funnel through that one function;
+- `middleware.ts` redirects page requests to `/change-password`. This is the *convenience*
+  half only. The gate is enforced in `requireSession()` precisely because a redirect stops a
+  browser and not a `curl` carrying a valid session cookie;
+- exactly four paths stay open, the ones the change screen needs: `/change-password`,
+  `/api/auth/password`, `/api/auth/session`, `/api/auth/logout`.
+
+`POST /api/auth/password` verifies the current password, enforces the policy in
+`services/auth/passwordPolicy.ts` (≥12 characters, no surrounding whitespace), **rejects a
+change back to the same value** — otherwise an officer could clear the flag by retyping what
+the admin gave them — writes the new bcrypt hash, clears the flag, and appends an audit line.
+Every audit entry after that line names a password only the officer has ever seen.
+
+Records written before this existed have no flag; a missing value reads as `true`, since
+those are exactly the accounts whose passwords an admin still knows.
+
+Admins are not gated: `ADMIN_PASSWORD_HASH` lives in the server environment, there is no
+stored record to rewrite, and changing it is a deployment action (new hash, restart).
+
+**What this does not fix.** The admin remains fully trusted by this architecture, and the
+gate is about attribution, not containment. Officer signing keys are still held server-side
+and decrypted by the relay, so anyone with the server environment can sign as any officer
+without a password; `setGNOfficer` can point a division at any address; and an admin can
+create and delete accounts at will. Removing those requires moving key custody off the
+server — see §6.
+
 ---
 
 ## 3. Components (M12 builds these)
@@ -44,10 +84,14 @@ faucet or paymaster: an unfunded burner can submit `vote()` directly.
 packages/nextjs/
 ├── middleware.ts                      # guards /voting/admin, /gn/** , /api/relay/** (custom mode only)
 ├── app/login/page.tsx                 # single login page, role inferred from account store
+├── app/change-password/page.tsx       # officer takes custody of their credential — see §2.1
 ├── app/api/auth/{login,logout,session}/route.ts   # iron-session; bcrypt verify; rate-limited (5/min/IP)
+├── app/api/auth/password/route.ts     # GN self-service password change; clears the first-login gate
 ├── app/api/relay/route.ts             # THE signer — see §4
 ├── app/api/gn-accounts/route.ts       # admin-session-only CRUD for GN accounts
 ├── services/auth/{session.ts,accounts.ts,crypto.ts}  # session config, account store, AES-GCM keystore
+├── services/auth/passwordPolicy.ts    # pure rules, shared by the form and the route
+├── services/auth/serverSession.ts     # requireSession() — role check AND the §2.1 gate
 └── hooks/useElectionWriter.ts         # ONE seam: hardhat → wagmi walletClient (unchanged);
                                        # custom  → POST /api/relay
 ```

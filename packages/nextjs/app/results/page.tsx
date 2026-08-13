@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { NextPage } from "next";
 import { usePublicClient } from "wagmi";
 import { PHASE_LABELS, useDivisions } from "~~/hooks/useDivisions";
+import { aggregateNationalResults } from "~~/utils/nationalResults";
 
 const PALETTES = [
   { bar: "bg-success", text: "text-success" },
@@ -104,28 +105,13 @@ const ResultsDashboard: NextPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [divisionsKey, publicClient, divisionsLoading]);
 
-  // Build national aggregation across all divisions (candidates assumed aligned by index).
-  const national = useMemo(() => {
-    const nameSet: string[] = [];
-    const totals: number[] = [];
-    let totalVotes = 0;
-    let totalRegistered = 0;
-
-    for (const r of results) {
-      totalVotes += r.totalVotes;
-      totalRegistered += r.treeSize;
-      r.candidates.forEach((name, idx) => {
-        if (!nameSet[idx]) nameSet[idx] = name;
-        totals[idx] = (totals[idx] ?? 0) + (r.counts[idx] ?? 0);
-      });
-    }
-
-    return { candidates: nameSet, totals, totalVotes, totalRegistered };
-  }, [results]);
+  // Divisions each own their candidate list, so the national tally is combined
+  // by candidate NAME — never by array position. See utils/nationalResults.
+  const national = useMemo(() => aggregateNationalResults(results), [results]);
 
   const nationalTurnout =
     national.totalRegistered > 0 ? ((national.totalVotes / national.totalRegistered) * 100).toFixed(1) : "0";
-  const maxNational = Math.max(0, ...national.totals);
+  const maxNational = Math.max(0, ...national.candidates.map(c => c.votes));
 
   const isLoading = divisionsLoading || loadingResults;
 
@@ -171,23 +157,38 @@ const ResultsDashboard: NextPage = () => {
         {/* National Results Cards */}
         <div className="bg-base-100 rounded-2xl p-6 shadow-md border border-base-300/50 mb-8">
           <h2 className="font-bold text-lg mb-4">National Candidate Totals</h2>
+          {/* A split ballot is legitimate, but it makes the totals below cover
+              different electorates per candidate — say so rather than hide it. */}
+          {national.ballotsDiverge && (
+            <div className="alert alert-warning mb-4 text-sm">
+              <span>
+                ⚠️ Divisions are not all running the same candidates. Totals are combined by name; the counter beside
+                each candidate shows how many divisions they stand in.
+              </span>
+            </div>
+          )}
           {national.candidates.length > 0 ? (
             <div className="space-y-4">
               {national.candidates.map((candidate, idx) => {
-                const count = national.totals[idx] ?? 0;
+                const count = candidate.votes;
                 const pct = national.totalVotes > 0 ? (count / national.totalVotes) * 100 : 0;
                 const palette = PALETTES[idx % PALETTES.length];
                 const isLeading = count === maxNational && count > 0;
 
                 return (
                   <div
-                    key={candidate}
+                    key={candidate.name}
                     className={`p-4 rounded-xl border ${isLeading ? "border-success/50 bg-success/5" : "border-base-300/50"}`}
                   >
                     <div className="flex justify-between items-center mb-2">
                       <div className="flex items-center gap-2">
                         {isLeading && <span className="text-xs badge badge-success badge-sm">Leading</span>}
-                        <span className="font-bold">{candidate}</span>
+                        <span className="font-bold">{candidate.name}</span>
+                        {national.ballotsDiverge && (
+                          <span className="badge badge-ghost badge-sm">
+                            {candidate.divisions}/{results.length} divisions
+                          </span>
+                        )}
                       </div>
                       <div className="text-right">
                         <span className={`font-bold text-lg ${palette.text}`}>{count.toLocaleString()}</span>

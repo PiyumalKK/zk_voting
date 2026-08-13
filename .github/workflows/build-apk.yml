@@ -1,7 +1,15 @@
-name: Build Mobile APK
+name: Build Mobile App (APK / AAB)
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: "Build profile: preview = APK (sideload/testing), production = AAB (Play Store)"
+        type: choice
+        default: preview
+        options:
+          - preview
+          - production
 
 jobs:
   get-alb-url:
@@ -32,7 +40,7 @@ jobs:
           echo "✅ Using ALB: $ALB"
 
   build:
-    name: Build Android APK
+    name: Build Android App
     needs: get-alb-url
     runs-on: ubuntu-latest
     steps:
@@ -42,30 +50,39 @@ jobs:
           node-version: '20'
       - name: Install EAS CLI
         run: npm install -g eas-cli
-      - name: Inject AWS URLs into eas.json (preview.env is embedded by EAS at build time)
+      - name: Inject AWS URLs into eas.json (the chosen profile's env is embedded by EAS at build time)
         run: |
           cd packages/mobile
           ALB="${{ needs.get-alb-url.outputs.alb_dns }}"
+          PROFILE="${{ inputs.profile }}"
+          # Inject the live ALB URL into BOTH profiles so either build type is correct.
           jq --arg api "http://$ALB" --arg rpc "http://$ALB/chain-api" \
             '.build.preview.env.EXPO_PUBLIC_API_URL = $api
              | .build.preview.env.EXPO_PUBLIC_RPC_URL = $rpc
-             | .build.preview.env.EXPO_PUBLIC_CHAIN_ID = "9494"' \
+             | .build.preview.env.EXPO_PUBLIC_CHAIN_ID = "9494"
+             | .build.production.env.EXPO_PUBLIC_API_URL = $api
+             | .build.production.env.EXPO_PUBLIC_RPC_URL = $rpc
+             | .build.production.env.EXPO_PUBLIC_CHAIN_ID = "9494"' \
             eas.json > eas.json.tmp && mv eas.json.tmp eas.json
-          echo "✅ eas.json preview.env now points at ALB: $ALB"
-          jq '.build.preview.env' eas.json
+          echo "✅ eas.json $PROFILE.env now points at ALB: $ALB"
+          jq ".build.$PROFILE.env" eas.json
       - name: Install dependencies
         run: cd packages/mobile && yarn install
-      - name: Build APK
+      - name: Build app (${{ inputs.profile }})
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           cd packages/mobile
-          eas build --platform android --profile preview --non-interactive --no-wait
+          eas build --platform android --profile ${{ inputs.profile }} --non-interactive --no-wait
       - name: Show build info
         run: |
-          echo "📱 APK build submitted to EAS!"
+          if [ "${{ inputs.profile }}" = "production" ]; then
+            echo "📦 AAB (Play Store) build submitted to EAS!"
+          else
+            echo "📱 APK (sideload/testing) build submitted to EAS!"
+          fi
           echo "   Check build status: https://expo.dev/accounts/piyumalkk/projects/sl-vote/builds"
           echo ""
-          echo "   Production config:"
+          echo "   Config baked into this build:"
           echo "   API: http://${{ needs.get-alb-url.outputs.alb_dns }}"
           echo "   RPC: http://${{ needs.get-alb-url.outputs.alb_dns }}/chain-api"

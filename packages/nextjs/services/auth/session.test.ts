@@ -1,10 +1,12 @@
 import {
+  CHANGE_PASSWORD_PATH,
   MIN_SESSION_SECRET_LENGTH,
   SESSION_COOKIE_NAME,
   SESSION_TTL_SECONDS,
   SessionConfigError,
   buildSessionOptions,
   isPathAllowedForRole,
+  isPathAllowedWhilePasswordPending,
 } from "./session";
 import { describe, expect, it } from "vitest";
 
@@ -52,5 +54,31 @@ describe("isPathAllowedForRole", () => {
   it("lets both roles reach the relay, which applies its own whitelist", () => {
     expect(isPathAllowedForRole("/api/relay", "admin")).toBe(true);
     expect(isPathAllowedForRole("/api/relay", "gn")).toBe(true);
+  });
+});
+
+describe("isPathAllowedWhilePasswordPending", () => {
+  it("closes the paths that would let a shared credential act", () => {
+    // The whole point of the gate: an officer still on the password their admin
+    // generated cannot enrol anyone. `/api/relay` is where `addVoters` goes.
+    expect(isPathAllowedWhilePasswordPending("/api/relay")).toBe(false);
+    expect(isPathAllowedWhilePasswordPending("/api/nic/hash")).toBe(false);
+    expect(isPathAllowedWhilePasswordPending("/api/gn-accounts")).toBe(false);
+    expect(isPathAllowedWhilePasswordPending("/gn/register")).toBe(false);
+    expect(isPathAllowedWhilePasswordPending("/voting/admin")).toBe(false);
+  });
+
+  it("opens exactly what the change-password screen needs", () => {
+    expect(isPathAllowedWhilePasswordPending(CHANGE_PASSWORD_PATH)).toBe(true);
+    expect(isPathAllowedWhilePasswordPending("/api/auth/password")).toBe(true);
+    expect(isPathAllowedWhilePasswordPending("/api/auth/session")).toBe(true);
+    // Signing out must keep working, or an officer who cannot finish the change
+    // has no way back to the login form.
+    expect(isPathAllowedWhilePasswordPending("/api/auth/logout")).toBe(true);
+  });
+
+  it("matches on the whole path, so a prefix cannot smuggle a request through", () => {
+    expect(isPathAllowedWhilePasswordPending("/api/auth/password/../relay")).toBe(false);
+    expect(isPathAllowedWhilePasswordPending("/change-password-not-really")).toBe(false);
   });
 });

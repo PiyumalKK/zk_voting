@@ -25,6 +25,8 @@ export interface ElectionSession {
   role: "admin" | "gn";
   /** Division index this GN is scoped to. Never set for admins. */
   divisionId?: number;
+  /** True while this officer still holds the password their admin generated. */
+  mustChangePassword?: boolean;
   loggedInAt: number;
 }
 
@@ -47,6 +49,13 @@ export interface ElectionAuth {
   isAdmin: boolean;
   /** Custom mode: the operator holds a GN session. Always false in hardhat mode. */
   isGn: boolean;
+  /**
+   * The session is authenticated but gated: the officer is still on the
+   * password their admin generated, and the server refuses every privileged
+   * call until they replace it. Pages use this to explain the state rather than
+   * letting the first action fail with a bare 403.
+   */
+  mustChangePassword: boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -170,7 +179,16 @@ export const useElectionAuth = (): ElectionAuth => {
   }, [mode]);
 
   if (mode !== "custom") {
-    return { mode, session: null, isLoading: false, isAdmin: false, isGn: false, refresh, signOut };
+    return {
+      mode,
+      session: null,
+      isLoading: false,
+      isAdmin: false,
+      isGn: false,
+      mustChangePassword: false,
+      refresh,
+      signOut,
+    };
   }
 
   return {
@@ -180,6 +198,7 @@ export const useElectionAuth = (): ElectionAuth => {
     error: snapshot.error,
     isAdmin: snapshot.session?.role === "admin",
     isGn: snapshot.session?.role === "gn",
+    mustChangePassword: snapshot.session?.mustChangePassword === true,
     refresh,
     signOut,
   };

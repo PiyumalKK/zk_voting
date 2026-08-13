@@ -1,4 +1,12 @@
-import { AuthCryptoError, decryptSecret, encryptSecret, hashPassword, parseEncryptionKey } from "./crypto";
+import {
+  AuthCryptoError,
+  decryptSecret,
+  encryptSecret,
+  hashPassword,
+  parseEncryptionKey,
+  verifyPassword,
+} from "./crypto";
+import { passwordProblem } from "./passwordPolicy";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -22,6 +30,18 @@ export interface GnAccountRecord {
   /** Lowercase, unique. The login name and the AAD binding the encrypted key to this record. */
   username: string;
   passwordHash: string;
+  /**
+   * True while the account still carries the password the admin generated at
+   * creation — i.e. while a second person knows the credential.
+   *
+   * `requireSession()` refuses every privileged call in that state, so nothing
+   * an officer does on-chain can happen under a password someone else has seen.
+   * That is what makes the relay audit log's `username` field mean one person
+   * rather than two.
+   */
+  mustChangePassword: boolean;
+  /** ISO timestamp of the officer's own password change. Absent until they take custody. */
+  passwordChangedAt?: string;
   /** Index into `ElectionRegistry.getAllDivisions()`. */
   divisionId: number;
   /**
@@ -44,6 +64,9 @@ export interface PublicGnAccount {
   address: string;
   createdAt: string;
   disabled: boolean;
+  /** Surfaced to the admin panel so an officer who has not taken custody is visible. */
+  mustChangePassword: boolean;
+  passwordChangedAt?: string;
 }
 
 interface StoreFile {
@@ -67,6 +90,23 @@ export const toPublicAccount = (account: GnAccountRecord): PublicGnAccount => ({
   address: account.address,
   createdAt: account.createdAt,
   disabled: account.disabled,
+  mustChangePassword: account.mustChangePassword,
+  passwordChangedAt: account.passwordChangedAt,
+});
+
+/**
+ * Fills in `mustChangePassword` for records written before it existed.
+ *
+ * Missing means the account was created by the old route, which handed the
+ * generated password to the admin and never asked for it back — so the safe
+ * reading of an absent flag is `true`, not `false`. Officers provisioned before
+ * this change are prompted once on their next sign-in, which is exactly the
+ * outcome we want: they are the accounts whose passwords are known to two
+ * people right now.
+ */
+const withDefaults = (account: GnAccountRecord): GnAccountRecord => ({
+  ...account,
+  mustChangePassword: account.mustChangePassword ?? true,
 });
 
 /** Usernames are case-insensitive and restricted so they cannot collide with path or JSON tricks. */
@@ -132,7 +172,7 @@ export class GnAccountStore {
     if (file?.version !== 1 || !Array.isArray(file.accounts)) {
       throw new AccountStoreError(`GN account store at ${this.filePath} has an unrecognised layout.`);
     }
-    return { version: 1, accounts: file.accounts };
+    return { version: 1, accounts: file.accounts.map(withDefaults) };
   }
 
   /**
@@ -212,9 +252,56 @@ export class GnAccountStore {
         encryptedPrivateKey,
         createdAt: new Date().toISOString(),
         disabled: false,
+        // The admin generated this password and is about to read it off their
+        // screen. It gets the officer through the door once and no further.
+        mustChangePassword: true,
       };
       await this.write({ ...file, accounts: [...file.accounts, record] });
       return toPublicAccount(record);
+    });
+  }
+
+  /**
+   * Replaces an officer's password with one they chose, clearing the gate.
+   *
+   * The new hash is computed *before* entering the mutation queue so a 250 ms
+   * bcrypt round does not hold the store's write lock against every other
+   * request — the same ordering `create()` uses.
+   *
+   * Rejects a "change" back to the current password. Without that check an
+   * officer could satisfy the gate by retyping the credential the admin
+   * generated, which would leave the audit trail exactly as ambiguous as it was
+   * before while reporting that custody had been taken.
+   */
+  async changePassword(username: string, newPassword: string): Promise<PublicGnAccount> {
+    const target = normaliseUsername(username);
+    const problem = passwordProblem(newPassword);
+    if (problem) throw new AccountStoreError(problem);
+
+    const existing = await this.findByUsername(target);
+    if (!existing) throw new AccountStoreError(`No GN account named "${target}".`);
+    if (await verifyPassword(newPassword, existing.passwordHash)) {
+      throw new AccountStoreError("Choose a password different from your current one.");
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+
+    return this.mutate(async file => {
+      const record = file.accounts.find(account => account.username === target);
+      // Re-checked inside the lock: the account may have been deleted between
+      // the read above and this write.
+      if (!record) throw new AccountStoreError(`No GN account named "${target}".`);
+      const updated: GnAccountRecord = {
+        ...record,
+        passwordHash,
+        mustChangePassword: false,
+        passwordChangedAt: new Date().toISOString(),
+      };
+      await this.write({
+        ...file,
+        accounts: file.accounts.map(account => (account.username === target ? updated : account)),
+      });
+      return toPublicAccount(updated);
     });
   }
 

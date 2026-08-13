@@ -181,6 +181,69 @@ describe("GnAccountStore", () => {
     await expect(store.setDisabled("nobody", true)).rejects.toThrow(AccountStoreError);
   });
 
+  it("marks a new account as still owing a password change", async () => {
+    // The admin has just read this password off their screen, so it is known to
+    // two people. The flag is what stops the officer acting under it.
+    const { store } = await newStore();
+    const created = await store.create(baseAccount());
+
+    expect(created.mustChangePassword).toBe(true);
+    expect(created.passwordChangedAt).toBeUndefined();
+  });
+
+  it("clears the flag once the officer sets their own password", async () => {
+    const { store } = await newStore();
+    await store.create(baseAccount({ password: "issued-by-the-admin" }));
+
+    const updated = await store.changePassword("gn-colombo", "chosen-by-the-officer");
+
+    expect(updated.mustChangePassword).toBe(false);
+    expect(updated.passwordChangedAt).toBeTruthy();
+
+    const account = await store.findByUsername("gn-colombo");
+    expect(await verifyPassword("chosen-by-the-officer", account!.passwordHash)).toBe(true);
+    // The credential the admin saw must stop working.
+    expect(await verifyPassword("issued-by-the-admin", account!.passwordHash)).toBe(false);
+  });
+
+  it("refuses a change that keeps the password the admin issued", async () => {
+    // Without this, an officer could satisfy the gate by retyping the password
+    // they were given — clearing the flag while the admin still knows it.
+    const { store } = await newStore();
+    await store.create(baseAccount({ password: "issued-by-the-admin" }));
+
+    await expect(store.changePassword("gn-colombo", "issued-by-the-admin")).rejects.toThrow(/different/i);
+    expect((await store.findByUsername("gn-colombo"))!.mustChangePassword).toBe(true);
+  });
+
+  it("enforces the length floor and rejects surrounding whitespace", async () => {
+    const { store } = await newStore();
+    await store.create(baseAccount());
+
+    await expect(store.changePassword("gn-colombo", "short")).rejects.toThrow(/at least 12/);
+    await expect(store.changePassword("gn-colombo", " padded-password ")).rejects.toThrow(/space/);
+    expect((await store.findByUsername("gn-colombo"))!.mustChangePassword).toBe(true);
+  });
+
+  it("reports a clear error when changing the password of an unknown account", async () => {
+    const { store } = await newStore();
+    await expect(store.changePassword("nobody", "a-perfectly-fine-password")).rejects.toThrow(AccountStoreError);
+  });
+
+  it("treats an account written before the flag existed as still owing a change", async () => {
+    // Officers provisioned by the old route are exactly the ones whose password
+    // an admin still knows, so a missing field must read as `true`.
+    const { store, filePath } = await newStore();
+    await store.create(baseAccount());
+
+    const file = JSON.parse(await readFile(filePath, "utf8"));
+    delete file.accounts[0].mustChangePassword;
+    await writeFile(filePath, JSON.stringify(file), "utf8");
+
+    expect((await store.findByUsername("gn-colombo"))!.mustChangePassword).toBe(true);
+    expect((await store.list())[0].mustChangePassword).toBe(true);
+  });
+
   it("refuses to overwrite a corrupt store", async () => {
     const { store, filePath } = await newStore();
     await store.create(baseAccount());
@@ -215,7 +278,16 @@ describe("toPublicAccount", () => {
     const account = await store.findByUsername("gn-colombo");
 
     const shape = toPublicAccount(account!) as unknown as Record<string, unknown>;
-    expect(Object.keys(shape).sort()).toEqual(["address", "createdAt", "disabled", "divisionId", "id", "username"]);
+    expect(Object.keys(shape).sort()).toEqual([
+      "address",
+      "createdAt",
+      "disabled",
+      "divisionId",
+      "id",
+      "mustChangePassword",
+      "passwordChangedAt",
+      "username",
+    ]);
     expect(shape.passwordHash).toBeUndefined();
     expect(shape.encryptedPrivateKey).toBeUndefined();
   });

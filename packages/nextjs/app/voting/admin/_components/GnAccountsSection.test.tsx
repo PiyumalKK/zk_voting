@@ -63,6 +63,17 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
+/**
+ * Replaces `navigator.clipboard` for one test.
+ *
+ * `defineProperty` rather than `vi.stubGlobal("navigator", …)`: the property is
+ * read-only, and swapping the whole navigator object leaves userEvent holding
+ * the original. Restored in `afterEach`.
+ */
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const setClipboard = (value: unknown) =>
+  Object.defineProperty(navigator, "clipboard", { value, configurable: true, writable: true });
+
 /** Answers the initial GET, then whatever the test queues for the mutation. */
 const listReturns = (accounts: unknown[]) => fetchMock.mockResolvedValue(jsonResponse({ accounts }));
 
@@ -75,7 +86,11 @@ beforeEach(() => {
   vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
+});
 
 describe("GnAccountsSection", () => {
   it("lists existing officers with their division and on-chain state", async () => {
@@ -127,6 +142,71 @@ describe("GnAccountsSection", () => {
 
     await user.click(screen.getByRole("button", { name: /i have saved it/i }));
     expect(screen.queryByText(/hunter2-generated/)).toBeNull();
+  });
+
+  it("copies the one-time password to the clipboard", async () => {
+    // The password is unrecoverable once this banner is dismissed, so the copy
+    // path is the difference between an account that works and one nobody can
+    // sign in to.
+    const user = userEvent.setup();
+    // Installed *after* `setup()`, which fits userEvent with its own clipboard
+    // stub and would otherwise shadow this one.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    setClipboard({ writeText });
+
+    listReturns([]);
+    render(<GnAccountsSection />);
+    await screen.findByText(/no gn accounts yet/i);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ username: "gn.colombo", password: "hunter2-generated", divisionId: 1, assigned: true }),
+    );
+    fetchMock.mockResolvedValue(jsonResponse({ accounts: [] }));
+
+    await user.type(screen.getByLabelText(/username/i), "gn.colombo");
+    await user.click(screen.getByRole("button", { name: /create officer/i }));
+    await screen.findByRole("status");
+
+    await user.click(screen.getByRole("button", { name: /copy password/i }));
+
+    expect(writeText).toHaveBeenCalledWith("hunter2-generated");
+    expect(await screen.findByText("Copied")).toBeDefined();
+  });
+
+  it("says so when the clipboard is unavailable rather than looking broken", async () => {
+    const user = userEvent.setup();
+    // `navigator.clipboard` is undefined on insecure origins — reaching a dev
+    // server over plain HTTP from another machine, for one.
+    setClipboard(undefined);
+
+    listReturns([]);
+    render(<GnAccountsSection />);
+    await screen.findByText(/no gn accounts yet/i);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ username: "gn.colombo", password: "hunter2-generated", divisionId: 1, assigned: true }),
+    );
+    fetchMock.mockResolvedValue(jsonResponse({ accounts: [] }));
+
+    await user.type(screen.getByLabelText(/username/i), "gn.colombo");
+    await user.click(screen.getByRole("button", { name: /create officer/i }));
+    await screen.findByRole("status");
+
+    await user.click(screen.getByRole("button", { name: /copy password/i }));
+
+    await waitFor(() => expect(mocks.notifyError).toHaveBeenCalledWith(expect.stringMatching(/by hand/i)));
+  });
+
+  it("marks an officer who has not yet taken custody of their password", async () => {
+    listReturns([{ ...EXISTING_ACCOUNT, mustChangePassword: true }]);
+
+    render(<GnAccountsSection />);
+
+    const row = (await screen.findByText("gn.kaduwela")).closest("tr")!;
+    // They cannot enrol anyone yet, and the credential is still one the admin
+    // has seen — worth showing rather than presenting them as fully active.
+    expect(within(row).getByText(/awaiting first sign-in/i)).toBeDefined();
+    expect(within(row).queryByText("Active")).toBeNull();
   });
 
   it("posts the chosen username and division", async () => {

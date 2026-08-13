@@ -25,7 +25,7 @@ const loadMiddleware = async () => (await import("./middleware")).middleware;
 /** Builds a request carrying a genuine sealed session cookie. */
 const requestWithSession = async (
   pathname: string,
-  session?: { username: string; role: "admin" | "gn"; divisionId?: number },
+  session?: { username: string; role: "admin" | "gn"; divisionId?: number; mustChangePassword?: boolean },
 ) => {
   const url = `https://example.test${pathname}`;
   if (!session) return new NextRequest(url);
@@ -159,6 +159,68 @@ describe("custom mode — signed in", () => {
     const response = await middleware(request);
 
     expect(new URL(response.headers.get("location")!).pathname).toBe("/voting/admin");
+  });
+});
+
+describe("custom mode — officer still on the admin-issued password", () => {
+  beforeEach(() => vi.stubEnv("NEXT_PUBLIC_CHAIN_BACKEND", "custom"));
+
+  const pending = { username: "gn-colombo", role: "gn" as const, divisionId: 0, mustChangePassword: true };
+
+  it("sends every page request to the change-password screen", async () => {
+    const middleware = await loadMiddleware();
+
+    for (const pathname of ["/gn", "/gn/register"]) {
+      const response = await middleware(await requestWithSession(pathname, pending));
+      expect(response.status, pathname).toBe(307);
+      expect(new URL(response.headers.get("location")!).pathname, pathname).toBe("/change-password");
+    }
+  });
+
+  it("refuses the relay, so a shared credential cannot enrol a voter", async () => {
+    // The property the whole feature exists for. A redirect would only stop a
+    // browser; this is the answer a scripted `addVoters` gets.
+    const middleware = await loadMiddleware();
+    const response = await middleware(await requestWithSession("/api/relay", pending));
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("location")).toBeNull();
+    await expect(response.json()).resolves.toMatchObject({ code: "password_change_required" });
+  });
+
+  it("still allows the change-password page and the endpoints it needs", async () => {
+    const middleware = await loadMiddleware();
+    const response = await middleware(await requestWithSession("/change-password", pending));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("lets an officer who has taken custody return to the page voluntarily", async () => {
+    const middleware = await loadMiddleware();
+    const request = await requestWithSession("/change-password", {
+      username: "gn-colombo",
+      role: "gn",
+      divisionId: 0,
+      mustChangePassword: false,
+    });
+
+    expect((await middleware(request)).status).toBe(200);
+  });
+
+  it("sends an admin away from the page, since their password lives in the environment", async () => {
+    const middleware = await loadMiddleware();
+    const request = await requestWithSession("/change-password", { username: "admin", role: "admin" });
+    const response = await middleware(request);
+
+    expect(new URL(response.headers.get("location")!).pathname).toBe("/voting/admin");
+  });
+
+  it("bounces an unauthenticated visitor to /login", async () => {
+    const middleware = await loadMiddleware();
+    const response = await middleware(await requestWithSession("/change-password"));
+
+    expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
   });
 });
 
