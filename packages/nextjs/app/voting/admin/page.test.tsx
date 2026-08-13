@@ -783,6 +783,75 @@ describe("admin area — save buttons report their outcome", () => {
     // …and the question's failure is still on display.
     expect(screen.getByRole("button", { name: /save failed — retry/i })).toBeDefined();
   });
+
+  /**
+   * The two broadcast buttons, which reported nothing for the same reason the
+   * per-division ones used to: `busy` swapped the label to "Applying…" and put
+   * the original back, so a fan-out across every division looked identical
+   * whether it ran or the click missed. They sit a few pixels from the save
+   * buttons, so the one that stayed silent was the one writing to *more*
+   * contracts.
+   *
+   * The provider already tracked these verdicts (`all-question`,
+   * `all-candidates`) and already cleared them on an edit — only the rendering
+   * was missing.
+   */
+  const BROADCAST_BUTTONS = [
+    { what: "question", idle: /apply question to all/i, field: () => document.querySelector("textarea")! },
+    { what: "candidates", idle: /apply candidates to all/i, field: () => screen.getByPlaceholderText("Candidate #1") },
+  ];
+
+  for (const { what, idle, field } of BROADCAST_BUTTONS) {
+    it(`broadcast ${what}: settles on "Applied" once the fan-out finishes`, async () => {
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+
+      const applied = await screen.findByRole("button", { name: /^applied$/i });
+      expect((applied as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByRole("button", { name: idle })).toBeNull();
+    });
+
+    it(`broadcast ${what}: drops the verdict once the value is edited again`, async () => {
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+      await screen.findByRole("button", { name: /^applied$/i });
+
+      await user.type(field() as HTMLElement, "x");
+
+      expect(await screen.findByRole("button", { name: idle })).toBeDefined();
+      expect(screen.queryByRole("button", { name: /^applied$/i })).toBeNull();
+    });
+
+    it(`broadcast ${what}: says nothing when the operator cancels the confirm`, async () => {
+      vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
+      const user = await renderBallot();
+
+      await user.click(screen.getByRole("button", { name: idle }));
+
+      // A cancelled broadcast wrote nothing, so claiming "Applied" would be the
+      // worst thing this button could say.
+      expect(screen.queryByRole("button", { name: /^applied$/i })).toBeNull();
+      expect(screen.getByRole("button", { name: idle })).toBeDefined();
+    });
+  }
+
+  /**
+   * A broadcast and the per-division save next to it are separate verdicts.
+   * Both write the same draft, which is exactly why one could be mistaken for
+   * the other if they shared a label.
+   */
+  it("keeps a broadcast's verdict separate from the per-division save beside it", async () => {
+    const user = await renderBallot();
+
+    await user.click(screen.getByRole("button", { name: /apply question to all/i }));
+    await screen.findByRole("button", { name: /^applied$/i });
+
+    // The per-division save is untouched, and still says what it saves.
+    expect(screen.getByRole("button", { name: /save question for Kaduwela/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^saved$/i })).toBeNull();
+  });
 });
 
 /**

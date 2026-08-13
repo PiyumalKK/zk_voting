@@ -38,6 +38,7 @@ export const SaveButton = ({
   savedLabel = "Saved",
   errorLabel = "Save failed — retry",
   disabled,
+  title,
   onClick,
   className = "btn btn-primary btn-sm",
 }: {
@@ -49,6 +50,12 @@ export const SaveButton = ({
   errorLabel?: React.ReactNode;
   /** Caller's own gating — phase, empty input, another action in flight. */
   disabled?: boolean;
+  /**
+   * Native tooltip, passed straight through. The broadcast buttons use it to
+   * warn how many divisions a fan-out will skip, and that warning has to
+   * survive the move onto this component.
+   */
+  title?: string;
   onClick: () => void;
   className?: string;
 }) => {
@@ -78,6 +85,7 @@ export const SaveButton = ({
     <button
       className={tone}
       disabled={isDisabled}
+      title={title}
       onClick={onClick}
       // Announced to assistive technology: the label change is the whole
       // feedback mechanism, so it must not be visual-only.

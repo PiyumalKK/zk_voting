@@ -104,7 +104,15 @@ const AdminBallotPage = () => {
             division.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
+            {/* Same component as the per-division save beside it: two controls a
+                few pixels apart that reported their outcome in two different
+                languages would be worse than one of them reporting nothing. The
+                provider already tracked this verdict under `all-question` —
+                including clearing it on an edit — and only the rendering was
+                missing. "Applied" says the broadcast ran; how many divisions it
+                landed on is in the toast, which is the only place that knows. */}
+            <SaveButton
+              state={saveStateOf("all-question")}
               className="btn btn-outline btn-sm"
               disabled={!inSetup || !!busy || !questionDraft.trim() || divisions.length === 0}
               onClick={handleSetQuestionAll}
@@ -113,11 +121,11 @@ const AdminBallotPage = () => {
                   ? `${divisions.length - divisionsInSetup} division(s) are past Setup and will be skipped`
                   : undefined
               }
-            >
-              {busy === "all-question"
-                ? "Applying…"
-                : `Apply question to all ${divisions.length} division${divisions.length === 1 ? "" : "s"}`}
-            </button>
+              idleLabel={`Apply question to all ${divisions.length} division${divisions.length === 1 ? "" : "s"}`}
+              savingLabel="Applying…"
+              savedLabel="Applied"
+              errorLabel="Apply failed — retry"
+            />
             <SaveButton
               state={saveStateOf("question")}
               disabled={!inSetup || !questionDraft.trim()}
@@ -173,7 +181,8 @@ const AdminBallotPage = () => {
             Use <em>Apply to all</em> for a national contest where every division runs the same slate.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
+            <SaveButton
+              state={saveStateOf("all-candidates")}
               className="btn btn-outline btn-sm"
               disabled={!inSetup || !!busy || divisions.length === 0}
               onClick={handleSetCandidatesAll}
@@ -182,11 +191,11 @@ const AdminBallotPage = () => {
                   ? `${divisions.length - divisionsInSetup} division(s) are past Setup and will be skipped`
                   : undefined
               }
-            >
-              {busy === "all-candidates"
-                ? "Applying…"
-                : `Apply candidates to all ${divisions.length} division${divisions.length === 1 ? "" : "s"}`}
-            </button>
+              idleLabel={`Apply candidates to all ${divisions.length} division${divisions.length === 1 ? "" : "s"}`}
+              savingLabel="Applying…"
+              savedLabel="Applied"
+              errorLabel="Apply failed — retry"
+            />
             <SaveButton
               state={saveStateOf("candidates")}
               disabled={!inSetup}
