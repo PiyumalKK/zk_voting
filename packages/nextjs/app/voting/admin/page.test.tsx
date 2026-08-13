@@ -360,6 +360,10 @@ describe("admin area — write sites go through the seam", () => {
   });
 
   it("skips a division that reverts instead of aborting the whole run", async () => {
+    // Voting phase, so "End election on all" is actually offered — the master
+    // controls are now gated on the division mix, and a Setup-only fixture
+    // would leave this button disabled and the click a no-op.
+    mocks.divisions = [{ ...DIVISION, phase: 2 }];
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
     mocks.write.mockRejectedValue(new Error("Voting__WrongPhase"));
 
@@ -376,6 +380,7 @@ describe("admin area — write sites go through the seam", () => {
    * first click.
    */
   it("does not run a national phase change when the operator cancels", async () => {
+    mocks.divisions = [{ ...DIVISION, phase: 2 }];
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
 
     await user.click(screen.getByRole("button", { name: /end election on all/i }));
@@ -1310,7 +1315,16 @@ describe("admin divisions — the provisioning buttons' pending state", () => {
 describe("admin area — the destructive-action confirmations", () => {
   const FANOUT_TAIL = "Divisions in the wrong phase are skipped and left exactly as they are. This cannot be undone.";
 
-  /** The gated actions, with the prompt each must raise for the one-division fixture. */
+  /**
+   * The gated actions, with the prompt each must raise for the one-division
+   * fixture.
+   *
+   * `phase` is the fixture division's phase, defaulting to Setup. The master
+   * phase controls are now disabled when no division is in a phase their action
+   * accepts, so the two that act later in the lifecycle have to be met on a
+   * division that has got there — otherwise the button under test is greyed out
+   * and the confirmation it guards can never be raised.
+   */
   const GATED = [
     {
       what: "question broadcast",
@@ -1352,6 +1366,8 @@ describe("admin area — the destructive-action confirmations", () => {
       ready: /phase controls/i,
       button: /start voting on all/i,
       writes: "startVoting",
+      // `startVoting` only takes a division in Registration.
+      phase: 1,
       message:
         "Start voting on all 1 division(s)?\n\n" +
         "Every division still in Registration opens a 01:00:00 voting window. " +
@@ -1364,6 +1380,8 @@ describe("admin area — the destructive-action confirmations", () => {
       ready: /phase controls/i,
       button: /end election on all/i,
       writes: "endElection",
+      // `endElection` rejects Setup and Ended; Voting is the ordinary case.
+      phase: 2,
       message:
         "End the election on all 1 division(s)?\n\n" +
         "Voting closes everywhere and the results are frozen. " +
@@ -1388,6 +1406,7 @@ describe("admin area — the destructive-action confirmations", () => {
 
   const open = async (entry: (typeof GATED)[number]) => {
     mocks.auth = { mode: "custom", isAdmin: true, isLoading: false };
+    mocks.divisions = [{ ...DIVISION, phase: (entry as { phase?: number }).phase ?? 0 }];
     // Only the reset path calls it, and only to drop the GN accounts — but an
     // unstubbed `fetch` there throws inside the handler's own try/catch and
     // logs, which is noise this file does not need.
@@ -1445,4 +1464,227 @@ describe("admin area — the destructive-action confirmations", () => {
       expect(mocks.write).not.toHaveBeenCalled();
     });
   }
+});
+
+/**
+ * The master controls, against the division mix they actually act on.
+ *
+ * The regression test for a real defect: all three were gated on `busy` alone,
+ * so once the divisions had advanced past the phase an action accepts, the
+ * button stayed live. Clicking it opened a danger dialog, sent one relay
+ * transaction per division, had every one revert, and reported "started on 0
+ * division(s) · 12 skipped (wrong phase)" — minutes later, on a national
+ * control, with the `PhaseSpread` immediately above already displaying the
+ * counts that proved it could not work.
+ *
+ * The gate is per action, because the phase each one accepts is: `Voting` takes
+ * `startRegistration` only in Setup, `startVoting` only in Registration, and
+ * `endElection` in anything but Setup and Ended. Asserting them one at a time
+ * would let a condition copied to the wrong button pass, so every mix below
+ * checks all three at once.
+ */
+describe("admin operations — the master controls know when there is nothing left to do", () => {
+  const MASTER = {
+    registration: /start registration on all/i,
+    voting: /start voting on all/i,
+    end: /end election on all/i,
+  };
+  type Control = keyof typeof MASTER;
+  const CONTROLS = ["registration", "voting", "end"] as const;
+
+  /** Mount Operations against a division per entry, each in the given phase. */
+  const renderWithPhases = async (phases: number[]) => {
+    mocks.divisions = phases.map((phase, id) => ({
+      ...DIVISION,
+      id,
+      phase,
+      // A distinct contract each, so the provider keys divisions apart here the
+      // way it does in production rather than collapsing them onto one address.
+      votingContract: `0x${String(id + 1).padStart(40, "0")}` as `0x${string}`,
+    }));
+    mocks.auth = { mode: "custom", isAdmin: true, isLoading: false };
+    renderAdmin(<AdminOperationsPage />);
+    await screen.findByRole("heading", { name: /run election on all divisions/i });
+  };
+
+  const button = (which: Control) => screen.getByRole("button", { name: MASTER[which] }) as HTMLButtonElement;
+
+  /**
+   * Each division mix, and why each control is blocked in it — `null` meaning
+   * it must still be available.
+   *
+   * Two divisions throughout, so "all N divisions" in a message is a claim that
+   * could be wrong rather than a restatement of the only division there is.
+   */
+  const REGISTRATION_DONE = "Registration has already started on all 2 divisions.";
+  const VOTING_DONE = "Voting has already started on all 2 divisions.";
+
+  const STATES: {
+    what: string;
+    phases: number[];
+    registration: string | null;
+    voting: string | null;
+    end: string | null;
+  }[] = [
+    {
+      what: "no division has started",
+      phases: [0, 0],
+      registration: null,
+      voting: "No division is in the Registration phase yet — start registration first.",
+      end: "No division has started registration yet — there is nothing to end.",
+    },
+    {
+      what: "some divisions have started registration",
+      phases: [0, 1],
+      registration: null,
+      voting: null,
+      end: null,
+    },
+    {
+      what: "every division has started registration",
+      phases: [1, 1],
+      registration: REGISTRATION_DONE,
+      voting: null,
+      end: null,
+    },
+    {
+      what: "some divisions have started voting",
+      phases: [1, 2],
+      registration: REGISTRATION_DONE,
+      voting: null,
+      end: null,
+    },
+    {
+      what: "every division has started voting",
+      phases: [2, 2],
+      registration: REGISTRATION_DONE,
+      voting: VOTING_DONE,
+      end: null,
+    },
+    {
+      what: "every division has ended",
+      phases: [3, 3],
+      registration: REGISTRATION_DONE,
+      // Voting did start everywhere; it is simply over. The reason a division
+      // cannot be moved into Voting from Ended is the same one either way.
+      voting: VOTING_DONE,
+      end: "The election has already ended on all 2 divisions.",
+    },
+  ];
+
+  for (const state of STATES) {
+    it(`${state.what}: enables exactly the controls that can still act`, async () => {
+      await renderWithPhases(state.phases);
+
+      for (const which of CONTROLS) {
+        const reason = state[which];
+        expect(button(which).disabled).toBe(reason !== null);
+      }
+    });
+
+    it(`${state.what}: says why, in the tooltip and on the page`, async () => {
+      await renderWithPhases(state.phases);
+
+      for (const which of CONTROLS) {
+        const reason = state[which];
+        // The tooltip has to name the *actual* blocker. Three buttons greyed
+        // out for three different reasons is precisely the state an operator
+        // cannot work out for themselves.
+        expect(button(which).getAttribute("title")).toBe(reason);
+        // And it exists somewhere they will see it: a native tooltip on a
+        // disabled control is unreliable across browsers.
+        if (reason !== null) expect(screen.getByText(reason)).toBeDefined();
+      }
+    });
+  }
+
+  it("says nothing when every control is available", async () => {
+    await renderWithPhases([0, 1]);
+
+    for (const which of CONTROLS) {
+      expect(button(which).disabled).toBe(false);
+      expect(button(which).getAttribute("title")).toBeNull();
+    }
+    expect(screen.queryByText(/has already started on all/i)).toBeNull();
+    expect(screen.queryByText(/nothing to end/i)).toBeNull();
+  });
+
+  /**
+   * The empty registry keeps its own explanation. A flag that read `every([])`
+   * as true would have greyed these out and said "already started on all 0
+   * divisions" — but the buttons are not rendered here at all.
+   */
+  it("leaves the no-divisions path exactly as it was", async () => {
+    await renderWithPhases([]);
+
+    for (const which of CONTROLS) {
+      expect(screen.queryByRole("button", { name: MASTER[which] })).toBeNull();
+    }
+    expect(screen.getByText(/no divisions registered yet/i)).toBeDefined();
+  });
+
+  /**
+   * The gate decides availability and nothing else. An enabled button must
+   * still raise the same confirmation and send the same per-division writes it
+   * always did.
+   */
+  it("fans registration out unchanged when the button is still live", async () => {
+    await renderWithPhases([0, 1]);
+    const user = userEvent.setup();
+
+    await user.click(button("registration"));
+    await answerConfirm(user, "confirm");
+
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(2));
+    expect(mocks.write.mock.calls.map((call: any[]) => call[0].functionName)).toEqual([
+      "startRegistration",
+      "startRegistration",
+    ]);
+    // Still every division, including the one the contract will reject — the
+    // skip-and-report behaviour is the provider's, and is deliberately untouched.
+    expect(mocks.write.mock.calls.map((call: any[]) => call[0].address)).toEqual([
+      `0x${String(1).padStart(40, "0")}`,
+      `0x${String(2).padStart(40, "0")}`,
+    ]);
+  });
+
+  it("fans voting out unchanged when the button is still live", async () => {
+    await renderWithPhases([1, 2]);
+    const user = userEvent.setup();
+
+    await user.click(button("voting"));
+    await answerConfirm(user, "confirm");
+
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(2));
+    expect(mocks.write.mock.calls.every((call: any[]) => call[0].functionName === "startVoting")).toBe(true);
+  });
+
+  it("fans the ending out unchanged when the button is still live", async () => {
+    await renderWithPhases([1, 2]);
+    const user = userEvent.setup();
+
+    await user.click(button("end"));
+    await answerConfirm(user, "confirm");
+
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(2));
+    expect(mocks.write.mock.calls.every((call: any[]) => call[0].functionName === "endElection")).toBe(true);
+  });
+
+  /**
+   * The two gates are independent, and this is the case that proves it: every
+   * division has left Setup — blocking the master control — while the division
+   * the operator has *selected* reads Setup from its own contract, so its own
+   * button stays live. Sharing one condition between them would break whichever
+   * of the two was not being looked at.
+   */
+  it("does not gate the per-division buttons on the national condition", async () => {
+    await renderWithPhases([1, 1]);
+
+    expect(button("registration").disabled).toBe(true);
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: /start registration on kaduwela/i }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+  });
 });

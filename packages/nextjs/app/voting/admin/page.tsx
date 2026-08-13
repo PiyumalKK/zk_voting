@@ -31,6 +31,11 @@ const AdminOperationsPage = () => {
     inVoting,
     ended,
     phaseLabel,
+    allDivisionsRegistrationStarted,
+    allDivisionsVotingStarted,
+    noDivisionAwaitingVoting,
+    noDivisionToEnd,
+    allDivisionsEnded,
     selectedDiv,
     registrationDuration,
     setRegistrationDuration,
@@ -58,6 +63,41 @@ const AdminOperationsPage = () => {
   /** Turns "Starting…" into "Starting… 3 / 12" once a fan-out is under way. */
   const fanoutLabel = (label: string) =>
     progress && progress.total > 1 ? `${label} ${progress.done} / ${progress.total}` : label;
+
+  /*
+   * Why each master control is unavailable — or `null` while it still has a
+   * division to act on.
+   *
+   * These used to be gated on `busy` alone, so once every division had advanced
+   * they stayed clickable and did nothing but burn a confirmation, one relay
+   * transaction per division and several minutes before reporting "started on 0
+   * division(s) · 12 skipped (wrong phase)". The conditions come from the
+   * provider, which derives them from the phases `useDivisions` already polls.
+   *
+   * Each reason is rendered twice: as the button's `title`, and as visible text
+   * below the row. A native tooltip is unreliable on a disabled control — which
+   * is precisely the state that needs explaining — so it cannot be the only
+   * place the answer exists.
+   */
+  const registrationBlocked = allDivisionsRegistrationStarted
+    ? `Registration has already started on all ${divisionCount}.`
+    : null;
+
+  const votingBlocked = !noDivisionAwaitingVoting
+    ? null
+    : allDivisionsVotingStarted
+      ? `Voting has already started on all ${divisionCount}.`
+      : "No division is in the Registration phase yet — start registration first.";
+
+  const endBlocked = !noDivisionToEnd
+    ? null
+    : allDivisionsEnded
+      ? `The election has already ended on all ${divisionCount}.`
+      : "No division has started registration yet — there is nothing to end.";
+
+  const blockedReasons = [registrationBlocked, votingBlocked, endBlocked].filter(
+    (reason): reason is string => reason !== null,
+  );
 
   return (
     <>
@@ -163,16 +203,42 @@ const AdminOperationsPage = () => {
             <PhaseSpread divisions={divisions} />
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <button className="btn btn-info btn-sm" disabled={!!busy} onClick={handleStartRegistrationAll}>
+              <button
+                className="btn btn-info btn-sm"
+                disabled={!!busy || registrationBlocked !== null}
+                title={registrationBlocked ?? undefined}
+                onClick={handleStartRegistrationAll}
+              >
                 {busy === "all-registration" ? fanoutLabel("Starting…") : `Start registration on all ${divisionCount}`}
               </button>
-              <button className="btn btn-success btn-sm" disabled={!!busy} onClick={handleStartVotingAll}>
+              <button
+                className="btn btn-success btn-sm"
+                disabled={!!busy || votingBlocked !== null}
+                title={votingBlocked ?? undefined}
+                onClick={handleStartVotingAll}
+              >
                 {busy === "all-voting" ? fanoutLabel("Starting…") : `Start voting on all ${divisionCount}`}
               </button>
-              <button className="btn btn-error btn-outline btn-sm" disabled={!!busy} onClick={handleEndAll}>
+              <button
+                className="btn btn-error btn-outline btn-sm"
+                disabled={!!busy || endBlocked !== null}
+                title={endBlocked ?? undefined}
+                onClick={handleEndAll}
+              >
                 {busy === "all-end" ? fanoutLabel("Ending…") : `End election on all ${divisionCount}`}
               </button>
             </div>
+
+            {/* The visible half of the explanation. `aria-live` because these
+                appear and disappear as the divisions advance, without the
+                operator touching anything. */}
+            {blockedReasons.length > 0 && (
+              <ul className="text-xs opacity-70 list-disc list-inside space-y-1" aria-live="polite">
+                {blockedReasons.map(reason => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            )}
 
             <p className="text-xs opacity-50">
               Uses the durations typed in <strong>Phase controls</strong> above. One transaction per division, sent in

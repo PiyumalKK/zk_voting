@@ -62,6 +62,25 @@ type AdminElectionValue = {
   inVoting: boolean;
   ended: boolean;
 
+  /*
+   * Whether each master control still has a division it can act on.
+   *
+   * The four flags above describe the *selected* division and gate the
+   * per-division buttons. These describe every division at once, which is what
+   * the master controls actually write to — the two must not be confused, and
+   * on this screen they sit a few centimetres apart.
+   */
+  /** Every division has left Setup, so `startRegistration` would revert on all of them. */
+  allDivisionsRegistrationStarted: boolean;
+  /** Every division has left Registration. Only distinguishes the two dead ends below. */
+  allDivisionsVotingStarted: boolean;
+  /** No division is in Registration — the one phase `startVoting` accepts. */
+  noDivisionAwaitingVoting: boolean;
+  /** No division is in Registration or Voting — the phases `endElection` accepts. */
+  noDivisionToEnd: boolean;
+  /** Every division has Ended. Distinguishes the two dead ends for `endElection`. */
+  allDivisionsEnded: boolean;
+
   questionDraft: string;
   setQuestionDraft: React.Dispatch<React.SetStateAction<string>>;
   candidateDrafts: string[];
@@ -301,6 +320,41 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const inRegistration = phase === 1;
   const inVoting = phase === 2;
   const ended = phase === 3;
+
+  /*
+   * Whether the master controls still have anything to do.
+   *
+   * Everything above reads the *selected* division's contract. These read the
+   * whole `divisions` array instead, because that is what the master controls
+   * write to — and `useDivisions` already polls each division's phase every 4s,
+   * so this is a derivation, not a new read.
+   *
+   * Each condition is "no division is in a phase this action accepts", which is
+   * exactly the set `Voting` would revert on: `startRegistration` is
+   * `inPhase(Setup)`, `startVoting` requires `Registration`, and `endElection`
+   * rejects `Setup` and `Ended`. Ungated, a fan-out over a finished election
+   * opened the danger dialog, sent one relay transaction per division, had every
+   * one revert, and reported "started on 0 division(s)" minutes later — with the
+   * `PhaseSpread` directly above already showing why it could not have worked.
+   *
+   * All five require at least one division, so that none of them is vacuously
+   * true on an empty registry. The buttons are not rendered in that state
+   * anyway, but a flag named "…Started" must not claim a thing about divisions
+   * that do not exist.
+   */
+  const hasDivisions = divisions.length > 0;
+  const allDivisionsRegistrationStarted = hasDivisions && divisions.every(d => d.phase >= 1);
+  const allDivisionsVotingStarted = hasDivisions && divisions.every(d => d.phase >= 2);
+  /*
+   * Deliberately stricter than `allDivisionsVotingStarted`. With every division
+   * still in Setup, voting has not started anywhere — yet `startVoting` has
+   * nothing to act on either, because Registration is the only phase it takes.
+   * One condition covers both dead ends; `allDivisionsVotingStarted` survives
+   * only so the page can say which one the operator is looking at.
+   */
+  const noDivisionAwaitingVoting = hasDivisions && !divisions.some(d => d.phase === 1);
+  const noDivisionToEnd = hasDivisions && !divisions.some(d => d.phase === 1 || d.phase === 2);
+  const allDivisionsEnded = hasDivisions && divisions.every(d => d.phase === 3);
 
   // --- Local form state ---
   const [voterDrafts, setVoterDrafts] = useState<VoterEntry[]>([{ address: "", status: true }]);
@@ -908,6 +962,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     inRegistration,
     inVoting,
     ended,
+    allDivisionsRegistrationStarted,
+    allDivisionsVotingStarted,
+    noDivisionAwaitingVoting,
+    noDivisionToEnd,
+    allDivisionsEnded,
     questionDraft,
     setQuestionDraft,
     candidateDrafts,
