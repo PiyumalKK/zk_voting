@@ -3,7 +3,7 @@ import { AdminElectionProvider } from "./_components/AdminElectionProvider";
 import AdminBallotPage from "./ballot/page";
 import AdminDivisionsPage from "./divisions/page";
 import AdminOperationsPage from "./page";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -201,10 +201,28 @@ beforeEach(() => {
   mocks.notifySuccess.mockClear();
   mocks.notifyWarning.mockClear();
   stubReads();
-  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+/**
+ * Answer the confirmation a destructive action raises.
+ *
+ * These gates used to be `window.confirm`, stubbed once in `beforeEach` to
+ * always agree — which meant no test actually proved the prompt was still
+ * there. The gate is now a real dialog, so every test that wants the action to
+ * run has to answer it, and an action that stopped asking fails here.
+ *
+ * Located by elimination rather than by label: the confirm button is named
+ * after the action it performs ("Apply to all", "End the election", "Delete
+ * everything"), and only Cancel is constant across all of them.
+ */
+const answerConfirm = async (user: ReturnType<typeof userEvent.setup>, choice: "confirm" | "cancel") => {
+  const dialog = await screen.findByRole("dialog");
+  const buttons = within(dialog).getAllByRole("button");
+  const cancel = buttons.find(button => /^cancel$/i.test(button.textContent ?? ""))!;
+  await user.click(choice === "cancel" ? cancel : buttons.find(button => button !== cancel)!);
+};
 
 describe("admin area — access gate", () => {
   it("hardhat: asks for a wallet when none is connected", () => {
@@ -331,6 +349,7 @@ describe("admin area — write sites go through the seam", () => {
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
 
     await user.click(screen.getByRole("button", { name: /start registration on all/i }));
+    await answerConfirm(user, "confirm");
 
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write.mock.calls[0][0]).toMatchObject({
@@ -345,6 +364,7 @@ describe("admin area — write sites go through the seam", () => {
     mocks.write.mockRejectedValue(new Error("Voting__WrongPhase"));
 
     await user.click(screen.getByRole("button", { name: /end election on all/i }));
+    await answerConfirm(user, "confirm");
 
     await waitFor(() => expect(mocks.notifySuccess).toHaveBeenCalledWith(expect.stringContaining("skipped")));
   });
@@ -357,9 +377,9 @@ describe("admin area — write sites go through the seam", () => {
    */
   it("does not run a national phase change when the operator cancels", async () => {
     const user = await renderAsAdmin(<AdminOperationsPage />, /phase controls/i);
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
 
     await user.click(screen.getByRole("button", { name: /end election on all/i }));
+    await answerConfirm(user, "cancel");
 
     expect(mocks.write).not.toHaveBeenCalled();
   });
@@ -531,6 +551,7 @@ describe("admin area — candidates, per division and across all of them", () =>
     const user = await renderBallot();
 
     await user.click(screen.getByRole("button", { name: /apply candidates to all/i }));
+    await answerConfirm(user, "confirm");
 
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write.mock.calls[0][0]).toMatchObject({
@@ -546,15 +567,16 @@ describe("admin area — candidates, per division and across all of them", () =>
     mocks.write.mockRejectedValue(new Error("Voting__WrongPhase"));
 
     await user.click(screen.getByRole("button", { name: /apply candidates to all/i }));
+    await answerConfirm(user, "confirm");
 
     await waitFor(() => expect(mocks.notifySuccess).toHaveBeenCalledWith(expect.stringContaining("skipped")));
   });
 
   it("does not write anything when the operator cancels the broadcast", async () => {
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
     const user = await renderBallot();
 
     await user.click(screen.getByRole("button", { name: /apply candidates to all/i }));
+    await answerConfirm(user, "cancel");
 
     expect(mocks.write).not.toHaveBeenCalled();
   });
@@ -595,6 +617,7 @@ describe("admin area — the ballot question, per division and across all of the
     const user = await renderBallot();
 
     await user.click(screen.getByRole("button", { name: /apply question to all/i }));
+    await answerConfirm(user, "confirm");
 
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write.mock.calls[0][0]).toMatchObject({
@@ -606,10 +629,10 @@ describe("admin area — the ballot question, per division and across all of the
   });
 
   it("does not write anything when the operator cancels the broadcast", async () => {
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
     const user = await renderBallot();
 
     await user.click(screen.getByRole("button", { name: /apply question to all/i }));
+    await answerConfirm(user, "cancel");
 
     expect(mocks.write).not.toHaveBeenCalled();
   });
@@ -807,6 +830,7 @@ describe("admin area — save buttons report their outcome", () => {
       const user = await renderBallot();
 
       await user.click(screen.getByRole("button", { name: idle }));
+      await answerConfirm(user, "confirm");
 
       const applied = await screen.findByRole("button", { name: /^applied$/i });
       expect((applied as HTMLButtonElement).disabled).toBe(true);
@@ -817,6 +841,7 @@ describe("admin area — save buttons report their outcome", () => {
       const user = await renderBallot();
 
       await user.click(screen.getByRole("button", { name: idle }));
+      await answerConfirm(user, "confirm");
       await screen.findByRole("button", { name: /^applied$/i });
 
       await user.type(field() as HTMLElement, "x");
@@ -826,10 +851,10 @@ describe("admin area — save buttons report their outcome", () => {
     });
 
     it(`broadcast ${what}: says nothing when the operator cancels the confirm`, async () => {
-      vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
       const user = await renderBallot();
 
       await user.click(screen.getByRole("button", { name: idle }));
+      await answerConfirm(user, "cancel");
 
       // A cancelled broadcast wrote nothing, so claiming "Applied" would be the
       // worst thing this button could say.
@@ -847,6 +872,7 @@ describe("admin area — save buttons report their outcome", () => {
     const user = await renderBallot();
 
     await user.click(screen.getByRole("button", { name: /apply question to all/i }));
+    await answerConfirm(user, "confirm");
     await screen.findByRole("button", { name: /^applied$/i });
 
     // The per-division save is untouched, and still says what it saves.
@@ -1266,4 +1292,157 @@ describe("admin divisions — the provisioning buttons' pending state", () => {
     land("0xdeadbeef");
     await screen.findByRole("button", { name: /deploy & register division/i });
   });
+});
+
+/**
+ * The confirmation gate on every destructive admin action.
+ *
+ * These were `window.confirm` until the dialog replaced it, and the risk in
+ * that swap is not cosmetic. A gate that quietly stopped gating, or a Cancel
+ * that no longer aborted, would let a one-way phase change or a full election
+ * wipe run on a single click — and nothing else in this file would notice,
+ * because the old tests agreed to every prompt via a global stub.
+ *
+ * So each action is driven both ways, and the prompt is compared against the
+ * exact string `window.confirm` used to receive. The wording is the thing the
+ * operator is agreeing to; it is as much a part of the gate as the button is.
+ */
+describe("admin area — the destructive-action confirmations", () => {
+  const FANOUT_TAIL = "Divisions in the wrong phase are skipped and left exactly as they are. This cannot be undone.";
+
+  /** The gated actions, with the prompt each must raise for the one-division fixture. */
+  const GATED = [
+    {
+      what: "question broadcast",
+      page: () => <AdminBallotPage />,
+      ready: /ballot question/i,
+      button: /apply question to all/i,
+      writes: "setQuestion",
+      message:
+        "Apply this question to all 1 division(s)?\n\n" +
+        "This replaces the ballot question on every division still in the Setup phase. " +
+        "Divisions past Setup are skipped and keep their current question.",
+    },
+    {
+      what: "candidate broadcast",
+      page: () => <AdminBallotPage />,
+      ready: /^candidates$/i,
+      button: /apply candidates to all/i,
+      writes: "setCandidates",
+      message:
+        "Apply these 2 candidate(s) to all 1 division(s)?\n\n" +
+        "This replaces the candidate list on every division still in the Setup phase. " +
+        "Divisions past Setup are skipped and keep their current list.",
+    },
+    {
+      what: "start registration on all",
+      page: () => <AdminOperationsPage />,
+      ready: /phase controls/i,
+      button: /start registration on all/i,
+      writes: "startRegistration",
+      message:
+        "Start registration on all 1 division(s)?\n\n" +
+        "Every division still in Setup opens a 01:00:00 registration window. " +
+        "Its ballot question and candidate list are frozen from that moment on.\n\n" +
+        FANOUT_TAIL,
+    },
+    {
+      what: "start voting on all",
+      page: () => <AdminOperationsPage />,
+      ready: /phase controls/i,
+      button: /start voting on all/i,
+      writes: "startVoting",
+      message:
+        "Start voting on all 1 division(s)?\n\n" +
+        "Every division still in Registration opens a 01:00:00 voting window. " +
+        "No further voters can be enrolled there once it does.\n\n" +
+        FANOUT_TAIL,
+    },
+    {
+      what: "end election on all",
+      page: () => <AdminOperationsPage />,
+      ready: /phase controls/i,
+      button: /end election on all/i,
+      writes: "endElection",
+      message:
+        "End the election on all 1 division(s)?\n\n" +
+        "Voting closes everywhere and the results are frozen. " +
+        "No further votes are accepted on any division.\n\n" +
+        FANOUT_TAIL,
+    },
+    {
+      what: "start new election",
+      page: () => <AdminOperationsPage />,
+      ready: /phase controls/i,
+      button: /start new election/i,
+      // The wipe blanks each division's ballot before clearing the registry.
+      writes: "resetElection",
+      message:
+        "Start a NEW election?\n\nThis permanently deletes EVERYTHING from the current election:\n" +
+        "  • all 1 division(s) and their ballots, voters and votes\n" +
+        "  • every GN officer account and their sign-in credentials\n" +
+        "  • every NIC enrolment record\n\n" +
+        "You will need to create the divisions and GN officers again from scratch. This cannot be undone.",
+    },
+  ];
+
+  const open = async (entry: (typeof GATED)[number]) => {
+    mocks.auth = { mode: "custom", isAdmin: true, isLoading: false };
+    // Only the reset path calls it, and only to drop the GN accounts — but an
+    // unstubbed `fetch` there throws inside the handler's own try/catch and
+    // logs, which is noise this file does not need.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    renderAdmin(entry.page());
+    await screen.findByRole("heading", { name: entry.ready });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: entry.button }));
+    return user;
+  };
+
+  /** What the confirm button writes, if it wrote at all. */
+  const wrote = (functionName: string) =>
+    mocks.write.mock.calls.some((call: any[]) => call[0]?.functionName === functionName);
+
+  for (const entry of GATED) {
+    it(`${entry.what}: shows the prompt verbatim`, async () => {
+      await open(entry);
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog.querySelector("#confirm-dialog-message")!.textContent).toBe(entry.message);
+      // Nothing has been written merely by opening the gate.
+      expect(mocks.write).not.toHaveBeenCalled();
+    });
+
+    it(`${entry.what}: performs the action when confirmed`, async () => {
+      const user = await open(entry);
+
+      await answerConfirm(user, "confirm");
+
+      await waitFor(() => expect(wrote(entry.writes)).toBe(true));
+    });
+
+    it(`${entry.what}: writes nothing when cancelled`, async () => {
+      const user = await open(entry);
+
+      await answerConfirm(user, "cancel");
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(mocks.write).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Escape is a dismissal, and a dismissal is a refusal. If it resolved the
+     * other way, the key an operator presses to back out of a dialog would be
+     * the key that wipes the election.
+     */
+    it(`${entry.what}: writes nothing when dismissed with Escape`, async () => {
+      const user = await open(entry);
+      await screen.findByRole("dialog");
+
+      await user.keyboard("{Escape}");
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(mocks.write).not.toHaveBeenCalled();
+    });
+  }
 });

@@ -14,6 +14,7 @@ import {
   VoterEntry,
   parseDurationToSeconds,
 } from "~~/app/voting/admin/_components/adminContracts";
+import { useConfirm } from "~~/components/ConfirmDialog";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
@@ -96,19 +97,25 @@ type AdminElectionValue = {
    */
   clearSaveState: (label: string) => void;
   handleSetQuestion: () => void;
-  /** Broadcasts the current question draft to every division. */
-  handleSetQuestionAll: () => void;
+  /**
+   * Broadcasts the current question draft to every division.
+   *
+   * Async, like the other confirmed actions below: the operator's yes/no now
+   * comes back from a dialog rather than from `window.confirm`, so the handler
+   * awaits it before deciding whether to write anything.
+   */
+  handleSetQuestionAll: () => Promise<void>;
   handleSetCandidates: () => void;
   /** Broadcasts the current candidate drafts to every division. */
-  handleSetCandidatesAll: () => void;
+  handleSetCandidatesAll: () => Promise<void>;
   handleAddVoters: () => void;
   handleStartRegistration: () => void;
   handleStartVoting: () => void;
   handleEndElection: () => void;
-  handleStartRegistrationAll: () => void;
-  handleStartVotingAll: () => void;
-  handleEndAll: () => void;
-  handleResetElection: () => void;
+  handleStartRegistrationAll: () => Promise<void>;
+  handleStartVotingAll: () => Promise<void>;
+  handleEndAll: () => Promise<void>;
+  handleResetElection: () => Promise<void>;
 };
 
 /**
@@ -301,6 +308,11 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
   const [votingDuration, setVotingDuration] = useState<string>("01:00:00");
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Every destructive action below is gated on this. Declared with the rest of
+  // the state so it sits above the access-gate returns further down — those are
+  // early returns, and a hook underneath them would not run on every render.
+  const { confirm, confirmDialog } = useConfirm();
 
   /*
    * *** Ballot drafts and save verdicts are held PER DIVISION. ***
@@ -519,15 +531,18 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
    * broadcast, and confirmed for the same reason: it overwrites a question an
    * operator may have set per-division.
    */
-  const handleSetQuestionAll = () => {
+  const handleSetQuestionAll = async () => {
     const question = validatedQuestion();
     if (question === null) return;
 
-    const confirmed = window.confirm(
-      `Apply this question to all ${divisions.length} division(s)?\n\n` +
+    const confirmed = await confirm({
+      title: "Apply to every division",
+      message:
+        `Apply this question to all ${divisions.length} division(s)?\n\n` +
         `This replaces the ballot question on every division still in the Setup phase. ` +
         `Divisions past Setup are skipped and keep their current question.`,
-    );
+      confirmLabel: "Apply to all",
+    });
     if (!confirmed) return;
 
     return runAll("all-question", "setQuestion", () => [question], "Ballot question applied");
@@ -577,15 +592,18 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
    * Confirmed first, unlike the phase controls: this silently replaces whatever
    * slate each division already had, including one an operator set deliberately.
    */
-  const handleSetCandidatesAll = () => {
+  const handleSetCandidatesAll = async () => {
     const cleaned = cleanCandidateDrafts();
     if (!cleaned) return;
 
-    const confirmed = window.confirm(
-      `Apply these ${cleaned.length} candidate(s) to all ${divisions.length} division(s)?\n\n` +
+    const confirmed = await confirm({
+      title: "Apply to every division",
+      message:
+        `Apply these ${cleaned.length} candidate(s) to all ${divisions.length} division(s)?\n\n` +
         `This replaces the candidate list on every division still in the Setup phase. ` +
         `Divisions past Setup are skipped and keep their current list.`,
-    );
+      confirmLabel: "Apply to all",
+    });
     if (!confirmed) return;
 
     return runAll("all-candidates", "setCandidates", () => [cleaned], "Candidate list applied");
@@ -671,18 +689,24 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
    * the reversible ballot broadcasts already confirmed and these did not.
    */
   const confirmFanout = (action: string, consequence: string) =>
-    window.confirm(
-      `${action} on all ${divisions.length} division(s)?\n\n${consequence}\n\n` +
+    confirm({
+      // `action` is already the short imperative the button carries, which is
+      // exactly what a heading wants.
+      title: action,
+      message:
+        `${action} on all ${divisions.length} division(s)?\n\n${consequence}\n\n` +
         `Divisions in the wrong phase are skipped and left exactly as they are. This cannot be undone.`,
-    );
+      confirmLabel: action,
+      tone: "danger",
+    });
 
-  const handleStartRegistrationAll = () => {
+  const handleStartRegistrationAll = async () => {
     const sec = parseDurationToSeconds(registrationDuration);
     if (!sec) {
       notification.error("Enter a positive registration duration.");
       return;
     }
-    const confirmed = confirmFanout(
+    const confirmed = await confirmFanout(
       "Start registration",
       `Every division still in Setup opens a ${registrationDuration} registration window. Its ballot question and ` +
         `candidate list are frozen from that moment on.`,
@@ -692,13 +716,13 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     return runAll("all-registration", "startRegistration", () => [sec], "Registration started");
   };
 
-  const handleStartVotingAll = () => {
+  const handleStartVotingAll = async () => {
     const sec = parseDurationToSeconds(votingDuration);
     if (!sec) {
       notification.error("Enter a positive voting duration.");
       return;
     }
-    const confirmed = confirmFanout(
+    const confirmed = await confirmFanout(
       "Start voting",
       `Every division still in Registration opens a ${votingDuration} voting window. No further voters can be ` +
         `enrolled there once it does.`,
@@ -708,8 +732,8 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     return runAll("all-voting", "startVoting", () => [sec], "Voting started");
   };
 
-  const handleEndAll = () => {
-    const confirmed = confirmFanout(
+  const handleEndAll = async () => {
+    const confirmed = await confirmFanout(
       "End the election",
       "Voting closes everywhere and the results are frozen. No further votes are accepted on any division.",
     );
@@ -741,14 +765,18 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
    * stopping on them would leave an election that is already gone looking like
    * it might come back.
    */
-  const handleResetElection = () => {
-    const ok = window.confirm(
-      `Start a NEW election?\n\nThis permanently deletes EVERYTHING from the current election:\n` +
+  const handleResetElection = async () => {
+    const ok = await confirm({
+      title: "Start a new election",
+      message:
+        `Start a NEW election?\n\nThis permanently deletes EVERYTHING from the current election:\n` +
         `  • all ${divisions.length} division(s) and their ballots, voters and votes\n` +
         `  • every GN officer account and their sign-in credentials\n` +
         `  • every NIC enrolment record\n\n` +
         `You will need to create the divisions and GN officers again from scratch. This cannot be undone.`,
-    );
+      confirmLabel: "Delete everything",
+      tone: "danger",
+    });
     if (!ok) return;
 
     return run("resetElection", async () => {
@@ -913,6 +941,9 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       <div className="w-full max-w-5xl mx-auto space-y-5">
         <AdminTabs />
         {children}
+        {/* Rendered once for the whole admin area: the handlers that raise it
+            all live in this provider, so one dialog serves every tab. */}
+        {confirmDialog}
       </div>
     </AdminElectionContext.Provider>
   );

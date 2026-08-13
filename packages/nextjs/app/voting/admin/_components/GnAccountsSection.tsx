@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Section } from "~~/app/voting/admin/_components/Section";
+import { useConfirm } from "~~/components/ConfirmDialog";
 import { useDivisions } from "~~/hooks/useDivisions";
 import type { PublicGnAccount } from "~~/services/auth/accounts";
 import { notification } from "~~/utils/scaffold-eth";
@@ -41,6 +42,7 @@ export const GnAccountsSection = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedAccount | null>(null);
   const [copied, setCopied] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
 
   /**
    * Puts the one-time password on the clipboard.
@@ -142,10 +144,14 @@ export const GnAccountsSection = () => {
   };
 
   const handleDelete = async (account: PublicGnAccount) => {
-    const confirmed = window.confirm(
-      `Delete the account "${account.username}"?\n\nTheir signing key is destroyed and they can no longer enrol voters. ` +
+    const confirmed = await confirm({
+      title: "Delete GN officer account",
+      message:
+        `Delete the account "${account.username}"?\n\nTheir signing key is destroyed and they can no longer enrol voters. ` +
         `The division's on-chain gnOfficer is left as-is — clear it from GN Officer Management above if that is what you want.`,
-    );
+      confirmLabel: "Delete account",
+      tone: "danger",
+    });
     if (!confirmed) return;
     try {
       await call(`delete:${account.username}`, {
@@ -348,6 +354,8 @@ export const GnAccountsSection = () => {
           </table>
         </div>
       )}
+
+      {confirmDialog}
     </Section>
   );
 };

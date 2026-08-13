@@ -83,8 +83,24 @@ beforeEach(() => {
   mocks.notifySuccess.mockClear();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
-  vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
 });
+
+/**
+ * Answer the confirmation the delete button raises.
+ *
+ * This used to be a `window.confirm` stub set in `beforeEach`, which meant
+ * every test in this file silently pre-agreed to any prompt. The gate is now a
+ * real dialog in the tree, so a test has to answer it the way an admin does —
+ * which is the point: a delete that stopped asking would now fail here rather
+ * than pass against a stub that always said yes.
+ */
+const answerConfirm = async (user: ReturnType<typeof userEvent.setup>, choice: "confirm" | "cancel") => {
+  const dialog = await screen.findByRole("dialog");
+  const button = within(dialog).getByRole("button", {
+    name: choice === "confirm" ? /delete account/i : /^cancel$/i,
+  });
+  await user.click(button);
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -275,9 +291,11 @@ describe("GnAccountsSection", () => {
     render(<GnAccountsSection />);
     await screen.findByText("gn.kaduwela");
 
-    await user.click(screen.getByRole("button", { name: /delete/i }));
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("gn.kaduwela"));
+    expect((await screen.findByRole("dialog")).textContent).toContain("gn.kaduwela");
+
+    await answerConfirm(user, "confirm");
     await waitFor(() => {
       const del = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
       expect(del![0]).toBe("/api/gn-accounts?username=gn.kaduwela");
@@ -286,13 +304,32 @@ describe("GnAccountsSection", () => {
 
   it("does not delete when the admin cancels the confirmation", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
     listReturns([EXISTING_ACCOUNT]);
     render(<GnAccountsSection />);
     await screen.findByText("gn.kaduwela");
 
-    await user.click(screen.getByRole("button", { name: /delete/i }));
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+    await answerConfirm(user, "cancel");
 
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  });
+
+  /**
+   * Dismissing is not agreeing. Escape closes the dialog without an answer, and
+   * the account has to still be there afterwards — this is the path an admin
+   * takes when they realise they clicked Delete on the wrong row.
+   */
+  it("does not delete when the admin dismisses the dialog with Escape", async () => {
+    const user = userEvent.setup();
+    listReturns([EXISTING_ACCOUNT]);
+    render(<GnAccountsSection />);
+    await screen.findByText("gn.kaduwela");
+
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
   });
 
