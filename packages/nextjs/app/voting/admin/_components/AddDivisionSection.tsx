@@ -9,6 +9,7 @@ import {
   SET_VOTING_CONTRACT_ABI,
   VOTING_CONTRACT_UPDATED_EVENT,
 } from "~~/app/voting/admin/_components/adminContracts";
+import { ButtonSpinner } from "~~/components/ButtonSpinner";
 import deployedContracts from "~~/contracts/deployedContracts";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { LiveDivision, useDivisions } from "~~/hooks/useDivisions";
@@ -253,10 +254,12 @@ export const AddDivisionSection = () => {
         </p>
         <div className="flex justify-end">
           <button
-            className={`btn btn-primary btn-sm ${isDeploying ? "loading" : ""}`}
+            className="btn btn-primary btn-sm"
             disabled={isDeploying || !divisionName.trim()}
             onClick={handleCreateDivision}
+            aria-busy={isDeploying}
           >
+            <ButtonSpinner pending={isDeploying} />
             {isDeploying ? "Deploying..." : "Deploy & Register Division"}
           </button>
         </div>
@@ -279,10 +282,12 @@ export const AddDivisionSection = () => {
                 <li key={division.votingContract} className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold truncate">{division.name}</span>
                   <button
-                    className={`btn btn-xs btn-primary ${authorising === division.votingContract ? "loading" : ""}`}
+                    className="btn btn-xs btn-primary"
                     disabled={authorising !== null}
                     onClick={() => handleAuthorise(division)}
+                    aria-busy={authorising === division.votingContract}
                   >
+                    <ButtonSpinner pending={authorising === division.votingContract} />
                     Authorise
                   </button>
                 </li>

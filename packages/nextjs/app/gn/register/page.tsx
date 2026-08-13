@@ -7,6 +7,7 @@ import decodeQR from "qr/decode.js";
 import type { Abi } from "viem";
 import { useAccount } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
+import { ButtonSpinner } from "~~/components/ButtonSpinner";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { useElectionWriter } from "~~/hooks/useElectionWriter";
 import { useGnDivision } from "~~/hooks/useGnDivision";
@@ -503,10 +504,12 @@ const GNRegisterVoter: NextPage = () => {
               <InfoRow label="Address" value={`${voterAddress.slice(0, 10)}...${voterAddress.slice(-6)}`} />
             </div>
             <button
-              className={`btn btn-primary w-full ${isSubmitting ? "loading" : ""}`}
+              className="btn btn-primary w-full"
               onClick={handleSubmit}
               disabled={isSubmitting}
+              aria-busy={isSubmitting}
             >
+              <ButtonSpinner pending={isSubmitting} />
               {isSubmitting ? "Adding to Blockchain..." : "Confirm & Add to Voter Roll →"}
             </button>
           </Card>

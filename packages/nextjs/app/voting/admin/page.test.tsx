@@ -1,3 +1,4 @@
+import { AddDivisionSection } from "./_components/AddDivisionSection";
 import { AdminElectionProvider } from "./_components/AdminElectionProvider";
 import AdminBallotPage from "./ballot/page";
 import AdminDivisionsPage from "./divisions/page";
@@ -1138,5 +1139,131 @@ describe("admin area — live state does not flicker", () => {
 
     // And the frozen ballot stayed frozen throughout.
     expect((screen.getByRole("button", { name: /save question/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+/**
+ * The allowlist button while `addVoters` is in flight.
+ *
+ * The Hardhat-only twin of the GN portal's enrol button, and it used to have
+ * the opposite defect: no spinner at all, just a label swap that shrank the
+ * button mid-transaction. Both now render the same reserved spinner slot, so
+ * an operator who has learned one recognises the other.
+ */
+describe("admin ballot — the allowlist button's pending state", () => {
+  it("shows a spinner beside a legible label, in a slot that was already there", async () => {
+    // Held open so the in-flight state can be observed rather than raced past.
+    let land: (value: string) => void = () => {};
+    mocks.write.mockReturnValueOnce(
+      new Promise<string>(resolve => {
+        land = resolve;
+      }),
+    );
+
+    renderAdmin(<AdminBallotPage />);
+    await screen.findByRole("heading", { name: /allowlist voters/i });
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText("0x..."), DIVISION.gnOfficer);
+
+    const idle = screen.getByRole("button", { name: /submit allowlist/i });
+    const idleClass = idle.getAttribute("class");
+    const idleSlot = idle.querySelector("[aria-hidden='true']");
+    expect(idleSlot).not.toBeNull();
+    expect(idle.querySelector(".loading-spinner")).toBeNull();
+
+    await user.click(idle);
+
+    const saving = await screen.findByRole("button", { name: /^saving\.\.\.$/i });
+    expect(saving.querySelector(".loading-spinner")).not.toBeNull();
+    expect(saving.querySelector("[aria-hidden='true']")!.getAttribute("class")).toBe(idleSlot!.getAttribute("class"));
+    // `loading` on the button itself is what masked it away in daisyUI 5.
+    expect(saving.className.split(/\s+/)).not.toContain("loading");
+    expect(saving.getAttribute("class")).toBe(idleClass);
+    expect((saving as HTMLButtonElement).disabled).toBe(true);
+    expect(saving.getAttribute("aria-busy")).toBe("true");
+
+    land("0xdeadbeef");
+
+    const settled = await screen.findByRole("button", { name: /submit allowlist/i });
+    expect(settled.querySelector(".loading-spinner")).toBeNull();
+    expect(settled.getAttribute("aria-busy")).toBe("false");
+    expect(mocks.write.mock.calls[0][0]).toMatchObject({ functionName: "addVoters" });
+  });
+});
+
+/**
+ * The two provisioning buttons on the Divisions tab.
+ *
+ * `Authorise` is the interesting one: there is a button per unauthorised
+ * division and they all disable together, so the spinner is the only thing
+ * that says *which* one is being written. A pending flag keyed to the section
+ * rather than the row would spin every button at once and lose exactly that.
+ */
+describe("admin divisions — the provisioning buttons' pending state", () => {
+  it("spins only the division being authorised, not every waiting row", async () => {
+    mocks.divisions = [DIVISION, DIVISION_B];
+    // No authorisation events: both divisions show up as needing repair.
+    mocks.getLogs.mockResolvedValue([]);
+    let land: (value: string) => void = () => {};
+    mocks.write.mockReturnValueOnce(
+      new Promise<string>(resolve => {
+        land = resolve;
+      }),
+    );
+
+    render(<AddDivisionSection />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /authorise/i })).toHaveLength(2));
+    const user = userEvent.setup();
+
+    const [first, second] = screen.getAllByRole("button", { name: /authorise/i });
+    const idleClass = first.getAttribute("class");
+    expect(first.querySelector("[aria-hidden='true']")).not.toBeNull();
+
+    await user.click(first);
+
+    await waitFor(() => expect(first.querySelector(".loading-spinner")).not.toBeNull());
+    // Both are disabled — one write at a time — but only the clicked row says
+    // it is the one in flight.
+    expect(second.querySelector(".loading-spinner")).toBeNull();
+    expect(first.getAttribute("aria-busy")).toBe("true");
+    expect(second.getAttribute("aria-busy")).toBe("false");
+    expect((second as HTMLButtonElement).disabled).toBe(true);
+    expect(first.className.split(/\s+/)).not.toContain("loading");
+    expect(first.getAttribute("class")).toBe(idleClass);
+
+    land("0xdeadbeef");
+    await waitFor(() => expect(first.querySelector(".loading-spinner")).toBeNull());
+  });
+
+  it("spins the deploy button while the division is being created", async () => {
+    let land: (value: string) => void = () => {};
+    mocks.write.mockReturnValueOnce(
+      new Promise<string>(resolve => {
+        land = resolve;
+      }),
+    );
+
+    render(<AddDivisionSection />);
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText(/Kandy, Matara/i), "Galle");
+
+    const idle = screen.getByRole("button", { name: /deploy & register division/i });
+    const idleSlot = idle.querySelector("[aria-hidden='true']");
+    expect(idleSlot).not.toBeNull();
+    expect(idle.querySelector(".loading-spinner")).toBeNull();
+
+    await user.click(idle);
+
+    const deploying = await screen.findByRole("button", { name: /deploying/i });
+    expect(deploying.querySelector(".loading-spinner")).not.toBeNull();
+    expect(deploying.querySelector("[aria-hidden='true']")!.getAttribute("class")).toBe(
+      idleSlot!.getAttribute("class"),
+    );
+    expect(deploying.className.split(/\s+/)).not.toContain("loading");
+    expect((deploying as HTMLButtonElement).disabled).toBe(true);
+    expect(deploying.getAttribute("aria-busy")).toBe("true");
+
+    land("0xdeadbeef");
+    await screen.findByRole("button", { name: /deploy & register division/i });
   });
 });

@@ -7,6 +7,7 @@ import { useAdminElection } from "~~/app/voting/admin/_components/AdminElectionP
 import { DivisionPicker, PhaseBadge } from "~~/app/voting/admin/_components/DivisionStatusPanel";
 import { SaveButton } from "~~/app/voting/admin/_components/SaveButton";
 import { GroupHeading, Section } from "~~/app/voting/admin/_components/Section";
+import { ButtonSpinner } from "~~/components/ButtonSpinner";
 
 /**
  * Admin › Ballot.
@@ -310,7 +311,9 @@ const AdminBallotPage = () => {
               className="btn btn-primary btn-sm"
               disabled={(!inSetup && !inRegistration) || busy === "voters"}
               onClick={handleAddVoters}
+              aria-busy={busy === "voters"}
             >
+              <ButtonSpinner pending={busy === "voters"} />
               {busy === "voters" ? "Saving..." : "Submit allowlist"}
             </button>
           </div>

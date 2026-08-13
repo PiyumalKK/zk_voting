@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { NextPage } from "next";
 import { parseAbiItem } from "viem";
 import { usePublicClient } from "wagmi";
+import { ButtonSpinner } from "~~/components/ButtonSpinner";
 import { useDivisions } from "~~/hooks/useDivisions";
 
 const VOTE_CAST_EVENT = parseAbiItem(
@@ -186,10 +187,12 @@ const AuditPage: NextPage = () => {
                 Checks: no duplicate nullifiers, event count matches tally, all ballots counted.
               </p>
               <button
-                className={`btn btn-primary w-full ${auditRunning ? "loading" : ""}`}
+                className="btn btn-primary w-full"
                 onClick={runAudit}
                 disabled={auditRunning || totalEvents === 0}
+                aria-busy={auditRunning}
               >
+                <ButtonSpinner pending={auditRunning} />
                 {auditRunning ? "Auditing..." : "🔍 Run Audit Now"}
               </button>
 
