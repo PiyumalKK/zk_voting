@@ -15,13 +15,23 @@ output "web_private_ip" {
 }
 
 output "alb_dns" {
-  description = "Public URL of the application (use this to access)"
+  description = "Internal HTTP entry (server-side + CloudFront origin)"
   value       = "http://${aws_lb.main.dns_name}"
 }
 
 output "chain_api_url" {
-  description = "Blockchain API via ALB"
+  description = "Blockchain API via ALB (HTTP, server-side use)"
   value       = "http://${aws_lb.main.dns_name}/chain-api"
+}
+
+output "cloudfront_url" {
+  description = "Public HTTPS URL — use this in the mobile app and browser"
+  value       = "https://${aws_cloudfront_distribution.main.domain_name}"
+}
+
+output "cloudfront_domain" {
+  description = "CloudFront domain, no scheme (for CI and inventory)"
+  value       = aws_cloudfront_distribution.main.domain_name
 }
 
 output "ssh_command_web" {
