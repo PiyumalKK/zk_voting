@@ -185,8 +185,6 @@ def main():
     lines.append(f"          ansible_host: {web_pub}")
     lines.append(f"          node1_ip: {primary_priv}")
     lines.append(f"          alb_dns: {tf['alb_dns']['value'].replace('http://', '')}")
-    cf_domain = tf.get("cloudfront_domain", {}).get("value", "")
-    lines.append(f"          cloudfront_domain: {cf_domain}")
 
     print("\n".join(lines))
 

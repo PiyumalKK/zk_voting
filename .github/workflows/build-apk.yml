@@ -13,10 +13,10 @@ on:
 
 jobs:
   get-alb-url:
-    name: Get public HTTPS URL from Terraform
+    name: Get ALB URL from Terraform
     runs-on: ubuntu-latest
     outputs:
-      public_host: ${{ steps.get_url.outputs.public_host }}
+      alb_dns: ${{ steps.get_url.outputs.alb_dns }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -28,16 +28,16 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: terraform init
-      - name: Get CloudFront domain
+      - name: Get ALB DNS
         id: get_url
         working-directory: infra/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          HOST=$(terraform output -raw cloudfront_domain)
-          echo "public_host=$HOST" >> $GITHUB_OUTPUT
-          echo "✅ Using HTTPS host: $HOST"
+          ALB=$(terraform output -raw alb_dns | sed 's|http://||')
+          echo "alb_dns=$ALB" >> $GITHUB_OUTPUT
+          echo "✅ Using ALB: $ALB"
 
   build:
     name: Build Android App
@@ -50,14 +50,13 @@ jobs:
           node-version: '20'
       - name: Install EAS CLI
         run: npm install -g eas-cli
-      - name: Inject HTTPS URLs into eas.json (the chosen profile's env is embedded by EAS at build time)
+      - name: Inject AWS URLs into eas.json (the chosen profile's env is embedded by EAS at build time)
         run: |
           cd packages/mobile
-          HOST="${{ needs.get-alb-url.outputs.public_host }}"
+          ALB="${{ needs.get-alb-url.outputs.alb_dns }}"
           PROFILE="${{ inputs.profile }}"
-          # Inject the live CloudFront HTTPS URL into BOTH profiles so either
-          # build type is correct (Android blocks cleartext HTTP).
-          jq --arg api "https://$HOST" --arg rpc "https://$HOST/chain-api" \
+          # Inject the live ALB URL into BOTH profiles so either build type is correct.
+          jq --arg api "http://$ALB" --arg rpc "http://$ALB/chain-api" \
             '.build.preview.env.EXPO_PUBLIC_API_URL = $api
              | .build.preview.env.EXPO_PUBLIC_RPC_URL = $rpc
              | .build.preview.env.EXPO_PUBLIC_CHAIN_ID = "9494"
@@ -65,7 +64,7 @@ jobs:
              | .build.production.env.EXPO_PUBLIC_RPC_URL = $rpc
              | .build.production.env.EXPO_PUBLIC_CHAIN_ID = "9494"' \
             eas.json > eas.json.tmp && mv eas.json.tmp eas.json
-          echo "✅ eas.json $PROFILE.env now points at HTTPS host: $HOST"
+          echo "✅ eas.json $PROFILE.env now points at ALB: $ALB"
           jq ".build.$PROFILE.env" eas.json
       - name: Install dependencies
         run: cd packages/mobile && yarn install
@@ -85,5 +84,5 @@ jobs:
           echo "   Check build status: https://expo.dev/accounts/piyumalkk/projects/sl-vote/builds"
           echo ""
           echo "   Config baked into this build:"
-          echo "   API: https://${{ needs.get-alb-url.outputs.public_host }}"
-          echo "   RPC: https://${{ needs.get-alb-url.outputs.public_host }}/chain-api"
+          echo "   API: http://${{ needs.get-alb-url.outputs.alb_dns }}"
+          echo "   RPC: http://${{ needs.get-alb-url.outputs.alb_dns }}/chain-api"

@@ -247,64 +247,6 @@ resource "aws_lb_listener_rule" "chain_api" {
 }
 
 # ═══════════════════════════════════════════════════════
-# CloudFront — HTTPS entry point in front of the ALB
-# ═══════════════════════════════════════════════════════
-# The ALB only speaks plain HTTP (no domain, so no ACM cert is possible on the
-# raw *.elb.amazonaws.com name). CloudFront gives us a free, valid TLS cert on a
-# *.cloudfront.net domain — which is what the mobile app and browser need
-# (Android blocks cleartext HTTP by default; the Play Store won't ship an app
-# that talks to a raw HTTP endpoint). TLS terminates at CloudFront; the hop from
-# CloudFront to the ALB stays HTTP inside AWS. The ALB keeps doing all path
-# routing: /chain-api* → validators, everything else → the web app.
-
-resource "aws_cloudfront_distribution" "main" {
-  enabled      = true
-  comment      = "${var.project} HTTPS front for ALB"
-  price_class  = "PriceClass_200" # includes the South-Asia (India) edge locations
-  http_version = "http2"
-
-  origin {
-    domain_name = aws_lb.main.dns_name
-    origin_id   = "alb"
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only" # CloudFront → ALB is HTTP
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
-  }
-
-  default_cache_behavior {
-    target_origin_id       = "alb"
-    viewer_protocol_policy = "redirect-to-https" # force HTTPS for every viewer
-    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
-
-    # Dynamic app + JSON-RPC: never cache, and forward everything (all headers,
-    # cookies, query strings, and the request body) straight through to the ALB.
-    # These are AWS-managed policy IDs (stable across accounts):
-    #   Managed-CachingDisabled  = 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-    #   Managed-AllViewer        = 216adef6-5c7f-47e4-b989-5492eafa07d3
-    cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
-    origin_request_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3"
-  }
-
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = true # gives the *.cloudfront.net TLS cert
-  }
-
-  tags = { Name = "${var.project}-cdn" }
-}
-
-# ═══════════════════════════════════════════════════════
 # CloudWatch — Monitoring & Alarms
 # ═══════════════════════════════════════════════════════
 
