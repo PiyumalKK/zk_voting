@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TransactionSerializedLegacy } from "viem";
-import { fromRlp, parseTransaction, recoverTransactionAddress, toFunctionSelector } from "viem";
+import { encodeErrorResult, fromRlp, parseTransaction, recoverTransactionAddress, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 /**
@@ -39,6 +39,46 @@ const DIVISION = "0x5FbDB2315678afecb367f032d93F642f64180aa3" as const;
 const VOTER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const TX_HASH = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
+const SUCCESS_RECEIPT = {
+  transactionHash: TX_HASH,
+  transactionIndex: "0x0",
+  blockHash: "0x2222222222222222222222222222222222222222222222222222222222222222",
+  blockNumber: "0x2a",
+  from: "0x0000000000000000000000000000000000000001",
+  to: DIVISION,
+  cumulativeGasUsed: "0x5208",
+  gasUsed: "0x5208",
+  contractAddress: null,
+  logs: [],
+  logsBloom: `0x${"0".repeat(512)}`,
+  status: "0x1",
+  effectiveGasPrice: "0x0",
+  type: "0x0",
+} as const;
+
+/** The same receipt a refused call produces: mined, and status 0. */
+const REVERTED_RECEIPT = { ...SUCCESS_RECEIPT, status: "0x0" } as const;
+
+/**
+ * `NicRegistry__DeviceSuperseded(address,bytes32)` as it comes back from a
+ * replayed `eth_call`. Encoded from the ABI rather than hand-written, so it
+ * stays correct if the error's parameters ever change.
+ */
+const SUPERSEDED_REVERT = encodeErrorResult({
+  abi: [
+    {
+      type: "error",
+      name: "NicRegistry__DeviceSuperseded",
+      inputs: [
+        { name: "device", type: "address" },
+        { name: "nicHash", type: "bytes32" },
+      ],
+    },
+  ] as const,
+  errorName: "NicRegistry__DeviceSuperseded",
+  args: ["0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1", `0x${"aa".repeat(32)}`],
+});
+
 interface RpcCall {
   method: string;
   params: unknown[];
@@ -70,10 +110,24 @@ interface MockNode {
   close: () => Promise<void>;
 }
 
+interface MockNodeOptions {
+  /**
+   * Methods that answer with a JSON-RPC error carrying `data` — how a real node
+   * reports a revert reason for `eth_call`. Distinct from `failing`, which is a
+   * transport-level failure with no payload to decode.
+   */
+  reverts?: Record<string, `0x${string}`>;
+}
+
 /** A JSON-RPC node that records every call and answers like the Go node does. */
-async function startMockNode(chainId: number, overrides: Record<string, unknown> = {}): Promise<MockNode> {
+async function startMockNode(
+  chainId: number,
+  overrides: Record<string, unknown> = {},
+  options: MockNodeOptions = {},
+): Promise<MockNode> {
   const calls: RpcCall[] = [];
   const failing = new Set<string>();
+  const reverts = options.reverts ?? {};
 
   const results: Record<string, unknown> = {
     eth_chainId: `0x${chainId.toString(16)}`,
@@ -83,22 +137,7 @@ async function startMockNode(chainId: number, overrides: Record<string, unknown>
     // treat zero as a failure.
     eth_gasPrice: "0x0",
     eth_sendRawTransaction: TX_HASH,
-    eth_getTransactionReceipt: {
-      transactionHash: TX_HASH,
-      transactionIndex: "0x0",
-      blockHash: "0x2222222222222222222222222222222222222222222222222222222222222222",
-      blockNumber: "0x2a",
-      from: "0x0000000000000000000000000000000000000001",
-      to: DIVISION,
-      cumulativeGasUsed: "0x5208",
-      gasUsed: "0x5208",
-      contractAddress: null,
-      logs: [],
-      logsBloom: `0x${"0".repeat(512)}`,
-      status: "0x1",
-      effectiveGasPrice: "0x0",
-      type: "0x0",
-    },
+    eth_getTransactionReceipt: SUCCESS_RECEIPT,
     ...overrides,
   };
 
@@ -112,6 +151,13 @@ async function startMockNode(chainId: number, overrides: Record<string, unknown>
         calls.push({ method, params: params ?? [] });
         if (failing.has(method)) {
           return { jsonrpc: "2.0", id, error: { code: -32601, message: `method ${method} unavailable` } };
+        }
+        if (reverts[method]) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: { code: 3, message: "execution reverted", data: reverts[method] },
+          };
         }
         return { jsonrpc: "2.0", id, result: results[method] ?? null };
       });
@@ -258,6 +304,34 @@ describe("gas price handling", () => {
     // Asserted on the wire bytes too, since the decoded form represents zero by
     // an absent key: the second RLP item must be the empty item, not 1 gwei.
     expect(rawGasPriceItem(serialized)).toBe("0x");
+  });
+
+  it("throws instead of reporting success when the transaction reverts", async () => {
+    // The receipt used to be awaited and discarded, so a refused registration
+    // returned a hash and the caller went on to mark the device registered. A
+    // phone replaced under `NicRegistry.reissueDevice` lands exactly here, and
+    // must not be told it succeeded.
+    await node.close();
+    node = await startMockNode(
+      9494,
+      { eth_getTransactionReceipt: REVERTED_RECEIPT },
+      { reverts: { eth_call: SUPERSEDED_REVERT } },
+    );
+    const { submitRegister } = await loadChain(node.url, 9494);
+
+    await expect(submitRegister(DIVISION, "1", VOTER_KEY)).rejects.toThrow(/no longer your registered device/i);
+  });
+
+  it("falls back to generic advice when the revert reason cannot be decoded", async () => {
+    await node.close();
+    node = await startMockNode(
+      9494,
+      { eth_getTransactionReceipt: REVERTED_RECEIPT },
+      { reverts: { eth_call: "0xdeadbeef" } },
+    );
+    const { submitRegister } = await loadChain(node.url, 9494);
+
+    await expect(submitRegister(DIVISION, "1", VOTER_KEY)).rejects.toThrow(/rejected your registration/i);
   });
 
   it("falls back to 1 gwei only when the RPC call itself fails", async () => {

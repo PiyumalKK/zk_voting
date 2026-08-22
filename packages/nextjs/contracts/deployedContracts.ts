@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   9494: {
     ElectionRegistry: {
-      address: "0xc582Bc0317dbb0908203541971a358c44b1F3766",
+      address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
       abi: [
         {
           inputs: [
@@ -19,6 +19,11 @@ const deployedContracts = {
             {
               internalType: "address",
               name: "_verifier",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "_nicRegistry",
               type: "address",
             },
           ],
@@ -355,6 +360,19 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "i_nicRegistry",
+          outputs: [
+            {
+              internalType: "address",
+              name: "",
+              type: "address",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "i_verifier",
           outputs: [
             {
@@ -428,10 +446,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 182,
+      deployedOnBlock: 5,
     },
     HonkVerifier: {
-      address: "0xD49a0e9A4CD5979aE36840f542D2d7f02C4817Be",
+      address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
       abi: [
         {
           inputs: [],
@@ -479,10 +497,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 180,
+      deployedOnBlock: 3,
     },
     LeanIMT: {
-      address: "0xC9a43158891282A2B1475592D5719c001986Aaec",
+      address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
       abi: [
         {
           inputs: [],
@@ -511,10 +529,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 94,
+      deployedOnBlock: 2,
     },
     NicRegistry: {
-      address: "0x7A9Ec1d04904907De0ED7b6839CcdD59c3716AC9",
+      address: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
       abi: [
         {
           inputs: [
@@ -535,7 +553,136 @@ const deployedContracts = {
               type: "bytes32",
             },
           ],
+          name: "NicRegistry__AlreadyRegistered",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
           name: "NicRegistry__AlreadyUsed",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+          ],
+          name: "NicRegistry__DeviceInUse",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+          ],
+          name: "NicRegistry__DeviceNotEnrolled",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          name: "NicRegistry__DeviceSuperseded",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+          ],
+          name: "NicRegistry__DeviceUnchanged",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "uint256",
+              name: "expected",
+              type: "uint256",
+            },
+            {
+              internalType: "uint256",
+              name: "actual",
+              type: "uint256",
+            },
+          ],
+          name: "NicRegistry__EpochChanged",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          name: "NicRegistry__NotEnrolled",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+            {
+              internalType: "uint32",
+              name: "limit",
+              type: "uint32",
+            },
+          ],
+          name: "NicRegistry__ReissueLimitReached",
+          type: "error",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+            {
+              internalType: "address",
+              name: "expected",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "actual",
+              type: "address",
+            },
+          ],
+          name: "NicRegistry__WrongDivision",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "NicRegistry__ZeroDevice",
           type: "error",
         },
         {
@@ -559,6 +706,56 @@ const deployedContracts = {
           ],
           name: "OwnableUnauthorizedAccount",
           type: "error",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+            {
+              indexed: true,
+              internalType: "address",
+              name: "previousDevice",
+              type: "address",
+            },
+            {
+              indexed: true,
+              internalType: "address",
+              name: "newDevice",
+              type: "address",
+            },
+            {
+              indexed: false,
+              internalType: "uint32",
+              name: "issueCount",
+              type: "uint32",
+            },
+          ],
+          name: "DeviceReissued",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
+              indexed: true,
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+            {
+              indexed: true,
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+          ],
+          name: "NicHashCommitted",
+          type: "event",
         },
         {
           anonymous: false,
@@ -609,6 +806,19 @@ const deployedContracts = {
           anonymous: false,
           inputs: [
             {
+              indexed: false,
+              internalType: "bool",
+              name: "enabled",
+              type: "bool",
+            },
+          ],
+          name: "StrictEnrolmentSet",
+          type: "event",
+        },
+        {
+          anonymous: false,
+          inputs: [
+            {
               indexed: true,
               internalType: "address",
               name: "votingContract",
@@ -626,8 +836,45 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "MAX_REISSUES",
+          outputs: [
+            {
+              internalType: "uint32",
+              name: "",
+              type: "uint32",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "clearNicHashes",
           outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+            {
+              internalType: "uint256",
+              name: "expectedEpoch",
+              type: "uint256",
+            },
+          ],
+          name: "commitDevice",
+          outputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
           stateMutability: "nonpayable",
           type: "function",
         },
@@ -639,6 +886,64 @@ const deployedContracts = {
               internalType: "uint256",
               name: "",
               type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+          ],
+          name: "getDeviceStatus",
+          outputs: [
+            {
+              internalType: "enum NicRegistry.DeviceStatus",
+              name: "status",
+              type: "uint8",
+            },
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+          ],
+          name: "getEnrolment",
+          outputs: [
+            {
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
+            {
+              internalType: "bool",
+              name: "committed",
+              type: "bool",
+            },
+            {
+              internalType: "uint32",
+              name: "issueCount",
+              type: "uint32",
             },
           ],
           stateMutability: "view",
@@ -665,6 +970,38 @@ const deployedContracts = {
         },
         {
           inputs: [],
+          name: "isStrictEnrolment",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+          ],
+          name: "isVotingContractAuthorized",
+          outputs: [
+            {
+              internalType: "bool",
+              name: "",
+              type: "bool",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
           name: "owner",
           outputs: [
             {
@@ -674,6 +1011,35 @@ const deployedContracts = {
             },
           ],
           stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bytes32",
+              name: "nicHash",
+              type: "bytes32",
+            },
+            {
+              internalType: "address",
+              name: "votingContract",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "newDevice",
+              type: "address",
+            },
+          ],
+          name: "reissueDevice",
+          outputs: [
+            {
+              internalType: "address",
+              name: "previousDevice",
+              type: "address",
+            },
+          ],
+          stateMutability: "nonpayable",
           type: "function",
         },
         {
@@ -695,6 +1061,11 @@ const deployedContracts = {
               name: "votingContract",
               type: "address",
             },
+            {
+              internalType: "address",
+              name: "device",
+              type: "address",
+            },
           ],
           name: "reserveNicHash",
           outputs: [
@@ -704,6 +1075,19 @@ const deployedContracts = {
               type: "bool",
             },
           ],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+        {
+          inputs: [
+            {
+              internalType: "bool",
+              name: "enabled",
+              type: "bool",
+            },
+          ],
+          name: "setStrictEnrolment",
+          outputs: [],
           stateMutability: "nonpayable",
           type: "function",
         },
@@ -744,10 +1128,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 98,
+      deployedOnBlock: 6,
     },
     PoseidonT3: {
-      address: "0x46b142DD1E924FAb83eCc3c08e4D46E82f005e0E",
+      address: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
       abi: [
         {
           inputs: [
@@ -770,10 +1154,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 93,
+      deployedOnBlock: 1,
     },
     Voting: {
-      address: "0xe1Fd27F4390DcBE165f4D60DBF821e4B9Bb02dEd",
+      address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
       abi: [
         {
           inputs: [
@@ -785,6 +1169,11 @@ const deployedContracts = {
             {
               internalType: "address",
               name: "_verifier",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "_nicRegistry",
               type: "address",
             },
             {
@@ -868,6 +1257,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "Voting__NoCandidates",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "Voting__NoNicRegistry",
           type: "error",
         },
         {
@@ -1185,6 +1579,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "getNicEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -1288,6 +1695,19 @@ const deployedContracts = {
               internalType: "uint256",
               name: "candidateCount",
               type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "i_nicRegistry",
+          outputs: [
+            {
+              internalType: "contract INicRegistry",
+              name: "",
+              type: "address",
             },
           ],
           stateMutability: "view",
@@ -1495,10 +1915,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 181,
+      deployedOnBlock: 4,
     },
     Voting_Colombo: {
-      address: "0x8bCe54ff8aB45CB075b044AE117b8fD91F9351aB",
+      address: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
       abi: [
         {
           inputs: [
@@ -1510,6 +1930,11 @@ const deployedContracts = {
             {
               internalType: "address",
               name: "_verifier",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "_nicRegistry",
               type: "address",
             },
             {
@@ -1593,6 +2018,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "Voting__NoCandidates",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "Voting__NoNicRegistry",
           type: "error",
         },
         {
@@ -1910,6 +2340,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "getNicEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -2013,6 +2456,19 @@ const deployedContracts = {
               internalType: "uint256",
               name: "candidateCount",
               type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "i_nicRegistry",
+          outputs: [
+            {
+              internalType: "contract INicRegistry",
+              name: "",
+              type: "address",
             },
           ],
           stateMutability: "view",
@@ -2216,10 +2672,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 186,
+      deployedOnBlock: 10,
     },
     Voting_Gampaha: {
-      address: "0xaca81583840B1bf2dDF6CDe824ada250C1936B4D",
+      address: "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
       abi: [
         {
           inputs: [
@@ -2231,6 +2687,11 @@ const deployedContracts = {
             {
               internalType: "address",
               name: "_verifier",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "_nicRegistry",
               type: "address",
             },
             {
@@ -2314,6 +2775,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "Voting__NoCandidates",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "Voting__NoNicRegistry",
           type: "error",
         },
         {
@@ -2631,6 +3097,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "getNicEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -2734,6 +3213,19 @@ const deployedContracts = {
               internalType: "uint256",
               name: "candidateCount",
               type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "i_nicRegistry",
+          outputs: [
+            {
+              internalType: "contract INicRegistry",
+              name: "",
+              type: "address",
             },
           ],
           stateMutability: "view",
@@ -2937,10 +3429,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 189,
+      deployedOnBlock: 13,
     },
     Voting_Kaduwela: {
-      address: "0xB2b580ce436E6F77A5713D80887e14788Ef49c9A",
+      address: "0x0165878A594ca255338adfa4d48449f69242Eb8F",
       abi: [
         {
           inputs: [
@@ -2952,6 +3444,11 @@ const deployedContracts = {
             {
               internalType: "address",
               name: "_verifier",
+              type: "address",
+            },
+            {
+              internalType: "address",
+              name: "_nicRegistry",
               type: "address",
             },
             {
@@ -3035,6 +3532,11 @@ const deployedContracts = {
         {
           inputs: [],
           name: "Voting__NoCandidates",
+          type: "error",
+        },
+        {
+          inputs: [],
+          name: "Voting__NoNicRegistry",
           type: "error",
         },
         {
@@ -3352,6 +3854,19 @@ const deployedContracts = {
           type: "function",
         },
         {
+          inputs: [],
+          name: "getNicEpoch",
+          outputs: [
+            {
+              internalType: "uint256",
+              name: "",
+              type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
           inputs: [
             {
               internalType: "uint256",
@@ -3455,6 +3970,19 @@ const deployedContracts = {
               internalType: "uint256",
               name: "candidateCount",
               type: "uint256",
+            },
+          ],
+          stateMutability: "view",
+          type: "function",
+        },
+        {
+          inputs: [],
+          name: "i_nicRegistry",
+          outputs: [
+            {
+              internalType: "contract INicRegistry",
+              name: "",
+              type: "address",
             },
           ],
           stateMutability: "view",
@@ -3658,7 +4186,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 183,
+      deployedOnBlock: 7,
     },
   },
 } as const;

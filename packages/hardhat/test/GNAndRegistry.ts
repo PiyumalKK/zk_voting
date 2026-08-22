@@ -24,20 +24,30 @@ describe("GN Officer & ElectionRegistry", function () {
     const verifier = await Verifier.deploy();
 
     // Deploy Voting
+    const NicRegistryFactory = await ethers.getContractFactory("NicRegistry");
+    const nicRegistry = await NicRegistryFactory.deploy(owner.address);
+    const nicRegistryAddr = await nicRegistry.getAddress();
+
     const VotingFactory = await ethers.getContractFactory("Voting", {
       libraries: { LeanIMT: await leanIMT.getAddress() },
     });
-    voting = (await VotingFactory.deploy(owner.address, await verifier.getAddress(), "Who should be president?", [
-      "Candidate A",
-      "Candidate B",
-      "Candidate C",
-    ])) as Voting;
+    voting = (await VotingFactory.deploy(
+      owner.address,
+      await verifier.getAddress(),
+      nicRegistryAddr,
+      "Who should be president?",
+      ["Candidate A", "Candidate B", "Candidate C"],
+    )) as Voting;
 
     // Deploy ElectionRegistry (needs LeanIMT linked because it deploys Voting internally via createDivision)
     const RegistryFactory = await ethers.getContractFactory("ElectionRegistry", {
       libraries: { LeanIMT: await leanIMT.getAddress() },
     });
-    registry = (await RegistryFactory.deploy(owner.address, await verifier.getAddress())) as ElectionRegistry;
+    registry = (await RegistryFactory.deploy(
+      owner.address,
+      await verifier.getAddress(),
+      nicRegistryAddr,
+    )) as ElectionRegistry;
   });
 
   describe("GN Officer Management", function () {

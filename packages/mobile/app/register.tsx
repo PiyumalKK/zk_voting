@@ -124,10 +124,21 @@ export default function Register() {
           lowerDetail.includes("fetch failed") ||
           lowerDetail.includes("econnreset");
 
+        // `submitRegister` now decodes the contract's own reason for a revert
+        // and throws it as the message — "this phone was replaced" reads very
+        // differently from "ask your officer to add you", and the generic advice
+        // would be actively wrong for it. Only fall back when the failure is
+        // something we could not identify.
+        const isExplained =
+          lowerDetail.includes("no longer your registered device") ||
+          lowerDetail.includes("already registered for this election") ||
+          lowerDetail.includes("enrolment records were reset") ||
+          lowerDetail.includes("registration is not open");
+
         if (isTimeout) {
           hint =
             "\n\nCould not connect to the network. Please check your internet connection and try again.";
-        } else {
+        } else if (!isExplained) {
           hint =
             "\n\nWe couldn't verify your eligibility for this division. " +
             "Ask your GN officer to confirm they added this phone's voting address to the roll.";

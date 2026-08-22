@@ -37,10 +37,23 @@ const deployVotingContract: DeployFunction = async function (hre: HardhatRuntime
     autoMine: true,
   });
 
-  // 4. Deploy the Voting contract, linked to LeanIMT, with verifier address
-  await deploy("Voting", {
+  // 4. Deploy the NicRegistry.
+  //
+  //     It has to exist before any Voting contract, not after: a division's
+  //     registry address is immutable and `register()` calls into it, so a
+  //     Voting deployed without one could never enforce the one-citizen-one-leaf
+  //     rule. `01_deploy_divisions.ts` reuses this same deployment.
+  const nicRegistry = await deploy("NicRegistry", {
     from: deployer,
-    args: [ownerAddress, verifier.address, question, initialCandidates],
+    args: [ownerAddress],
+    log: true,
+    autoMine: true,
+  });
+
+  // 5. Deploy the Voting contract, linked to LeanIMT, with verifier address
+  const voting = await deploy("Voting", {
+    from: deployer,
+    args: [ownerAddress, verifier.address, nicRegistry.address, question, initialCandidates],
     libraries: {
       LeanIMT: leanIMT.address,
     },
@@ -48,8 +61,17 @@ const deployVotingContract: DeployFunction = async function (hre: HardhatRuntime
     autoMine: true,
   });
 
+  // 6. Authorise it, so `register()` can call `commitDevice`. Idempotent, unlike
+  //    the deploy above, so it is re-sent on every run — cheap, and it repairs a
+  //    chain where the registry was replaced.
+  const nicRegistryContract = await hre.ethers.getContractAt("NicRegistry", nicRegistry.address);
+  if (!(await nicRegistryContract.isVotingContractAuthorized(voting.address))) {
+    await nicRegistryContract.setVotingContract(voting.address, true);
+  }
+
   await hre.ethers.getContract<Contract>("Voting", deployer);
   console.log("🗳️  Voting deployed with verifier at:", verifier.address);
+  console.log("🪪  NicRegistry at:", nicRegistry.address);
 };
 
 export default deployVotingContract;

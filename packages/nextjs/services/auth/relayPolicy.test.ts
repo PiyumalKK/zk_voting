@@ -88,8 +88,20 @@ const NIC_REGISTRY_ABI = [
     inputs: [
       { name: "nicHash", type: "bytes32" },
       { name: "votingContract", type: "address" },
+      { name: "device", type: "address" },
     ],
     outputs: [{ type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "reissueDevice",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "nicHash", type: "bytes32" },
+      { name: "votingContract", type: "address" },
+      { name: "newDevice", type: "address" },
+    ],
+    outputs: [{ type: "address" }],
   },
   {
     type: "function",
@@ -180,7 +192,7 @@ describe("admin whitelist", () => {
   });
 
   it("refuses a function that exists in the ABI but is not whitelisted", () => {
-    expect(statusOf(asAdmin(NIC_REGISTRY, "reserveNicHash", [NIC_HASH, DIVISION_0]))).toBe(403);
+    expect(statusOf(asAdmin(NIC_REGISTRY, "reserveNicHash", [NIC_HASH, DIVISION_0, VOTER]))).toBe(403);
   });
 
   it("refuses read-only functions", () => {
@@ -224,14 +236,32 @@ describe("GN scoping", () => {
   });
 
   it("permits reserveNicHash naming the officer's own division", () => {
-    expect(asGn(NIC_REGISTRY, "reserveNicHash", [NIC_HASH, DIVISION_0]).ok).toBe(true);
+    expect(asGn(NIC_REGISTRY, "reserveNicHash", [NIC_HASH, DIVISION_0, VOTER]).ok).toBe(true);
   });
 
   it("refuses reserveNicHash naming another division", () => {
     // The scope check has to read the *argument* here, not the target: the call
     // is made on the shared NicRegistry either way.
-    const result = asGn(NIC_REGISTRY, "reserveNicHash", [NIC_HASH, DIVISION_1]);
+    const result = asGn(NIC_REGISTRY, "reserveNicHash", [NIC_HASH, DIVISION_1, VOTER]);
     expect(statusOf(result)).toBe(403);
+  });
+
+  it("permits reissueDevice naming the officer's own division", () => {
+    expect(asGn(NIC_REGISTRY, "reissueDevice", [NIC_HASH, DIVISION_0, VOTER]).ok).toBe(true);
+  });
+
+  it("refuses reissueDevice naming another division", () => {
+    // Re-issue kills the device previously bound to a NIC. Scoped by the same
+    // argument as reserveNicHash, and for a sharper reason: an officer able to
+    // name another division could invalidate a voter they never enrolled.
+    const result = asGn(NIC_REGISTRY, "reissueDevice", [NIC_HASH, DIVISION_1, VOTER]);
+    expect(statusOf(result)).toBe(403);
+    expect(errorOf(result)).toBe("You may only act on your own division.");
+  });
+
+  it("refuses reissueDevice for the admin role", () => {
+    // Enrolment, including its exceptions, is the GN's job — 01-AUTH-DESIGN §4.
+    expect(statusOf(asAdmin(NIC_REGISTRY, "reissueDevice", [NIC_HASH, DIVISION_0, VOTER]))).toBe(403);
   });
 
   it("refuses admin-only functions even on the officer's own division", () => {
@@ -286,7 +316,7 @@ describe("argument validation", () => {
   });
 
   it("rejects a bytes32 of the wrong length", () => {
-    expect(statusOf(asGn(NIC_REGISTRY, "reserveNicHash", ["0xabcd", DIVISION_0]))).toBe(400);
+    expect(statusOf(asGn(NIC_REGISTRY, "reserveNicHash", ["0xabcd", DIVISION_0, VOTER]))).toBe(400);
   });
 
   it("rejects arrays and strings beyond the relay's size caps", () => {

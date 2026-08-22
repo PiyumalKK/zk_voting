@@ -11,6 +11,7 @@ describe("Voting", function () {
   let nonVoter: HardhatEthersSigner;
   let leanIMTAddr: string;
   let verifierAddr: string;
+  let nicRegistryAddr: string;
 
   const QUESTION = "Do you support this proposal?";
   const CANDIDATES = ["Yes", "No"];
@@ -26,7 +27,13 @@ describe("Voting", function () {
     const VotingFactory = await ethers.getContractFactory("Voting", {
       libraries: { LeanIMT: leanIMTAddr },
     });
-    const v = (await VotingFactory.deploy(owner.address, verifierAddr, QUESTION, CANDIDATES)) as Voting;
+    const v = (await VotingFactory.deploy(
+      owner.address,
+      verifierAddr,
+      nicRegistryAddr,
+      QUESTION,
+      CANDIDATES,
+    )) as Voting;
     await v.waitForDeployment();
     return v;
   }
@@ -49,6 +56,15 @@ describe("Voting", function () {
     const verifier = await Verifier.deploy();
     await verifier.waitForDeployment();
     verifierAddr = await verifier.getAddress();
+
+    // Every division now defers to a NicRegistry. The voters in this file are
+    // allowlisted with plain `addVoters` and never bound to a NIC, so they take
+    // the registry's Unbound path and the behaviour asserted below is the
+    // address-level behaviour, unchanged. `NicRegistry.ts` covers the bound path.
+    const NicRegistryFactory = await ethers.getContractFactory("NicRegistry");
+    const nicRegistry = await NicRegistryFactory.deploy(owner.address);
+    await nicRegistry.waitForDeployment();
+    nicRegistryAddr = await nicRegistry.getAddress();
 
     voting = await deployFresh();
 

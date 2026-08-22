@@ -45,11 +45,11 @@ export const RELAY_WHITELIST: Record<AuthRole, Partial<Record<ContractKind, read
       "setGNOfficer",
     ],
     ElectionRegistry: ["createDivision", "addDivision", "updateDivision", "clearDivisions"],
-    NicRegistry: ["setVotingContract", "clearNicHashes"],
+    NicRegistry: ["setVotingContract", "clearNicHashes", "setStrictEnrolment"],
   },
   gn: {
     Voting: ["addVoters"],
-    NicRegistry: ["reserveNicHash"],
+    NicRegistry: ["reserveNicHash", "reissueDevice"],
   },
 } as const;
 
@@ -57,13 +57,21 @@ export const RELAY_WHITELIST: Record<AuthRole, Partial<Record<ContractKind, read
  * Arguments that must name the caller's own division, by function.
  *
  * `addVoters` is scoped by the *target* (it is called on the division's own
- * Voting contract), while `reserveNicHash` is called on the shared NicRegistry
- * and carries the division as its second argument — so the scope check has to
- * look in a different place for each. Encoding that here keeps the rule beside
- * the whitelist instead of scattered through the route handler.
+ * Voting contract), while `reserveNicHash` and `reissueDevice` are called on the
+ * shared NicRegistry and carry the division as their second argument — so the
+ * scope check has to look in a different place for each. Encoding that here
+ * keeps the rule beside the whitelist instead of scattered through the route
+ * handler.
+ *
+ * `reissueDevice` is the lost-phone path: it kills the device previously issued
+ * for a NIC and binds a new one. It must be scoped exactly as tightly as
+ * `reserveNicHash`, because an officer who could name another division's
+ * contract could rebind a citizen they never met — the registry refuses the
+ * mismatch too (NicRegistry__WrongDivision), so this is the outer of two gates.
  */
 const GN_DIVISION_ARG_INDEX: Record<string, number> = {
   reserveNicHash: 1,
+  reissueDevice: 1,
 };
 
 /** Guards against a session being used to submit an absurdly large, gas-bombing call. */

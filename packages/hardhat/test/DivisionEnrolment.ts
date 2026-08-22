@@ -52,13 +52,20 @@ describe("Runtime division enrolment", function () {
     const Verifier = await ethers.getContractFactory("HonkVerifier");
     const verifier = await Verifier.deploy();
 
+    // NicRegistry first: ElectionRegistry takes it as a constructor argument and
+    // hands it to every division it creates, so the factory cannot be built
+    // before the registry exists.
+    const NicRegistryFactory = await ethers.getContractFactory("NicRegistry");
+    nicRegistry = (await NicRegistryFactory.deploy(owner.address)) as NicRegistry;
+
     const RegistryFactory = await ethers.getContractFactory("ElectionRegistry", {
       libraries: { LeanIMT: await leanIMT.getAddress() },
     });
-    registry = (await RegistryFactory.deploy(owner.address, await verifier.getAddress())) as ElectionRegistry;
-
-    const NicRegistryFactory = await ethers.getContractFactory("NicRegistry");
-    nicRegistry = (await NicRegistryFactory.deploy(owner.address)) as NicRegistry;
+    registry = (await RegistryFactory.deploy(
+      owner.address,
+      await verifier.getAddress(),
+      await nicRegistry.getAddress(),
+    )) as ElectionRegistry;
   });
 
   describe("a division created at runtime", function () {
@@ -79,9 +86,9 @@ describe("Runtime division enrolment", function () {
       // The defect, stated as a test. Note the revert reason is a plain string,
       // not a custom error, so a client cannot match it by error name.
       const voting = await createDivision("Kandy");
-      await expect(nicRegistry.reserveNicHash(NIC_HASH, await voting.getAddress())).to.be.revertedWith(
-        "Unregistered division",
-      );
+      await expect(
+        nicRegistry.reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
+      ).to.be.revertedWith("Unregistered division");
     });
 
     it("refuses enrolment even for the contract owner", async function () {
@@ -90,9 +97,9 @@ describe("Runtime division enrolment", function () {
       // work around a missing authorisation by enrolling the voter themselves.
       const voting = await createDivision("Kandy");
       await voting.setGNOfficer(gn.address);
-      await expect(nicRegistry.connect(owner).reserveNicHash(NIC_HASH, await voting.getAddress())).to.be.revertedWith(
-        "Unregistered division",
-      );
+      await expect(
+        nicRegistry.connect(owner).reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
+      ).to.be.revertedWith("Unregistered division");
     });
   });
 
@@ -105,10 +112,9 @@ describe("Runtime division enrolment", function () {
       await nicRegistry.setVotingContract(await voting.getAddress(), true);
       await voting.setGNOfficer(gn.address);
 
-      await expect(nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress())).to.emit(
-        nicRegistry,
-        "NicHashReserved",
-      );
+      await expect(
+        nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
+      ).to.emit(nicRegistry, "NicHashReserved");
       await expect(voting.connect(gn).addVoters([stranger.address], [true]))
         .to.emit(voting, "VoterAdded")
         .withArgs(stranger.address);
@@ -118,9 +124,9 @@ describe("Runtime division enrolment", function () {
       const voting = await createDivision("Kandy");
       await nicRegistry.setVotingContract(await voting.getAddress(), true);
 
-      await expect(nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress())).to.be.revertedWith(
-        "Not owner or GN",
-      );
+      await expect(
+        nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
+      ).to.be.revertedWith("Not owner or GN");
     });
 
     it("emits VotingContractUpdated, which is how a client can tell", async function () {
@@ -140,9 +146,9 @@ describe("Runtime division enrolment", function () {
       await voting.setGNOfficer(gn.address);
       await nicRegistry.setVotingContract(await voting.getAddress(), false);
 
-      await expect(nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress())).to.be.revertedWith(
-        "Unregistered division",
-      );
+      await expect(
+        nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
+      ).to.be.revertedWith("Unregistered division");
     });
 
     it("only the owner may authorise a division", async function () {
