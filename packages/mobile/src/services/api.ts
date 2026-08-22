@@ -26,6 +26,24 @@ export interface DivisionState {
   voterRegistered?: boolean;
 }
 
+/**
+ * This device's standing in the shared NicRegistry, when the election was
+ * fetched for a specific voter address.
+ *
+ * Absent when the chain has no NicRegistry, or the read failed — treat that as
+ * "nothing special to say" rather than as an error.
+ *
+ * `superseded` is the one that changes what the app should show: the GN officer
+ * issued a replacement phone for this citizen, so this one can never register.
+ * Knowing that up front is what lets the app say so on the home screen instead
+ * of letting the voter authenticate, generate a commitment, and only then fail.
+ */
+export interface VoterDeviceState {
+  status: "unbound" | "live" | "superseded";
+  /** Whether the citizen behind this device has already registered, on any division. */
+  nicRegistered: boolean;
+}
+
 export interface ElectionResponse {
   chainId: number;
   registry: string;
@@ -38,6 +56,8 @@ export interface ElectionResponse {
     turnout: number;
   };
   divisions: DivisionState[];
+  /** Present only when the election was fetched for a specific voter address. */
+  voterDevice?: VoterDeviceState;
 }
 
 export interface MerklePathResponse {

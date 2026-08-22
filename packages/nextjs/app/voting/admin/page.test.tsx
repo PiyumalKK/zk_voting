@@ -137,12 +137,13 @@ vi.mock("~~/app/voting/admin/_components/GnAccountsSection", () => ({
   GnAccountsSection: () => <div data-testid="gn-accounts-panel" />,
 }));
 
-/** `readContract` is called for getVotingData, getCandidates and owner. */
-const stubReads = () =>
+/** `readContract` is called for getVotingData, getCandidates, owner and isStrictEnrolment. */
+const stubReads = (strictEnrolment = false) =>
   mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
     if (functionName === "getVotingData") return Promise.resolve(VOTING_DATA);
     if (functionName === "getCandidates") return Promise.resolve(["Alice", "Bob"]);
     if (functionName === "owner") return Promise.resolve(OWNER);
+    if (functionName === "isStrictEnrolment") return Promise.resolve(strictEnrolment);
     return Promise.resolve(undefined);
   });
 
@@ -170,6 +171,62 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe("admin area — enrolment strictness", () => {
+  /**
+   * The one route to two registrations for one citizen that device supersession
+   * cannot close: an address bulk-allowlisted without ever being enrolled
+   * against a NIC. This toggle is how the Election Authority shuts it.
+   */
+  const openOperations = async (strict: boolean) => {
+    mocks.auth = { mode: "hardhat", isAdmin: true, isLoading: false };
+    stubReads(strict);
+    renderAdmin(<AdminOperationsPage />);
+    await screen.findByRole("heading", { name: /enrolment strictness/i });
+  };
+
+  it("reports the permissive default and offers to tighten it", async () => {
+    await openOperations(false);
+
+    expect(screen.getByText(/permissive — bulk allowlist accepted/i)).toBeDefined();
+    expect(screen.getByRole("button", { name: /require enrolment for every voter/i })).toBeDefined();
+  });
+
+  it("turns strict enrolment on", async () => {
+    await openOperations(false);
+    await userEvent.setup().click(screen.getByRole("button", { name: /require enrolment for every voter/i }));
+
+    await waitFor(() =>
+      expect(mocks.write).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: "setStrictEnrolment", args: [true] }),
+      ),
+    );
+  });
+
+  it("reports it as on, and offers to loosen it again", async () => {
+    await openOperations(true);
+
+    expect(screen.getByText(/strict — enrolled devices only/i)).toBeDefined();
+    expect(screen.getByRole("button", { name: /allow bulk-allowlisted addresses/i })).toBeDefined();
+  });
+
+  it("says so plainly when the registry predates the setting", async () => {
+    // An older NicRegistry has no such function, so the read reverts. The panel
+    // must not render a toggle that cannot work.
+    mocks.auth = { mode: "hardhat", isAdmin: true, isLoading: false };
+    mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
+      if (functionName === "getVotingData") return Promise.resolve(VOTING_DATA);
+      if (functionName === "getCandidates") return Promise.resolve(["Alice", "Bob"]);
+      if (functionName === "owner") return Promise.resolve(OWNER);
+      if (functionName === "isStrictEnrolment") return Promise.reject(new Error("no such function"));
+      return Promise.resolve(undefined);
+    });
+    renderAdmin(<AdminOperationsPage />);
+
+    expect(await screen.findByText(/predates this setting/i)).toBeDefined();
+    expect(screen.queryByRole("button", { name: /require enrolment/i })).toBeNull();
+  });
+});
 
 describe("admin area — access gate", () => {
   it("hardhat: asks for a wallet when none is connected", () => {

@@ -43,6 +43,8 @@ const AdminOperationsPage = () => {
     handleStartVotingAll,
     handleEndAll,
     handleResetElection,
+    strictEnrolment,
+    handleSetStrictEnrolment,
   } = useAdminElection();
 
   const noDivisions = divisions.length === 0;
@@ -178,6 +180,51 @@ const AdminOperationsPage = () => {
               Uses the durations typed in <strong>Phase controls</strong> above. One transaction per division, sent in
               turn.
             </p>
+          </>
+        )}
+      </Section>
+
+      <Section
+        title="Enrolment strictness"
+        hint="Whether a phone must have been enrolled against a NIC by a GN officer before it can register."
+      >
+        {strictEnrolment === undefined ? (
+          <p className="text-sm opacity-60">
+            No NicRegistry on this chain, or it predates this setting. Deploy the current contracts to use it.
+          </p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              <span className={`badge ${strictEnrolment ? "badge-success" : "badge-ghost"}`}>
+                {strictEnrolment ? "Strict — enrolled devices only" : "Permissive — bulk allowlist accepted"}
+              </span>
+            </div>
+
+            <p className="text-xs opacity-70">
+              A phone enrolled through the GN portal is bound to its NIC, so replacing a lost phone kills the old one
+              and nobody can register twice. An address added through <strong>Allowlist voters</strong> on the Ballot
+              tab has no NIC bound to it, so that rule cannot be applied to it — which is the last way one citizen could
+              obtain two registrations, and it takes a cooperating officer to arrange.
+            </p>
+            <p className="text-xs opacity-70">
+              {strictEnrolment
+                ? "Bulk-allowlisted addresses are currently refused at registration. Turn this off only for testing."
+                : "Turn this on for a real election. It only ever refuses more, so it is safe to enable at any point — voters already enrolled by an officer are unaffected."}
+            </p>
+
+            <div className="flex justify-end pt-2">
+              <button
+                className={`btn btn-sm ${strictEnrolment ? "btn-outline" : "btn-primary"}`}
+                disabled={!!busy}
+                onClick={() => handleSetStrictEnrolment(!strictEnrolment)}
+              >
+                {busy === "strictEnrolment"
+                  ? "Saving…"
+                  : strictEnrolment
+                    ? "Allow bulk-allowlisted addresses"
+                    : "Require enrolment for every voter"}
+              </button>
+            </div>
           </>
         )}
       </Section>

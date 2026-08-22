@@ -10,6 +10,7 @@ import { AdminTabs } from "~~/app/voting/admin/_components/AdminTabs";
 import {
   CLEAR_DIVISIONS_ABI,
   CLEAR_NIC_HASHES_ABI,
+  STRICT_ENROLMENT_ABI,
   VoterEntry,
   parseDurationToSeconds,
 } from "~~/app/voting/admin/_components/adminContracts";
@@ -92,6 +93,14 @@ type AdminElectionValue = {
   handleStartVotingAll: () => void;
   handleEndAll: () => void;
   handleResetElection: () => void;
+
+  /**
+   * Whether `NicRegistry` requires every registering device to have been
+   * enrolled against a NIC. `undefined` while the read is in flight, or when no
+   * NicRegistry is deployed on this chain.
+   */
+  strictEnrolment: boolean | undefined;
+  handleSetStrictEnrolment: (enabled: boolean) => void;
 };
 
 const AdminElectionContext = createContext<AdminElectionValue | null>(null);
@@ -139,6 +148,8 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     [targetNetwork],
   );
 
+  const [strictEnrolment, setStrictEnrolment] = useState<boolean | undefined>(undefined);
+
   const [votingData, setVotingData] = useState<readonly unknown[] | undefined>(undefined);
   const [candidates, setCandidates] = useState<readonly string[] | undefined>(undefined);
   const [ownerAddr, setOwnerAddr] = useState<string | undefined>(undefined);
@@ -184,6 +195,45 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
       console.error("refetchDivision", e);
     }
   }, [selectedContract, publicClient, VOTING_ABI]);
+
+  const refetchStrictEnrolment = useCallback(async () => {
+    if (!nicRegistryAddress) return setStrictEnrolment(undefined);
+    try {
+      const enabled = await publicClient.readContract({
+        address: nicRegistryAddress,
+        abi: STRICT_ENROLMENT_ABI,
+        functionName: "isStrictEnrolment",
+      });
+      setStrictEnrolment(enabled as boolean);
+    } catch (e) {
+      // A registry deployed before this flag existed has no such function. Not
+      // an error worth a toast — the panel simply reports it as unavailable.
+      console.error("isStrictEnrolment", e);
+      setStrictEnrolment(undefined);
+    }
+  }, [nicRegistryAddress, publicClient]);
+
+  useEffect(() => {
+    void refetchStrictEnrolment();
+  }, [refetchStrictEnrolment]);
+
+  const handleSetStrictEnrolment = (enabled: boolean) =>
+    run(
+      "strictEnrolment",
+      async () => {
+        if (!nicRegistryAddress) throw new Error("NicRegistry is not deployed on this chain.");
+        await write({
+          address: nicRegistryAddress,
+          abi: STRICT_ENROLMENT_ABI as unknown as Abi,
+          functionName: "setStrictEnrolment",
+          args: [enabled],
+        });
+        await refetchStrictEnrolment();
+      },
+      enabled
+        ? "Strict enrolment is on — only devices enrolled by a GN officer can register."
+        : "Strict enrolment is off — bulk-allowlisted addresses can register again.",
+    );
 
   /**
    * Blank the previous division's data — but only when the operator actually
@@ -720,6 +770,8 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
     handleStartVotingAll,
     handleEndAll,
     handleResetElection,
+    strictEnrolment,
+    handleSetStrictEnrolment,
   };
 
   return (

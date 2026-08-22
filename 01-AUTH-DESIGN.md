@@ -163,6 +163,15 @@ Three supporting rules, each closing a specific gap:
   that division instead of silently reviving replaced phones. Reset divisions *first*, then
   clear.
 
+**Telling the voter.** `GET /api/election?voter=<address>` returns a top-level `voterDevice`
+`{ status, nicRegistered }` read from the registry, so the app can say "this phone has been
+replaced" on the home screen instead of letting the voter authenticate, generate a
+commitment and submit a transaction only to be refused. It is supplementary: absent when the
+chain has no NicRegistry or the read fails, and the app treats absence as "nothing special
+to say" rather than as an error. The nicHash is deliberately **not** returned — a public
+endpoint that echoed it would let anyone build an address → NIC map. `register()` still
+enforces the rule; this only moves the *news* earlier.
+
 **Strict mode.** `Unbound` is the last route to two leaves for one person, and only a
 *colluding officer* can take it: enrol the citizen properly, then allowlist a second address
 with `addVoters` and never tell the registry, so there is nothing for supersession to

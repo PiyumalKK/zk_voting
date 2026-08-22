@@ -19,6 +19,12 @@ import type { DivisionState } from "./api";
  */
 
 const secureStore = vi.hoisted(() => ({ value: null as string | null }));
+const apiMock = vi.hoisted(() => ({ getElection: vi.fn() }));
+
+vi.mock("./api", async importOriginal => ({
+  ...(await importOriginal<typeof import("./api")>()),
+  api: apiMock,
+}));
 
 vi.mock("./keystore", () => ({
   getAddress: async () => "0x000000000000000000000000000000000000dEaD",
@@ -28,7 +34,7 @@ vi.mock("./keystore", () => ({
   },
 }));
 
-const { resolveVoterDivision } = await import("./division");
+const { resolveVoterDivision, loadVoterDivision } = await import("./division");
 
 const A = "0xAAAAaaaAAaAaAAaAAAaAaaaAAAAaaAAAAAaAAaAA";
 const B = "0xBbBBBbbBBBbbbBBBbbbbbBBBBbbbbbbBBBbBbbBB";
@@ -43,6 +49,7 @@ const division = (contract: string, voterAllowlisted?: boolean): DivisionState =
 
 beforeEach(() => {
   secureStore.value = null;
+  apiMock.getElection.mockReset();
 });
 
 describe("resolveVoterDivision", () => {
@@ -104,5 +111,63 @@ describe("resolveVoterDivision", () => {
 
   it("returns null for an empty registry", async () => {
     expect(await resolveVoterDivision([])).toBeNull();
+  });
+});
+
+
+/**
+ * A replaced phone is the one enrolment state that the allowlist cannot express.
+ *
+ * `reissueDevice` supersedes the old device in the NicRegistry but nothing
+ * obliges the GN officer to also revoke its allowlist entry — supersession is
+ * what actually stops it registering. So `voterAllowlisted` stays true, every
+ * "are you enrolled" check says yes, and without `voterDevice` the app would
+ * cheerfully walk the voter through a biometric prompt, a fresh commitment and
+ * a transaction, only to have the chain refuse it.
+ */
+describe("loadVoterDivision — device standing", () => {
+  const electionWith = (voterDevice?: unknown) => ({
+    divisions: [division(A, true)],
+    ...(voterDevice ? { voterDevice } : {}),
+  });
+
+  it("flags a superseded device even though it is still allowlisted", async () => {
+    apiMock.getElection.mockResolvedValue(electionWith({ status: "superseded", nicRegistered: false }));
+
+    const result = await loadVoterDivision();
+
+    expect(result.division?.votingContract).toBe(A);
+    expect(result.notEnrolled).toBe(false);
+    expect(result.deviceSuperseded).toBe(true);
+  });
+
+  it("reports when the replacement phone has already registered", async () => {
+    apiMock.getElection.mockResolvedValue(electionWith({ status: "superseded", nicRegistered: true }));
+
+    const result = await loadVoterDivision();
+
+    expect(result.deviceSuperseded).toBe(true);
+    expect(result.device?.nicRegistered).toBe(true);
+  });
+
+  it("leaves a live device alone", async () => {
+    apiMock.getElection.mockResolvedValue(electionWith({ status: "live", nicRegistered: false }));
+
+    const result = await loadVoterDivision();
+
+    expect(result.deviceSuperseded).toBe(false);
+    expect(result.device?.status).toBe("live");
+  });
+
+  it("treats a missing voterDevice as nothing special to say", async () => {
+    // No NicRegistry on this chain, or the read failed. Supplementary data —
+    // its absence must never present a working device as a replaced one.
+    apiMock.getElection.mockResolvedValue(electionWith());
+
+    const result = await loadVoterDivision();
+
+    expect(result.device).toBeNull();
+    expect(result.deviceSuperseded).toBe(false);
+    expect(result.division?.votingContract).toBe(A);
   });
 });

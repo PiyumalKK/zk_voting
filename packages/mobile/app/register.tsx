@@ -46,14 +46,18 @@ export default function Register() {
   const [currentStep, setCurrentStep] = useState(0);
   const [stepStatus, setStepStatus] = useState<"active" | "done" | "error">("active");
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [superseded, setSuperseded] = useState(false);
+  const [nicRegistered, setNicRegistered] = useState(false);
 
   useEffect(() => {
     (async () => {
       setAlreadyRegistered(await hasRegisteredLocally());
       try {
-        const { division: div, notEnrolled: none } = await loadVoterDivision();
+        const { division: div, notEnrolled: none, deviceSuperseded, device } = await loadVoterDivision();
         setDivision(div);
         setNotEnrolled(none);
+        setSuperseded(deviceSuperseded);
+        setNicRegistered(Boolean(device?.nicRegistered));
       } catch {
         /* handled in UI */
       }
@@ -147,6 +151,35 @@ export default function Register() {
       Alert.alert(`Registration failed (${failedStep})`, `${detail}${hint}`);
     }
   };
+
+  // Checked before `alreadyRegistered`, because a replaced phone may well have
+  // no local registration flag and would otherwise fall through to the form.
+  //
+  // The point of doing this here rather than at the revert is what it saves the
+  // voter: a biometric prompt, a generated commitment written to the keystore,
+  // and a transaction — all of it spent to arrive at a refusal the chain could
+  // have told us about before they touched anything.
+  if (superseded) {
+    return (
+      <View style={styles.center}>
+        <AnimatedResult
+          icon="📵"
+          title="This phone has been replaced"
+          subtitle={
+            nicRegistered
+              ? "Your GN officer issued you a replacement phone, and it has already registered. Use that phone to vote — this one cannot register."
+              : "Your GN officer issued you a replacement phone. Registration has moved to it, and this phone can no longer take part. If you did not ask for a replacement, contact your GN officer."
+          }
+          color={colors.warning}
+        />
+        <GradientButton
+          title="Back to home"
+          onPress={() => router.replace("/")}
+          style={{ width: "100%", marginTop: 16 }}
+        />
+      </View>
+    );
+  }
 
   if (alreadyRegistered) {
     return (

@@ -16,7 +16,9 @@ import { serverChainConfig } from "~~/utils/serverChain";
  *   ?voter=<address>             → also report, per division, whether that
  *                                  address is on its allowlist. This is how the
  *                                  voter app derives a voter's division instead
- *                                  of asking them to pick one.
+ *                                  of asking them to pick one. Additionally
+ *                                  reports that device's standing in the
+ *                                  NicRegistry — see `voterDevice` below.
  *
  * Consumed by the native voter app and any external integrator/observer.
  * The server holds NO secrets — this is purely public on-chain data.
@@ -40,6 +42,31 @@ const REGISTRY_ABI = [
           { name: "active", type: "bool" },
         ],
       },
+    ],
+  },
+] as const;
+
+const NIC_REGISTRY_ABI = [
+  {
+    name: "getDeviceStatus",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "device", type: "address" }],
+    outputs: [
+      { name: "status", type: "uint8" },
+      { name: "nicHash", type: "bytes32" },
+    ],
+  },
+  {
+    name: "getEnrolment",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "nicHash", type: "bytes32" }],
+    outputs: [
+      { name: "votingContract", type: "address" },
+      { name: "device", type: "address" },
+      { name: "committed", type: "bool" },
+      { name: "issueCount", type: "uint32" },
     ],
   },
 ] as const;
@@ -98,6 +125,36 @@ interface DivisionState {
   voterRegistered?: boolean;
 }
 
+/**
+ * A device's standing in the shared NicRegistry, for `?voter=`.
+ *
+ * Top-level rather than per-division, because the binding is global: a device is
+ * bound to one NIC, which is enrolled in one division.
+ *
+ * This exists so the voter app can tell three very different situations apart
+ * *before* the voter tries to register and is refused:
+ *
+ * - `unbound`     — never enrolled against a NIC (or added by bulk allowlist).
+ * - `live`        — the device currently issued for its NIC.
+ * - `superseded`  — replaced by a later re-issue. This phone can never register,
+ *                   and saying so up front is much kinder than letting them
+ *                   authenticate, generate a commitment and then fail.
+ *
+ * `nicRegistered` reports whether the *person* behind the device already has a
+ * leaf, which `voterRegistered` cannot express once a device has been replaced.
+ *
+ * The nicHash itself is deliberately **not** returned. It is an HMAC under a
+ * server-held pepper and nothing outside the server should be able to build an
+ * address → NIC map from a public endpoint.
+ */
+interface VoterDeviceState {
+  status: "unbound" | "live" | "superseded";
+  /** Whether this device's NIC has already registered, on any division. */
+  nicRegistered: boolean;
+}
+
+const DEVICE_STATUS_LABELS = ["unbound", "live", "superseded"] as const;
+
 export async function GET(req: NextRequest) {
   try {
     const registry = (deployedContracts as Record<number, any>)[CHAIN_ID]?.ElectionRegistry;
@@ -122,6 +179,12 @@ export async function GET(req: NextRequest) {
     // must already know the address they are asking about.
     const voterParam = req.nextUrl.searchParams.get("voter");
     const voter = /^0x[0-9a-fA-F]{40}$/.test(voterParam ?? "") ? (voterParam as `0x${string}`) : null;
+
+    // The device's standing in the shared registry. One extra pair of reads,
+    // only when an address was asked about, and a failure here must not take the
+    // whole election payload down with it — a registry deployed before device
+    // binding existed simply has no such function.
+    const voterDevice: VoterDeviceState | null = voter ? await readVoterDevice(client, voter) : null;
 
     const divisions: DivisionState[] = await Promise.all(
       rawDivisions
@@ -208,9 +271,52 @@ export async function GET(req: NextRequest) {
         turnout: nationalRegistered > 0 ? nationalVotes / nationalRegistered : 0,
       },
       divisions,
+      ...(voterDevice ? { voterDevice } : {}),
     });
   } catch (error) {
     console.error("[/api/election] error:", error);
     return NextResponse.json({ error: "Failed to read election state from chain" }, { status: 500 });
+  }
+}
+
+/**
+ * Read one device's standing in the shared NicRegistry.
+ *
+ * Returns null rather than throwing on any failure — no NicRegistry deployed on
+ * this chain, a registry predating device binding, an RPC hiccup. This is
+ * supplementary information; losing it must not turn a working election payload
+ * into a 500, and the voter app treats its absence as "nothing special to say".
+ */
+async function readVoterDevice(
+  client: ReturnType<typeof createPublicClient>,
+  voter: `0x${string}`,
+): Promise<VoterDeviceState | null> {
+  const nicRegistry = (deployedContracts as Record<number, any>)[CHAIN_ID]?.NicRegistry;
+  if (!nicRegistry?.address) return null;
+
+  try {
+    const [statusIndex, nicHash] = (await client.readContract({
+      address: nicRegistry.address as `0x${string}`,
+      abi: NIC_REGISTRY_ABI,
+      functionName: "getDeviceStatus",
+      args: [voter],
+    })) as [number, `0x${string}`];
+
+    const status = DEVICE_STATUS_LABELS[Number(statusIndex)] ?? "unbound";
+    if (status === "unbound") return { status, nicRegistered: false };
+
+    // Only now is a second read worth making: an unbound device has no NIC whose
+    // registration could be looked up.
+    const enrolment = (await client.readContract({
+      address: nicRegistry.address as `0x${string}`,
+      abi: NIC_REGISTRY_ABI,
+      functionName: "getEnrolment",
+      args: [nicHash],
+    })) as readonly [string, string, boolean, number];
+
+    return { status, nicRegistered: Boolean(enrolment[2]) };
+  } catch (error) {
+    console.error("[/api/election] voterDevice read failed:", error);
+    return null;
   }
 }

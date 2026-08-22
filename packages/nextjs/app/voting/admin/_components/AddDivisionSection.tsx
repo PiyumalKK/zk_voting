@@ -155,12 +155,18 @@ export const AddDivisionSection = () => {
    * Create a division and finish setting it up.
    *
    * Two transactions, not one. `createDivision` deploys the `Voting` contract
-   * and registers it, but GN enrolment additionally requires the division to be
-   * authorised in `NicRegistry` — and `ElectionRegistry` cannot do that itself:
-   * it holds no reference to `NicRegistry`, and `setVotingContract` is
-   * owner-only. Before this, the panel made only the first call and reported
-   * success, so a hand-made division looked complete and then failed at the GN
-   * portal with the bare revert string "Unregistered division".
+   * and registers it, but the division must additionally be authorised in
+   * `NicRegistry` — and `ElectionRegistry` cannot do that itself: it knows the
+   * registry's address (it passes it to every `Voting` it deploys) but
+   * `setVotingContract` is `onlyOwner` on a contract it does not own. Before
+   * this, the panel made only the first call and reported success, so a
+   * hand-made division looked complete and then failed at the GN portal with the
+   * bare revert string "Unregistered division".
+   *
+   * That authorisation now gates registration as well as enrolment — an
+   * unauthorised division cannot accept a leaf from an enrolled device, because
+   * `Voting.register()` calls `NicRegistry.commitDevice` — so skipping it leaves
+   * a division that is broken for voters, not merely for officers.
    *
    * If the second call fails the division still exists, so this says so plainly
    * rather than reporting a clean failure — and the list below offers the

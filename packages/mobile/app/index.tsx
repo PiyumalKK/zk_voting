@@ -17,6 +17,12 @@ export default function Home() {
   const [address, setAddress] = useState<string | null>(null);
   const [division, setDivision] = useState<DivisionState | null>(null);
   const [notEnrolled, setNotEnrolled] = useState(false);
+  // A GN officer issued this citizen a replacement phone. This one is finished:
+  // it can never register, and it usually still looks enrolled, because nothing
+  // obliges the officer to revoke the old address — supersession in the
+  // NicRegistry is what actually stops it.
+  const [superseded, setSuperseded] = useState(false);
+  const [nicRegistered, setNicRegistered] = useState(false);
   const [registeredLocal, setRegisteredLocal] = useState(false);
   const [voted, setVoted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,9 +39,11 @@ export default function Home() {
       setAddress(addr);
       setRegisteredLocal(await hasRegisteredLocally());
 
-      const { division: div, notEnrolled: none } = await loadVoterDivision();
+      const { division: div, notEnrolled: none, deviceSuperseded, device } = await loadVoterDivision();
       setDivision(div);
       setNotEnrolled(none);
+      setSuperseded(deviceSuperseded);
+      setNicRegistered(Boolean(device?.nicRegistered));
       if (div) setVoted(await hasVoted(div.votingContract));
     } catch (e: any) {
       setError(e?.message ?? "Could not reach the election service");
@@ -62,13 +70,13 @@ export default function Home() {
   const phase = division?.phase ?? 0;
   // Without a division there is nothing to register or vote on — the voter's
   // GN officer has not added them to an allowlist yet.
-  const canRegister = !!division && phase === 1 && !registeredLocal;
+  const canRegister = !!division && phase === 1 && !registeredLocal && !superseded;
   const canVote = !!division && phase === 2 && registeredLocal && !voted;
 
   // Journey steps
   const journeySteps = [
     { key: "identity", icon: "🔑", label: "Identity", done: true },
-    { key: "division", icon: "🏛️", label: "Division", done: !!division },
+    { key: "division", icon: "🏛️", label: "Division", done: !!division && !superseded },
     { key: "register", icon: "📝", label: "Register", done: registeredLocal },
     { key: "vote", icon: "🗳️", label: "Vote", done: voted },
   ];
@@ -161,6 +169,29 @@ export default function Home() {
         </GlassCard>
       </FadeIn>
 
+      {/*
+        Replaced device.
+        Deliberately placed above the division card: this device probably still
+        appears enrolled, and reading "🏛️ Kaduwela" first would contradict what
+        this says. It is also the only screen state that cannot be fixed by
+        waiting or refreshing, so it should not be buried.
+      */}
+      {superseded && (
+        <FadeIn delay={120}>
+          <GlassCard glow glowColor={colors.warning}>
+            <Text style={styles.cardTitle}>📵 This phone has been replaced</Text>
+            <Text style={[styles.cardText, { marginTop: 6 }]}>
+              {nicRegistered
+                ? "Your GN officer issued you a replacement phone, and that phone has already registered. Use it to vote — this one cannot."
+                : "Your GN officer issued you a replacement phone. Registration and voting have moved to it, and this phone can no longer take part."}
+            </Text>
+            <Text style={[styles.cardText, { marginTop: 6, color: colors.muted }]}>
+              If you did not ask for a replacement, contact your GN officer.
+            </Text>
+          </GlassCard>
+        </FadeIn>
+      )}
+
       {/* Division — derived from the GN officer's enrolment, never chosen here */}
       <FadeIn delay={150}>
         <GlassCard glow={notEnrolled} glowColor={colors.warning}>
@@ -221,18 +252,20 @@ export default function Home() {
       <FadeIn delay={250}>
         <GlassCard>
           <Text style={styles.cardTitle}>
-            {registeredLocal ? "✅ Registered" : "📝 Registration"}
+            {superseded ? "📵 Registration closed" : registeredLocal ? "✅ Registered" : "📝 Registration"}
           </Text>
           <Text style={styles.cardText}>
-            {registeredLocal
-              ? "Your secure registration is saved on your phone."
-              : notEnrolled
-                ? "Your GN officer needs to enrol you in a division before you can register."
-                : "You are not registered yet. Please register during the Registration phase."}
+            {superseded
+              ? "This phone was replaced, so it cannot register. Use the phone your GN officer issued."
+              : registeredLocal
+                ? "Your secure registration is saved on your phone."
+                : notEnrolled
+                  ? "Your GN officer needs to enrol you in a division before you can register."
+                  : "You are not registered yet. Please register during the Registration phase."}
           </Text>
           <GradientButton
-            title={registeredLocal ? "Already registered" : "Register to vote"}
-            icon={registeredLocal ? "✅" : "📝"}
+            title={superseded ? "Unavailable on this phone" : registeredLocal ? "Already registered" : "Register to vote"}
+            icon={superseded ? "📵" : registeredLocal ? "✅" : "📝"}
             disabled={!canRegister}
             onPress={() => router.push("/register")}
             style={{ marginTop: 12 }}

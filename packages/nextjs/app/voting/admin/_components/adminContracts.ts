@@ -65,6 +65,38 @@ export const CLEAR_NIC_HASHES_ABI = [
   { name: "clearNicHashes", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
 ] as const;
 
+/**
+ * Whether a device must have been enrolled against a NIC before it may register.
+ *
+ * Off by default, which keeps the bulk allowlist below working: an address added
+ * with `addVoters` and no matching `reserveNicHash` has no NIC bound to it, so
+ * `NicRegistry` has no person-level rule to apply and lets the allowlist decide.
+ * That is also the only route left by which one citizen could obtain two
+ * registrations — enrol them properly, then allowlist a second address the
+ * registry was never told about, which device supersession therefore cannot see.
+ * It takes a cooperating officer, who could already enrol fictitious voters, so
+ * the default stays permissive and the demo fixtures keep working.
+ *
+ * Turning it on gives enrolment exactly one route. It only ever refuses more, so
+ * it is safe to enable at any point.
+ */
+export const STRICT_ENROLMENT_ABI = [
+  {
+    name: "setStrictEnrolment",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "enabled", type: "bool" }],
+    outputs: [],
+  },
+  {
+    name: "isStrictEnrolment",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
 /** Emitted by `setVotingContract` — the only way to read authorisation back. */
 export const VOTING_CONTRACT_UPDATED_EVENT = parseAbiItem(
   "event VotingContractUpdated(address indexed votingContract, bool authorized)",
