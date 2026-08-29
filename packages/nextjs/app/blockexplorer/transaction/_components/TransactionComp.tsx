@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Address } from "@scaffold-ui/components";
-import { Hash, Transaction, TransactionReceipt, formatEther, formatUnits } from "viem";
+import { Hash, Transaction, TransactionReceipt } from "viem";
 import { usePublicClient } from "wagmi";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { isLocalChainId } from "~~/utils/customChain";
@@ -107,14 +107,19 @@ const TransactionComp = ({ txHash }: { txHash: Hash }) => {
                   )}
                 </td>
               </tr>
-              <tr>
-                <td>
-                  <strong>Value:</strong>
-                </td>
-                <td>
-                  {formatEther(transaction.value)} {targetNetwork.nativeCurrency.symbol}
-                </td>
-              </tr>
+              {/*
+                No "Value" or "Gas Price" row.
+
+                Neither carries information on this chain. No contract in the
+                system declares a `payable` function, so a transaction to any of
+                them can only ever carry zero value; and gas is free by design —
+                `eth_gasPrice` and `effectiveGasPrice` are always `0x0`, the
+                coinbase is the zero address, and nothing is ever deducted from
+                the sender (packages/blockchain/RPC.md, internal/chain/execute.go).
+                Printing a fee that is never charged invites the reader of an
+                election explorer to ask who paid for a vote, when the answer is
+                that nobody did.
+              */}
               <tr>
                 <td>
                   <strong>Function called:</strong>
@@ -131,12 +136,6 @@ const TransactionComp = ({ txHash }: { txHash: Hash }) => {
                     )}
                   </div>
                 </td>
-              </tr>
-              <tr>
-                <td>
-                  <strong>Gas Price:</strong>
-                </td>
-                <td>{formatUnits(transaction.gasPrice || 0n, 9)} Gwei</td>
               </tr>
               <tr>
                 <td>

@@ -1,6 +1,5 @@
 import { TransactionHash } from "./TransactionHash";
 import { Address } from "@scaffold-ui/components";
-import { formatEther } from "viem";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 import { isLocalChainId } from "~~/utils/customChain";
 import { TransactionWithFunction } from "~~/utils/scaffold-eth";
@@ -21,7 +20,11 @@ export const TransactionsTable = ({ blocks, transactionReceipts }: TransactionsT
               <th className="bg-primary">Time Mined</th>
               <th className="bg-primary">From</th>
               <th className="bg-primary">To</th>
-              <th className="bg-primary text-end">Value ({targetNetwork.nativeCurrency.symbol})</th>
+              {/*
+                No "Value" column: no contract in this system is `payable`, so
+                every transaction the explorer lists carries zero value. A column
+                of zeroes only invites the reader to wonder what was paid.
+              */}
             </tr>
           </thead>
           <tbody>
@@ -81,9 +84,6 @@ export const TransactionsTable = ({ blocks, transactionReceipts }: TransactionsT
                           <small className="absolute top-4 left-4">(Contract Creation)</small>
                         </div>
                       )}
-                    </td>
-                    <td className="text-right md:py-4">
-                      {formatEther(tx.value)} {targetNetwork.nativeCurrency.symbol}
                     </td>
                   </tr>
                 );
