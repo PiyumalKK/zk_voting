@@ -11,6 +11,7 @@ import "hardhat-deploy";
 import "hardhat-deploy-ethers";
 import { task } from "hardhat/config";
 import generateTsAbis from "./scripts/generateTsAbis";
+import generateContractSources from "./scripts/generateContractSources";
 
 // If not set, it uses ours Alchemy's default API key.
 // You can get your own at https://dashboard.alchemyapi.io
@@ -175,6 +176,9 @@ task("deploy").setAction(async (args, hre, runSuper) => {
   await runSuper(args);
   // Force run the generateTsAbis script
   await generateTsAbis(hre);
+  // Regenerate the block explorer's contract source data from the same
+  // deployment, so source/ABI/bytecode never drift from deployedContracts.ts.
+  await generateContractSources(hre);
 });
 
 export default config;

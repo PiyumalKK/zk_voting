@@ -214,3 +214,97 @@
   transform: translateY(-4px);
   box-shadow: 0 20px 40px -12px rgba(99, 102, 241, 0.15);
 }
+
+/* ---------------------------------------------------------------------------
+   Solidity syntax highlighting (block explorer contract source viewer).
+
+   Prism emits `.token.*` spans; colours are defined here rather than by
+   importing one of Prism's theme stylesheets so they track the daisyUI theme.
+   Scoped to `.solidity-code` so nothing else on the page is affected.
+--------------------------------------------------------------------------- */
+.solidity-code {
+  background-color: #fbfbfd;
+  color: #24292f;
+}
+
+.solidity-code .token.comment {
+  color: #6a737d;
+  font-style: italic;
+}
+
+.solidity-code .token.keyword,
+.solidity-code .token.builtin {
+  color: #cf222e;
+}
+
+.solidity-code .token.string,
+.solidity-code .token.char {
+  color: #0a3069;
+}
+
+.solidity-code .token.number,
+.solidity-code .token.boolean,
+.solidity-code .token.constant {
+  color: #0550ae;
+}
+
+.solidity-code .token.function {
+  color: #8250df;
+}
+
+.solidity-code .token.class-name {
+  color: #953800;
+}
+
+.solidity-code .token.operator,
+.solidity-code .token.punctuation {
+  color: #57606a;
+}
+
+.solidity-code .token.version,
+.solidity-code .token.important {
+  color: #116329;
+}
+
+[data-theme="dark"] .solidity-code {
+  background-color: #0d1117;
+  color: #e6edf3;
+}
+
+[data-theme="dark"] .solidity-code .token.comment {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .solidity-code .token.keyword,
+[data-theme="dark"] .solidity-code .token.builtin {
+  color: #ff7b72;
+}
+
+[data-theme="dark"] .solidity-code .token.string,
+[data-theme="dark"] .solidity-code .token.char {
+  color: #a5d6ff;
+}
+
+[data-theme="dark"] .solidity-code .token.number,
+[data-theme="dark"] .solidity-code .token.boolean,
+[data-theme="dark"] .solidity-code .token.constant {
+  color: #79c0ff;
+}
+
+[data-theme="dark"] .solidity-code .token.function {
+  color: #d2a8ff;
+}
+
+[data-theme="dark"] .solidity-code .token.class-name {
+  color: #ffa657;
+}
+
+[data-theme="dark"] .solidity-code .token.operator,
+[data-theme="dark"] .solidity-code .token.punctuation {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .solidity-code .token.version,
+[data-theme="dark"] .solidity-code .token.important {
+  color: #7ee787;
+}

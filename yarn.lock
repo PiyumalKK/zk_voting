@@ -6927,6 +6927,7 @@ __metadata:
     "@testing-library/user-event": "npm:14.6.1"
     "@trivago/prettier-plugin-sort-imports": "npm:~4.3.0"
     "@types/node": "npm:~18.19.50"
+    "@types/prismjs": "npm:^1.26.6"
     "@types/react": "npm:~19.0.7"
     "@zk-kit/lean-imt": "npm:^2.2.4"
     abitype: "npm:1.0.6"
@@ -6950,6 +6951,7 @@ __metadata:
     poseidon-lite: "npm:^0.3.0"
     postcss: "npm:~8.4.45"
     prettier: "npm:~3.5.3"
+    prismjs: "npm:^1.30.0"
     qr: "npm:~0"
     qrcode.react: "npm:~4.0.1"
     react: "npm:~19.2.3"
@@ -8564,6 +8566,13 @@ __metadata:
   dependencies:
     prettier: "npm:*"
   checksum: 10/a2a512d304e5bcf78f38089dc88ad19215e6ab871d435a17aef3ce538a63b07c0e359c18db23989dc1ed9fff96d99eee1f680416080184df5c7e0e3bf767e165
+  languageName: node
+  linkType: hard
+
+"@types/prismjs@npm:^1.26.6":
+  version: 1.26.6
+  resolution: "@types/prismjs@npm:1.26.6"
+  checksum: 10/37c056eb7a9130ef6548d7655af78ea575c8eaa9167ea2dd64d8719384b1af4a385ffe928aa4939da607ce276703a6787bdac8ecc79a373e2a73ddf6d75bc161
   languageName: node
   linkType: hard
 
@@ -21761,6 +21770,13 @@ __metadata:
   dependencies:
     parse-ms: "npm:^2.1.0"
   checksum: 10/a39aac23cc7dae7a94c70518ab8b6c6db0894a7b84c81ee7abc8778c5ec8bae2d1e71ba991ff641732b38433724bfbdbb37bd3a00418637f797c072e06fe8b4c
+  languageName: node
+  linkType: hard
+
+"prismjs@npm:^1.30.0":
+  version: 1.30.0
+  resolution: "prismjs@npm:1.30.0"
+  checksum: 10/6b48a2439a82e5c6882f48ebc1564c3890e16463ba17ac10c3ad4f62d98dea5b5c915b172b63b83023a70ad4f5d7be3e8a60304420db34a161fae69dd4e3e2da
   languageName: node
   linkType: hard
 
