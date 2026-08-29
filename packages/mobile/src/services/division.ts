@@ -32,6 +32,17 @@ export interface VoterDivision {
    * registration transaction reverts.
    */
   deviceSuperseded: boolean;
+  /**
+   * True when the chain says this device may register: a GN officer enrolled it
+   * and it has not been replaced.
+   *
+   * Defaults to true when the chain said nothing at all (`device` is null — no
+   * NicRegistry, or the read failed). Supplementary data must never present a
+   * working phone as a broken one; `register()` enforces the rule regardless, so
+   * the cost of being wrong this way is a clear on-chain error instead of a
+   * screen that refuses a voter who was in fact enrolled.
+   */
+  deviceEnrolled: boolean;
 }
 
 const sameAddress = (a?: string | null, b?: string | null) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
@@ -75,5 +86,6 @@ export async function loadVoterDivision(): Promise<VoterDivision> {
     notEnrolled: !division && election.divisions.some(d => d.voterAllowlisted !== undefined),
     device,
     deviceSuperseded: device?.status === "superseded",
+    deviceEnrolled: device === null || device.status === "live",
   };
 }

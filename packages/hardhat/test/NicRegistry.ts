@@ -152,12 +152,17 @@ describe("NicRegistry", function () {
         .withArgs(NIC_HASH, votingAddr);
     });
 
-    it("admits a device the registry never bound but the allowlist did", async function () {
-      // The bulk `addVoters` path: no NIC, so no person-level rule to apply and
-      // the allowlist decides alone. Unchanged behaviour, pinned so that the
-      // Unbound branch of commitDevice cannot be removed by accident.
+    it("refuses a device the allowlist added but no officer enrolled", async function () {
+      // Being on the roll is necessary, not sufficient. `addVoters` alone means
+      // nobody checked an identity document against this address, so it cannot
+      // register — which is what stops a colluding officer allowlisting a second
+      // address for someone they already enrolled properly.
       await voting.connect(gn).addVoters([nonGN.address], [true]);
-      await expect(voting.connect(nonGN).register(COMMITMENT_2)).to.emit(voting, "NewLeaf");
+
+      expect((await voting.getVoterData(nonGN.address)).voter).to.equal(true);
+      await expect(voting.connect(nonGN).register(COMMITMENT_2))
+        .to.be.revertedWithCustomError(registry, "NicRegistry__DeviceNotEnrolled")
+        .withArgs(nonGN.address);
     });
 
     it("scopes the one-leaf rule to the NIC, not to the division", async function () {
@@ -373,6 +378,36 @@ describe("NicRegistry", function () {
         .withArgs(0, 1);
     });
 
+    it("blocks a re-registration after resetElection alone, and allows it once cleared", async function () {
+      // `resetElection` clears the division; it does not clear the registry. A
+      // citizen who registered in the previous election is still committed, so
+      // the admin panel's reset must do both — and does. Pinned here because
+      // getting the order or the pairing wrong now shows up as voters who
+      // silently cannot register.
+      await enrol(NIC_HASH, device1);
+      await voting.startRegistration(REG_DURATION);
+      await voting.connect(device1).register(COMMITMENT_1);
+
+      await voting.resetElection();
+      await voting.setCandidates(["Yes", "No"]);
+      await voting.connect(gn).addVoters([device1.address], [true]);
+      await voting.startRegistration(REG_DURATION);
+
+      await expect(voting.connect(device1).register(COMMITMENT_1)).to.be.revertedWithCustomError(
+        registry,
+        "NicRegistry__AlreadyRegistered",
+      );
+
+      // The missing half of the reset.
+      await registry.clearNicHashes();
+      await voting.resetElection();
+      await voting.setCandidates(["Yes", "No"]);
+      await enrol(NIC_HASH, device1);
+      await voting.startRegistration(REG_DURATION);
+
+      await expect(voting.connect(device1).register(COMMITMENT_1)).to.emit(voting, "NewLeaf");
+    });
+
     it("still rejects a repeat reservation within the new epoch", async function () {
       await registry.connect(gn).reserveNicHash(NIC_HASH, votingAddr, device1.address);
       await registry.clearNicHashes();
@@ -392,51 +427,70 @@ describe("NicRegistry", function () {
     });
   });
 
-  describe("strict enrolment", function () {
-    it("is off by default, so the bulk allowlist path still works", async function () {
-      await voting.connect(gn).addVoters([nonGN.address], [true]);
-      await voting.startRegistration(REG_DURATION);
-
-      expect(await registry.isStrictEnrolment()).to.equal(false);
-      await expect(voting.connect(nonGN).register(COMMITMENT_1)).to.emit(voting, "NewLeaf");
-    });
-
-    it("closes the last bypass a colluding officer had, once enabled", async function () {
-      // Enrol the citizen properly, then allowlist a second address for them
-      // without telling the registry — the one route left to two leaves for one
-      // person, and the one supersession cannot see because it was never told
-      // the address existed.
-      await enrol(NIC_HASH, device1);
+  describe("enrolment is mandatory", function () {
+    /**
+     * The rule with no exceptions: a leaf requires a GN officer's enrolment.
+     *
+     * There is no mode, flag or deployment option that relaxes this. The tests
+     * here exist because the previous design *did* have one — permissive by
+     * default — and the whole difference between "we prevent double
+     * registration" and "we prevent it unless an officer works around us" lives
+     * in these few cases.
+     */
+    it("refuses an allowlisted but unenrolled device", async function () {
       await voting.connect(gn).addVoters([device2.address], [true]);
-      await registry.setStrictEnrolment(true);
       await voting.startRegistration(REG_DURATION);
 
-      await expect(voting.connect(device1).register(COMMITMENT_1)).to.emit(voting, "NewLeaf");
-      await expect(voting.connect(device2).register(COMMITMENT_2))
+      await expect(voting.connect(device2).register(COMMITMENT_1))
         .to.be.revertedWithCustomError(registry, "NicRegistry__DeviceNotEnrolled")
         .withArgs(device2.address);
     });
 
-    it("still admits properly enrolled devices", async function () {
+    it("closes the bypass a colluding officer would otherwise have", async function () {
+      // Enrol the citizen properly, then allowlist a second address for them
+      // without telling the registry. Supersession cannot invalidate a binding
+      // that was never created, so this is the only route by which one person
+      // could ever have obtained two leaves.
       await enrol(NIC_HASH, device1);
-      await registry.setStrictEnrolment(true);
+      await voting.connect(gn).addVoters([device2.address], [true]);
       await voting.startRegistration(REG_DURATION);
 
       await expect(voting.connect(device1).register(COMMITMENT_1)).to.emit(voting, "NewLeaf");
-    });
-
-    it("can be switched on mid-election without stranding enrolled voters", async function () {
-      await enrol(NIC_HASH, device1);
-      await voting.startRegistration(REG_DURATION);
-      await expect(registry.setStrictEnrolment(true)).to.emit(registry, "StrictEnrolmentSet").withArgs(true);
-
-      await expect(voting.connect(device1).register(COMMITMENT_1)).to.emit(voting, "NewLeaf");
-    });
-
-    it("is owner-only", async function () {
-      await expect(registry.connect(gn).setStrictEnrolment(true)).to.be.revertedWithCustomError(
+      await expect(voting.connect(device2).register(COMMITMENT_2)).to.be.revertedWithCustomError(
         registry,
-        "OwnableUnauthorizedAccount",
+        "NicRegistry__DeviceNotEnrolled",
+      );
+      expect((await voting.getVotingData()).size).to.equal(1);
+    });
+
+    it("exposes no way to relax the rule", async function () {
+      // A toggle that exists can be left in the wrong position on election day.
+      // Asserted against the ABI so that reintroducing one fails here first.
+      const names = registry.interface.fragments
+        .filter(f => f.type === "function")
+        .map(f => (f as { name: string }).name);
+      expect(names).to.not.include("setStrictEnrolment");
+      expect(names).to.not.include("isStrictEnrolment");
+      expect(names.some(n => /strict/i.test(n))).to.equal(false);
+    });
+
+    it("admits a properly enrolled device", async function () {
+      // The other half: mandatory must not mean impossible.
+      await enrol(NIC_HASH, device1);
+      await voting.startRegistration(REG_DURATION);
+
+      await expect(voting.connect(device1).register(COMMITMENT_1)).to.emit(voting, "NewLeaf");
+    });
+
+    it("still requires the allowlist as well as the enrolment", async function () {
+      // Two gates, not one. Enrolment alone does not put an address on a
+      // division's roll — `reserveNicHash` and `addVoters` are both needed.
+      await registry.connect(gn).reserveNicHash(NIC_HASH, votingAddr, device1.address);
+      await voting.startRegistration(REG_DURATION);
+
+      await expect(voting.connect(device1).register(COMMITMENT_1)).to.be.revertedWithCustomError(
+        voting,
+        "Voting__NotAllowedToVote",
       );
     });
   });

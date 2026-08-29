@@ -51,8 +51,10 @@ import {
   defineChain,
   encodeFunctionData,
   http,
+  keccak256,
   parseAbiItem,
   parseEventLogs,
+  stringToHex,
 } from "viem";
 import { mnemonicToAccount, privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
@@ -411,11 +413,39 @@ async function runAdminLifecycle(ctx, voting) {
   check("admin opens registration", Number(await read("currentPhase")) === 1);
 }
 
-async function runGnEnrolment(ctx, voting) {
+/**
+ * Enrolment, both halves of it.
+ *
+ * `reserveNicHash` binds each device to a NIC in the shared registry;
+ * `addVoters` puts it on this division's roll. **Both** are required — a device
+ * the registry has never seen is refused by `register()` with
+ * `NicRegistry__DeviceNotEnrolled`, no matter what the allowlist says. That is
+ * the point: enrolment has exactly one route, through a GN officer who checked
+ * an identity document.
+ *
+ * This harness used to call `addVoters` alone, which is precisely the shortcut
+ * the contracts now refuse, so it would fail at the first `register()`.
+ *
+ * The NIC hashes here stand in for the pepper-keyed HMACs the server computes
+ * (`services/nic/nicHash.ts`); the registry only ever sees opaque bytes, so a
+ * deterministic per-voter hash exercises the same paths.
+ */
+async function runGnEnrolment(ctx, voting, nicRegistry) {
   const write = writer(ctx, voting.address, voting.abi);
   const read = reader(ctx, voting.address, voting.abi);
+  const writeNic = writer(ctx, nicRegistry.address, nicRegistry.abi);
 
   const addresses = ELECTORATE.map((a) => a.address);
+
+  for (const address of addresses) {
+    const { receipt } = await write_nic_hash(writeNic, voting.address, address);
+    if (receipt.status !== "0x1") {
+      fail("GN officer reserves a NIC for each voter", `reserveNicHash reverted for ${address}`);
+      return;
+    }
+  }
+  pass("GN officer reserves a NIC for each voter", `${addresses.length} devices bound in the NicRegistry`);
+
   await write(GN_OFFICER, "addVoters", [addresses, addresses.map(() => true)]);
 
   const rolls = await Promise.all(addresses.map((a) => read("getVoterData", [a])));
@@ -424,6 +454,16 @@ async function runGnEnrolment(ctx, voting) {
     rolls.every(([allowlisted, registered]) => allowlisted === true && registered === false),
     `${addresses.length} voters, first ${addresses[0]}`,
   );
+}
+
+/** One voter's NIC reservation, signed by the GN officer. */
+function write_nic_hash(writeNic, votingAddress, device) {
+  return writeNic(GN_OFFICER, "reserveNicHash", [nicHashFor(device), votingAddress, device]);
+}
+
+/** A stand-in for the server's pepper-keyed NIC hash: stable, and unique per voter. */
+function nicHashFor(address) {
+  return keccak256(stringToHex(`sl-vote-e2e-nic:${address.toLowerCase()}`));
 }
 
 /**
@@ -944,7 +984,9 @@ async function main() {
     await runAdminLifecycle(ctx, voting);
 
     section("GN officer enrols the electorate");
-    await runGnEnrolment(ctx, voting);
+    const nicRegistryRecord = loadDeployment(opts.network, "NicRegistry");
+    const nicRegistry = { address: nicRegistryRecord.address, abi: nicRegistryRecord.abi };
+    await runGnEnrolment(ctx, voting, nicRegistry);
 
     section("the voters register");
     const { voter } = await runRegistration(ctx, voting);

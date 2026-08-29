@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { Voting } from "../typechain-types";
+import { NicRegistry, Voting } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("Voting", function () {
@@ -12,6 +12,7 @@ describe("Voting", function () {
   let leanIMTAddr: string;
   let verifierAddr: string;
   let nicRegistryAddr: string;
+  let nicRegistry: NicRegistry;
 
   const QUESTION = "Do you support this proposal?";
   const CANDIDATES = ["Yes", "No"];
@@ -22,6 +23,19 @@ describe("Voting", function () {
 
   // Mirror of Voting.Phase enum
   const Phase = { Setup: 0, Registration: 1, Voting: 2, Ended: 3 } as const;
+
+  /**
+   * Bind an address to a NIC in the registry, the way a GN officer would.
+   *
+   * `register()` will not accept a device the registry has never seen, so a bare
+   * `addVoters` no longer produces a voter who can register. The NIC hash is
+   * derived from the address purely so that each test voter is a distinct
+   * citizen; nothing here asserts on it.
+   */
+  async function enrol(device: string, voting_?: Voting): Promise<void> {
+    const target = voting_ ?? voting;
+    await nicRegistry.reserveNicHash(ethers.keccak256(device), await target.getAddress(), device);
+  }
 
   async function deployFresh(): Promise<Voting> {
     const VotingFactory = await ethers.getContractFactory("Voting", {
@@ -35,6 +49,10 @@ describe("Voting", function () {
       CANDIDATES,
     )) as Voting;
     await v.waitForDeployment();
+    // Authorised here rather than at each call site: an unauthorised division
+    // cannot call `commitDevice`, so `register()` would fail on every fresh
+    // contract for a reason none of these tests is about.
+    await nicRegistry.setVotingContract(await v.getAddress(), true);
     return v;
   }
 
@@ -57,18 +75,22 @@ describe("Voting", function () {
     await verifier.waitForDeployment();
     verifierAddr = await verifier.getAddress();
 
-    // Every division now defers to a NicRegistry. The voters in this file are
-    // allowlisted with plain `addVoters` and never bound to a NIC, so they take
-    // the registry's Unbound path and the behaviour asserted below is the
-    // address-level behaviour, unchanged. `NicRegistry.ts` covers the bound path.
+    // Every division defers to a NicRegistry, and `register()` refuses any
+    // device that was not enrolled against a NIC there — the allowlist alone is
+    // no longer enough. So this fixture performs the *whole* enrolment a GN
+    // officer performs, not just the allowlist half, and the tests below are
+    // still about the address-level behaviour they were always about.
     const NicRegistryFactory = await ethers.getContractFactory("NicRegistry");
-    const nicRegistry = await NicRegistryFactory.deploy(owner.address);
+    nicRegistry = (await NicRegistryFactory.deploy(owner.address)) as NicRegistry;
     await nicRegistry.waitForDeployment();
     nicRegistryAddr = await nicRegistry.getAddress();
 
     voting = await deployFresh();
+    await nicRegistry.setVotingContract(await voting.getAddress(), true);
 
-    // Setup phase: allowlist voters, then open registration.
+    // Setup phase: enrol + allowlist voters, then open registration.
+    await enrol(voter1.address);
+    await enrol(voter2.address);
     await voting.addVoters([voter1.address, voter2.address], [true, true]);
     await voting.startRegistration(REG_DURATION);
   });

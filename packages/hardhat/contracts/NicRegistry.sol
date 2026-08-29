@@ -12,7 +12,7 @@ interface IVotingGN {
  * @notice The identity ledger for enrolment: one NIC, one division, one live
  *         device, at most one Merkle-tree registration.
  *
- * The registry answers two questions the Voting contracts cannot answer for
+ * The registry answers three questions the Voting contracts cannot answer for
  * themselves, because a `Voting` allowlist is keyed by *address* and a person is
  * not an address:
  *
@@ -20,6 +20,21 @@ interface IVotingGN {
  *      duplicate enrolment — the original purpose of this contract)
  *   2. Is the device asking to insert a leaf still the device this citizen was
  *      issued, and has this citizen already inserted one? (device re-issue)
+ *   3. Did a GN officer enrol this device at all?
+ *
+ * ## Enrolment has exactly one route
+ *
+ * Every device that registers must have been bound to a NIC here by a GN
+ * officer who checked a physical identity document. `commitDevice` refuses an
+ * `Unbound` device outright, so `Voting.addVoters` on its own — the bulk
+ * allowlist — puts an address on a roll but does not make it able to register.
+ *
+ * That is deliberate and not merely defensive. Without it, a *colluding*
+ * officer could enrol a citizen properly once and then allowlist a second
+ * address the registry was never told about: supersession cannot invalidate a
+ * binding that does not exist, so that citizen would get two leaves. Refusing
+ * unbound devices is what makes "one citizen, one leaf" hold against the
+ * officers themselves, not just against the voters.
  *
  * ## Why re-issue lives here and not in the GN's workflow
  *
@@ -71,7 +86,8 @@ contract NicRegistry is Ownable {
     error NicRegistry__ReissueLimitReached(bytes32 nicHash, uint32 limit);
     error NicRegistry__ZeroDevice();
     error NicRegistry__EpochChanged(uint256 expected, uint256 actual);
-    /// @dev Strict mode: this device was allowlisted without ever being enrolled against a NIC.
+    /// @dev Allowlisted, but never enrolled against a NIC by a GN officer.
+    ///      `Voting.addVoters` alone does not make a device able to register.
     error NicRegistry__DeviceNotEnrolled(address device);
 
     //////////////////
@@ -79,8 +95,8 @@ contract NicRegistry is Ownable {
     //////////////////
 
     enum DeviceStatus {
-        /// Never bound to a NIC in this epoch. Registration is left to the
-        /// Voting allowlist alone — the bulk `addVoters` path.
+        /// Never bound to a NIC in this epoch. May not register: being on a
+        /// division's allowlist is necessary but not sufficient.
         Unbound,
         /// The device currently issued to a citizen. May register once.
         Live,
@@ -113,27 +129,6 @@ contract NicRegistry is Ownable {
     ///         voter who keeps "losing" phones is worth a second pair of eyes.
     uint32 public constant MAX_REISSUES = 3;
 
-    /// @notice When true, `register()` accepts only devices bound to a NIC here.
-    ///
-    ///         Off by default, which preserves the bulk-allowlist path: an
-    ///         address added with `Voting.addVoters` and no `reserveNicHash` has
-    ///         no NIC, so there is no person-level rule to apply and the
-    ///         allowlist decides alone. That path is how the admin panel's bulk
-    ///         section, the e2e scripts and the demo fixtures work, and
-    ///         `01-AUTH-DESIGN.md` §4 already describes it as the weaker one.
-    ///
-    ///         It is also the last way a *colluding officer* could hand one
-    ///         citizen two registrations — enrol them properly once, then
-    ///         allowlist a second address without telling the registry about it.
-    ///         Supersession cannot see an address it was never told about. That
-    ///         officer can already enrol wholly fictitious voters, so this adds
-    ///         nothing to their power, which is why the default stays permissive
-    ///         and the existing flows keep working.
-    ///
-    ///         For a real election, turn it on: enrolment then has exactly one
-    ///         route, and "one citizen, one leaf" holds against the officers too.
-    bool private s_strictEnrolment;
-
     // Monotonic enrolment epoch. Every mapping below is keyed by it so that
     // clearNicHashes() can wipe the whole ledger by bumping the counter, the
     // same trick Voting.sol uses for its per-election state — a mapping cannot
@@ -163,7 +158,6 @@ contract NicRegistry is Ownable {
         uint32 issueCount
     );
     event NicHashesCleared(uint256 epoch);
-    event StrictEnrolmentSet(bool enabled);
 
     //////////////////
     /// Modifiers ////
@@ -184,15 +178,6 @@ contract NicRegistry is Ownable {
     function setVotingContract(address _votingContract, bool _authorized) external onlyOwner {
         s_votingContracts[_votingContract] = _authorized;
         emit VotingContractUpdated(_votingContract, _authorized);
-    }
-
-    /// @notice Require every registering device to have been enrolled here.
-    ///         See `s_strictEnrolment`. Safe to switch on mid-election: it only
-    ///         ever refuses more, and every voter enrolled through the GN portal
-    ///         is bound already.
-    function setStrictEnrolment(bool enabled) external onlyOwner {
-        s_strictEnrolment = enabled;
-        emit StrictEnrolmentSet(enabled);
     }
 
     /// @notice Release every reservation, binding and registration, so the same
@@ -326,16 +311,17 @@ contract NicRegistry is Ownable {
 
         DeviceBinding memory binding = s_devices[epoch][device];
 
-        // No NIC was ever bound to this device: the bulk `addVoters` path.
-        // Refused outright in strict mode; otherwise there is no person-level
-        // rule to apply and the Voting allowlist decides alone, exactly as it
-        // did before device binding existed. Note that neither branch is
-        // reachable by a re-issued device — supersession sets a status, it does
-        // not clear the binding.
-        if (binding.status == DeviceStatus.Unbound) {
-            if (s_strictEnrolment) revert NicRegistry__DeviceNotEnrolled(device);
-            return bytes32(0);
-        }
+        // No NIC was ever bound to this device, so no GN officer ever checked a
+        // physical identity document against it. Refused: enrolment has exactly
+        // one route, and an address that arrived by `Voting.addVoters` alone did
+        // not take it.
+        //
+        // This is what closes the last way one citizen could obtain two
+        // registrations — enrol properly once, then have a second address
+        // allowlisted that the registry was never told about, which device
+        // supersession therefore cannot see. Not reachable by a re-issued
+        // device: supersession sets a status, it does not clear the binding.
+        if (binding.status == DeviceStatus.Unbound) revert NicRegistry__DeviceNotEnrolled(device);
 
         require(s_votingContracts[msg.sender], "Unregistered division");
 
@@ -357,11 +343,6 @@ contract NicRegistry is Ownable {
     /////////////////////////
     /// View Functions //////
     /////////////////////////
-
-    /// @notice Whether only enrolled devices may register. See `s_strictEnrolment`.
-    function isStrictEnrolment() external view returns (bool) {
-        return s_strictEnrolment;
-    }
 
     /// @notice The current enrolment epoch. Bumped by every clearNicHashes().
     function getCurrentEpoch() external view returns (uint256) {

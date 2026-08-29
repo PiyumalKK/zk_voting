@@ -48,15 +48,23 @@ export default function Register() {
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [superseded, setSuperseded] = useState(false);
   const [nicRegistered, setNicRegistered] = useState(false);
+  const [notEnrolledDevice, setNotEnrolledDevice] = useState(false);
 
   useEffect(() => {
     (async () => {
       setAlreadyRegistered(await hasRegisteredLocally());
       try {
-        const { division: div, notEnrolled: none, deviceSuperseded, device } = await loadVoterDivision();
+        const {
+          division: div,
+          notEnrolled: none,
+          deviceSuperseded,
+          deviceEnrolled,
+          device,
+        } = await loadVoterDivision();
         setDivision(div);
         setNotEnrolled(none);
         setSuperseded(deviceSuperseded);
+        setNotEnrolledDevice(!deviceEnrolled && !deviceSuperseded);
         setNicRegistered(Boolean(device?.nicRegistered));
       } catch {
         /* handled in UI */
@@ -136,6 +144,7 @@ export default function Register() {
         const isExplained =
           lowerDetail.includes("no longer your registered device") ||
           lowerDetail.includes("already registered for this election") ||
+          lowerDetail.includes("has not been enrolled") ||
           lowerDetail.includes("enrolment records were reset") ||
           lowerDetail.includes("registration is not open");
 
@@ -240,6 +249,18 @@ export default function Register() {
         </FadeIn>
       )}
 
+      {notEnrolledDevice && (
+        <FadeIn delay={50}>
+          <GlassCard glow glowColor={colors.warning}>
+            <Text style={styles.cardTitle}>🪪 Enrolment not finished</Text>
+            <Text style={[styles.cardText, { marginTop: 8 }]}>
+              Your address is on the voter roll, but no GN officer has verified your NIC against this phone.
+              Registration needs both, so it would be refused. Show your QR code to your officer to finish enrolling.
+            </Text>
+          </GlassCard>
+        </FadeIn>
+      )}
+
       {notEnrolled && (
         <FadeIn delay={50}>
           <GlassCard glow glowColor={colors.warning}>
@@ -280,7 +301,7 @@ export default function Register() {
           <GradientButton
             title="Register now"
             icon="📝"
-            disabled={!division || division.phase !== 1}
+            disabled={!division || division.phase !== 1 || notEnrolledDevice}
             onPress={handleRegister}
           />
         </FadeIn>

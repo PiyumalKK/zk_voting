@@ -156,7 +156,22 @@ describe("loadVoterDivision — device standing", () => {
     const result = await loadVoterDivision();
 
     expect(result.deviceSuperseded).toBe(false);
+    expect(result.deviceEnrolled).toBe(true);
     expect(result.device?.status).toBe("live");
+  });
+
+  it("flags an allowlisted device that no officer ever enrolled", async () => {
+    // Enrolment is mandatory: `register()` refuses an unbound device however it
+    // reached the roll. The voter is allowlisted, so every other check says they
+    // are fine — this is the only signal that they are not.
+    apiMock.getElection.mockResolvedValue(electionWith({ status: "unbound", nicRegistered: false }));
+
+    const result = await loadVoterDivision();
+
+    expect(result.division?.votingContract).toBe(A);
+    expect(result.notEnrolled).toBe(false);
+    expect(result.deviceSuperseded).toBe(false);
+    expect(result.deviceEnrolled).toBe(false);
   });
 
   it("treats a missing voterDevice as nothing special to say", async () => {
@@ -168,6 +183,9 @@ describe("loadVoterDivision — device standing", () => {
 
     expect(result.device).toBeNull();
     expect(result.deviceSuperseded).toBe(false);
+    // Permissive when the chain said nothing: `register()` enforces the rule
+    // anyway, so a failed read must not lock out a properly enrolled voter.
+    expect(result.deviceEnrolled).toBe(true);
     expect(result.division?.votingContract).toBe(A);
   });
 });

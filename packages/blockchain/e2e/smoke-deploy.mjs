@@ -67,6 +67,13 @@ const REGISTRATION_SECONDS = 3600n;
 // script deliberately does not depend on the circuits package.
 const COMMITMENT = 1234567890123456789012345678901234567890n;
 
+/**
+ * A stand-in for the server's pepper-keyed NIC hash (`services/nic/nicHash.ts`).
+ * The registry only ever sees opaque bytes, so any fixed value exercises the
+ * same path — and `register()` refuses a device without one.
+ */
+const SMOKE_NIC_HASH = `0x${"5a".repeat(32)}`;
+
 const steps = [];
 
 function ok(name, detail) {
@@ -213,16 +220,23 @@ async function main() {
     ["Yes", "No"],
   ]);
 
-  // The deployer below is allowlisted with plain addVoters and never bound to a
-  // NIC, so `commitDevice` takes its Unbound path and this authorisation is not
-  // strictly needed today. Sent anyway, because a smoke test that skips a step
-  // every real deployment performs stops resembling one.
+  // Both of these are load-bearing, not ceremony. `register()` calls
+  // `NicRegistry.commitDevice`, which needs the division authorised, and which
+  // refuses any device no GN officer ever bound to a NIC. An allowlist entry
+  // alone is not enough for anyone, including the deployer.
   await send(
     "setVotingContract(voting, true)",
     nicRegistry.address,
     nicRegistryArtifact.abi,
     "setVotingContract",
     [voting.address, true],
+  );
+  await send(
+    "reserveNicHash(deployer)",
+    nicRegistry.address,
+    nicRegistryArtifact.abi,
+    "reserveNicHash",
+    [SMOKE_NIC_HASH, voting.address, account.address],
   );
 
   const abi = votingArtifact.abi;

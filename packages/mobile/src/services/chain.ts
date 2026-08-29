@@ -92,6 +92,7 @@ const REGISTER_ERROR_ABI = [
     ],
   },
   { type: "error", name: "NicRegistry__AlreadyRegistered", inputs: [{ name: "nicHash", type: "bytes32" }] },
+  { type: "error", name: "NicRegistry__DeviceNotEnrolled", inputs: [{ name: "device", type: "address" }] },
   {
     type: "error",
     name: "NicRegistry__EpochChanged",
@@ -109,6 +110,9 @@ const REGISTER_ERROR_MESSAGES: Record<string, string> = {
   NicRegistry__AlreadyRegistered:
     "You have already registered for this election on another device. A registration cannot be moved between " +
     "phones, so there is nothing more to do — but you will not be able to vote from this one.",
+  NicRegistry__DeviceNotEnrolled:
+    "This phone has not been enrolled. Being added to the voter roll is not enough on its own — a Grama " +
+    "Niladhari officer must also verify your NIC against this phone. Show them your QR code to finish enrolling.",
   NicRegistry__EpochChanged:
     "Enrolment records were reset while registration was open. Registration is paused for your division until " +
     "the Election Authority restarts it.",

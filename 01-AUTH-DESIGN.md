@@ -66,7 +66,7 @@ Request: `{ target: "0x…", fn: "startVoting", args: [3600] }`. Steps, in order
 2. **Whitelist check** — the only functions the relay will ever sign:
    - role `admin` → `Voting`: `setQuestion, setCandidates, startRegistration, startVoting,
      endElection, resetElection, setGNOfficer` · `ElectionRegistry`: `createDivision,
-     addDivision, updateDivision` · `NicRegistry`: `setVotingContract`, `setStrictEnrolment`
+     addDivision, updateDivision` · `NicRegistry`: `setVotingContract`
    - role `gn` → `Voting`: `addVoters` · `NicRegistry`: `reserveNicHash`, `reissueDevice`
      — **and** `target` must equal the GN's own division contract (looked up from the
      registry, not trusted from the client). 403 otherwise.
@@ -95,7 +95,8 @@ renders that section as a pointer to the GN portal rather than a form (M12 pass 
 1. **Enrollment (in person):** GN verifies physical NIC + face → scans the voter app's QR
    (device address) → `reserveNicHash(hash(NIC), division, device)` blocks duplicate NICs
    without storing the NIC, **and binds that device to the NIC** → `addVoters([addr],[true])`
-   allowlists the device address for that division.
+   allowlists the device address for that division. Both calls are mandatory: an address that
+   is allowlisted but not bound here is refused at `register()`.
 1a. **Re-issue (lost or broken phone, before registering):** GN scans the new device →
    `reissueDevice(hash(NIC), division, newDevice)` marks the old device `Superseded` in the
    same write that binds the new one. Refused outright once the NIC has a leaf in the tree.
@@ -138,7 +139,7 @@ Enforcement has to happen at enrolment or nowhere.
 
 | State | Meaning | May register? |
 |---|---|---|
-| `Unbound` | no NIC bound to this address | yes, if allowlisted (bulk `addVoters` path) — unless strict mode is on |
+| `Unbound` | no NIC bound to this address | **never** — enrolment by a GN officer is mandatory |
 | `Live` | the device currently issued for a NIC | yes, once |
 | `Superseded` | replaced by a `reissueDevice` | **never**, in this epoch |
 
@@ -172,14 +173,24 @@ to say" rather than as an error. The nicHash is deliberately **not** returned �
 endpoint that echoed it would let anyone build an address → NIC map. `register()` still
 enforces the rule; this only moves the *news* earlier.
 
-**Strict mode.** `Unbound` is the last route to two leaves for one person, and only a
-*colluding officer* can take it: enrol the citizen properly, then allowlist a second address
-with `addVoters` and never tell the registry, so there is nothing for supersession to
-supersede. That officer can already enrol wholly fictitious voters, so it adds nothing to
-their power — which is why `setStrictEnrolment` defaults to **off**, keeping the bulk
-allowlist, the e2e scripts and the demo fixtures working. Turn it on for a real election:
-enrolment then has exactly one route and the guarantee holds against the officers too. It
-only ever refuses more, so it is safe to enable mid-election.
+**Enrolment is mandatory, and there is no switch.** `commitDevice` refuses an `Unbound`
+device outright, so `Voting.addVoters` on its own puts an address on a roll but does not make
+it able to register. Both calls are required, and only the GN portal makes both.
+
+This closes the last route by which one citizen could obtain two registrations, and the only
+one that needed a *colluding officer* rather than a lying voter: enrol someone properly once,
+then allowlist a second address the registry was never told about. Supersession cannot
+invalidate a binding that does not exist, so that citizen would have got two leaves.
+
+It was briefly a configurable mode, defaulting to permissive so the bulk-allowlist path kept
+working. That is gone. A security control that ships off is a control that will be off on
+election day, and "one citizen, one leaf" is the property the whole system exists to provide
+— it should not depend on an operator having flipped a switch. `packages/hardhat/test/NicRegistry.ts`
+asserts against the ABI that no such toggle has been reintroduced.
+
+The cost is real and worth stating: the admin panel's bulk allowlist can no longer enrol
+anyone (it now says so, and remains useful for revoking), and both e2e harnesses reserve a
+NIC per voter before registering, as a GN officer would.
 
 **Privacy.** `nicHash` is an HMAC under a server-held pepper (`services/nic/nicHash.ts`), so
 it is not computable from a NIC by anyone reading the chain. Storage does link a nicHash to
@@ -195,7 +206,7 @@ the exceptional event an auditor needs to see.
 | Threat | Mitigation | Residual (document in report) |
 |---|---|---|
 | Relay/server compromise | Whitelist + rate limit + audit log; keys encrypted at rest; admin key only in server env | A compromised server can run admin lifecycle actions — but still cannot forge votes (needs ZK proof) or double-vote (nullifier). Production: HSM/vault + TOTP 2FA |
-| GN credential theft | bcrypt, lockout after 5 failures (15 min), per-division scoping | Rogue GN can enroll fake voters — same trust as the physical process; mitigated by enrollment audit logs. They **cannot** give one real citizen two registrations: `NicRegistry` supersession is a contract rule, not a procedure they carry out |
+| GN credential theft | bcrypt, lockout after 5 failures (15 min), per-division scoping | Rogue GN can enroll fake voters — same trust as the physical process; mitigated by enrollment audit logs. They **cannot** give one real citizen two registrations: supersession is a contract rule rather than a procedure they carry out, and an address they allowlist without enrolling cannot register at all |
 | OTP provider is a mock | `OtpProvider` interface already exists; swap to Firebase/Twilio (TODO.md item) | Dev OTP code is predictable — custom-mode demo only |
 | Session hijack | httpOnly + SameSite=Strict cookie, HTTPS in prod, short TTL | — |
 | Sequencer censorship (drops txs) | Replicas + audit replay make *tampering* evident; censorship is detectable by clients (tx never mined) | Single sequencer is a liveness single-point — accepted for 3-node permissioned topology |

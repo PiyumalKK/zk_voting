@@ -33,9 +33,17 @@ export interface DivisionState {
  * Absent when the chain has no NicRegistry, or the read failed — treat that as
  * "nothing special to say" rather than as an error.
  *
- * `superseded` is the one that changes what the app should show: the GN officer
- * issued a replacement phone for this citizen, so this one can never register.
- * Knowing that up front is what lets the app say so on the home screen instead
+ * Two of the three states stop registration, for different reasons the voter
+ * needs told differently:
+ *
+ * - `superseded` — the GN officer issued this citizen a replacement phone, so
+ *   this one can never register. Nothing the voter can do here; use the new one.
+ * - `unbound`    — no officer ever bound this phone to a NIC. Being on a
+ *   division's allowlist is necessary but not sufficient, so this phone is
+ *   refused too. Fixable: go back to the officer and finish enrolment.
+ * - `live`       — enrolled and current.
+ *
+ * Knowing this up front is what lets the app say so on the home screen instead
  * of letting the voter authenticate, generate a commitment, and only then fail.
  */
 export interface VoterDeviceState {

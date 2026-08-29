@@ -276,14 +276,18 @@ contract Voting is Ownable {
     /// Voter API ////
     //////////////////
 
-    /// @notice Registers a commitment leaf for an allowlisted address.
+    /// @notice Registers a commitment leaf for an enrolled, allowlisted address.
     ///
     ///         Two gates, and both are load-bearing. The allowlist below answers
     ///         "may this *address* insert a leaf". `commitDevice` answers "may
-    ///         this *citizen*" — it refuses a device that a later re-issue
-    ///         superseded, and refuses a NIC that already has a leaf, in this or
-    ///         any other division. The allowlist alone cannot express either,
-    ///         because it is keyed by address and a person is not an address.
+    ///         this *citizen*" — it refuses a device no GN officer ever enrolled,
+    ///         refuses one that a later re-issue superseded, and refuses a NIC
+    ///         that already has a leaf, in this or any other division. The
+    ///         allowlist cannot express any of those, because it is keyed by
+    ///         address and a person is not an address.
+    ///
+    ///         So `addVoters` alone is not enough to make an address able to
+    ///         register: enrolment through a GN officer is mandatory.
     function register(uint256 _commitment) external inPhase(Phase.Registration) {
         uint256 electionId = s_electionId;
         if (!s_voters[electionId][msg.sender] || s_hasRegistered[electionId][msg.sender]) {
