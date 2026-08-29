@@ -26,6 +26,32 @@ export interface DivisionState {
   voterRegistered?: boolean;
 }
 
+/**
+ * This device's standing in the shared NicRegistry, when the election was
+ * fetched for a specific voter address.
+ *
+ * Absent when the chain has no NicRegistry, or the read failed — treat that as
+ * "nothing special to say" rather than as an error.
+ *
+ * Two of the three states stop registration, for different reasons the voter
+ * needs told differently:
+ *
+ * - `superseded` — the GN officer issued this citizen a replacement phone, so
+ *   this one can never register. Nothing the voter can do here; use the new one.
+ * - `unbound`    — no officer ever bound this phone to a NIC. Being on a
+ *   division's allowlist is necessary but not sufficient, so this phone is
+ *   refused too. Fixable: go back to the officer and finish enrolment.
+ * - `live`       — enrolled and current.
+ *
+ * Knowing this up front is what lets the app say so on the home screen instead
+ * of letting the voter authenticate, generate a commitment, and only then fail.
+ */
+export interface VoterDeviceState {
+  status: "unbound" | "live" | "superseded";
+  /** Whether the citizen behind this device has already registered, on any division. */
+  nicRegistered: boolean;
+}
+
 export interface ElectionResponse {
   chainId: number;
   registry: string;
@@ -38,6 +64,8 @@ export interface ElectionResponse {
     turnout: number;
   };
   divisions: DivisionState[];
+  /** Present only when the election was fetched for a specific voter address. */
+  voterDevice?: VoterDeviceState;
 }
 
 export interface MerklePathResponse {

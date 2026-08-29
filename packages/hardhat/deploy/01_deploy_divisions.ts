@@ -45,6 +45,10 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
   await hre.deployments.get("PoseidonT3"); // ensure deployed
   const leanIMT = await hre.deployments.get("LeanIMT");
   const verifier = await hre.deployments.get("HonkVerifier");
+  // Deployed by 00, which must run first: a Voting contract's NicRegistry is a
+  // constructor argument and immutable, and ElectionRegistry passes the same
+  // address on to every division it creates at runtime.
+  const nicRegistry = await hre.deployments.get("NicRegistry");
 
   const question = "2027 Presidential Election — Who should be the next President of Sri Lanka?";
   const candidates = ["Anura Kumara Dissanayake (NPP)", "Sajith Premadasa (SJB)", "Ranil Wickremesinghe (UNP)"];
@@ -53,7 +57,7 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
   // factory that deploys Voting contracts (which use the LeanIMT library).
   const registry = await deploy("ElectionRegistry", {
     from: deployer,
-    args: [deployer, verifier.address],
+    args: [deployer, verifier.address, nicRegistry.address],
     libraries: {
       LeanIMT: leanIMT.address,
     },
@@ -61,12 +65,6 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
     autoMine: true,
   });
 
-  const nicRegistry = await deploy("NicRegistry", {
-    from: deployer,
-    args: [deployer],
-    log: true,
-    autoMine: true,
-  });
   const nicRegistryContract = await hre.ethers.getContractAt("NicRegistry", nicRegistry.address);
 
   // Deploy 3 division Voting contracts
@@ -80,7 +78,7 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
     const votingDeploy = await deploy(div.tag, {
       contract: "Voting",
       from: deployer,
-      args: [deployer, verifier.address, question, candidates],
+      args: [deployer, verifier.address, nicRegistry.address, question, candidates],
       libraries: {
         LeanIMT: leanIMT.address,
       },
@@ -107,8 +105,15 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
       console.log(`  ✅ ${div.name}: GN officer set to ${div.gn}`);
     }
 
-    await nicRegistryContract.setVotingContract(votingDeploy.address, true);
-    console.log(`  ✅ ${div.name}: allowlisted in NicRegistry`);
+    // Authorisation now gates `register()` as well as enrolment — an
+    // unauthorised division cannot accept a leaf from an enrolled device — so a
+    // re-run must repair it rather than assume it.
+    if (await nicRegistryContract.isVotingContractAuthorized(votingDeploy.address)) {
+      console.log(`  ↺ ${div.name}: already allowlisted in NicRegistry`);
+    } else {
+      await nicRegistryContract.setVotingContract(votingDeploy.address, true);
+      console.log(`  ✅ ${div.name}: allowlisted in NicRegistry`);
+    }
 
     // Register division in the registry — skip if already registered (idempotent).
     const registryContract = await hre.ethers.getContractAt("ElectionRegistry", registry.address);

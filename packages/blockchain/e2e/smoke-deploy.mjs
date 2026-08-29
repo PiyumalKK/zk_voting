@@ -11,7 +11,7 @@
 // It deploys, in order:
 //   PoseidonT3  ->  LeanIMT (linked to PoseidonT3)
 //               ->  HonkVerifier
-//               ->  Voting (linked to LeanIMT, constructor args)
+//               ->  NicRegistry  ->  Voting (linked to LeanIMT, constructor args)
 // then drives a real registration: setCandidates -> addVoters ->
 // startRegistration -> register(commitment) -> getVotingData, and asserts the
 // resulting Merkle root is non-zero.
@@ -66,6 +66,13 @@ const REGISTRATION_SECONDS = 3600n;
 // tree only needs a non-zero leaf for the root to become non-zero, and this
 // script deliberately does not depend on the circuits package.
 const COMMITMENT = 1234567890123456789012345678901234567890n;
+
+/**
+ * A stand-in for the server's pepper-keyed NIC hash (`services/nic/nicHash.ts`).
+ * The registry only ever sees opaque bytes, so any fixed value exercises the
+ * same path — and `register()` refuses a device without one.
+ */
+const SMOKE_NIC_HASH = `0x${"5a".repeat(32)}`;
 
 const steps = [];
 
@@ -138,6 +145,7 @@ async function main() {
   const leanIMTArtifact = loadArtifact("@zk-kit/lean-imt.sol/LeanIMT.sol/LeanIMT.json");
   const verifierArtifact = loadArtifact("contracts/Verifier.sol/HonkVerifier.json");
   const votingArtifact = loadArtifact("contracts/Voting.sol/Voting.json");
+  const nicRegistryArtifact = loadArtifact("contracts/NicRegistry.sol/NicRegistry.json");
 
   const deploy = async (label, abi, bytecode, args) => {
     const hash = await walletClient.deployContract({ abi, bytecode, args, gas: DEPLOY_GAS });
@@ -194,7 +202,12 @@ async function main() {
     ok("HonkVerifier fits under EIP-170", `${verifier.size} / ${EIP170_LIMIT} bytes`);
   }
 
-  // --- 4: Voting, linked to LeanIMT ---
+  // --- 4: NicRegistry, which every Voting takes as an immutable constructor arg ---
+  const nicRegistry = await deploy("NicRegistry", nicRegistryArtifact.abi, nicRegistryArtifact.bytecode, [
+    account.address,
+  ]);
+
+  // --- 5: Voting, linked to LeanIMT ---
   const votingBytecode = link(votingArtifact.bytecode, votingArtifact.linkReferences, {
     LeanIMT: leanIMT.address,
   });
@@ -202,13 +215,33 @@ async function main() {
   const voting = await deploy("Voting", votingArtifact.abi, votingBytecode, [
     account.address,
     verifier.address,
+    nicRegistry.address,
     "Do you support this proposal?",
     ["Yes", "No"],
   ]);
 
+  // Both of these are load-bearing, not ceremony. `register()` calls
+  // `NicRegistry.commitDevice`, which needs the division authorised, and which
+  // refuses any device no GN officer ever bound to a NIC. An allowlist entry
+  // alone is not enough for anyone, including the deployer.
+  await send(
+    "setVotingContract(voting, true)",
+    nicRegistry.address,
+    nicRegistryArtifact.abi,
+    "setVotingContract",
+    [voting.address, true],
+  );
+  await send(
+    "reserveNicHash(deployer)",
+    nicRegistry.address,
+    nicRegistryArtifact.abi,
+    "reserveNicHash",
+    [SMOKE_NIC_HASH, voting.address, account.address],
+  );
+
   const abi = votingArtifact.abi;
 
-  // --- 5: drive a real registration ---
+  // --- 6: drive a real registration ---
   await send("setCandidates(['Yes','No','Abstain'])", voting.address, abi, "setCandidates", [
     ["Yes", "No", "Abstain"],
   ]);
@@ -222,7 +255,7 @@ async function main() {
     ok("register emits exactly one NewLeaf log");
   }
 
-  // --- 6: read the tree back ---
+  // --- 7: read the tree back ---
   const data = await publicClient.readContract({ address: voting.address, abi, functionName: "getVotingData" });
   const [question, contractOwner, phase, , , size, depth, root, candidateCount] = data;
 

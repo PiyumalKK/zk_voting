@@ -46,14 +46,26 @@ export default function Register() {
   const [currentStep, setCurrentStep] = useState(0);
   const [stepStatus, setStepStatus] = useState<"active" | "done" | "error">("active");
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [superseded, setSuperseded] = useState(false);
+  const [nicRegistered, setNicRegistered] = useState(false);
+  const [notEnrolledDevice, setNotEnrolledDevice] = useState(false);
 
   useEffect(() => {
     (async () => {
       setAlreadyRegistered(await hasRegisteredLocally());
       try {
-        const { division: div, notEnrolled: none } = await loadVoterDivision();
+        const {
+          division: div,
+          notEnrolled: none,
+          deviceSuperseded,
+          deviceEnrolled,
+          device,
+        } = await loadVoterDivision();
         setDivision(div);
         setNotEnrolled(none);
+        setSuperseded(deviceSuperseded);
+        setNotEnrolledDevice(!deviceEnrolled && !deviceSuperseded);
+        setNicRegistered(Boolean(device?.nicRegistered));
       } catch {
         /* handled in UI */
       }
@@ -124,10 +136,22 @@ export default function Register() {
           lowerDetail.includes("fetch failed") ||
           lowerDetail.includes("econnreset");
 
+        // `submitRegister` now decodes the contract's own reason for a revert
+        // and throws it as the message — "this phone was replaced" reads very
+        // differently from "ask your officer to add you", and the generic advice
+        // would be actively wrong for it. Only fall back when the failure is
+        // something we could not identify.
+        const isExplained =
+          lowerDetail.includes("no longer your registered device") ||
+          lowerDetail.includes("already registered for this election") ||
+          lowerDetail.includes("has not been enrolled") ||
+          lowerDetail.includes("enrolment records were reset") ||
+          lowerDetail.includes("registration is not open");
+
         if (isTimeout) {
           hint =
             "\n\nCould not connect to the network. Please check your internet connection and try again.";
-        } else {
+        } else if (!isExplained) {
           hint =
             "\n\nWe couldn't verify your eligibility for this division. " +
             "Ask your GN officer to confirm they added this phone's voting address to the roll.";
@@ -136,6 +160,35 @@ export default function Register() {
       Alert.alert(`Registration failed (${failedStep})`, `${detail}${hint}`);
     }
   };
+
+  // Checked before `alreadyRegistered`, because a replaced phone may well have
+  // no local registration flag and would otherwise fall through to the form.
+  //
+  // The point of doing this here rather than at the revert is what it saves the
+  // voter: a biometric prompt, a generated commitment written to the keystore,
+  // and a transaction — all of it spent to arrive at a refusal the chain could
+  // have told us about before they touched anything.
+  if (superseded) {
+    return (
+      <View style={styles.center}>
+        <AnimatedResult
+          icon="📵"
+          title="This phone has been replaced"
+          subtitle={
+            nicRegistered
+              ? "Your GN officer issued you a replacement phone, and it has already registered. Use that phone to vote — this one cannot register."
+              : "Your GN officer issued you a replacement phone. Registration has moved to it, and this phone can no longer take part. If you did not ask for a replacement, contact your GN officer."
+          }
+          color={colors.warning}
+        />
+        <GradientButton
+          title="Back to home"
+          onPress={() => router.replace("/")}
+          style={{ width: "100%", marginTop: 16 }}
+        />
+      </View>
+    );
+  }
 
   if (alreadyRegistered) {
     return (
@@ -196,6 +249,18 @@ export default function Register() {
         </FadeIn>
       )}
 
+      {notEnrolledDevice && (
+        <FadeIn delay={50}>
+          <GlassCard glow glowColor={colors.warning}>
+            <Text style={styles.cardTitle}>🪪 Enrolment not finished</Text>
+            <Text style={[styles.cardText, { marginTop: 8 }]}>
+              Your address is on the voter roll, but no GN officer has verified your NIC against this phone.
+              Registration needs both, so it would be refused. Show your QR code to your officer to finish enrolling.
+            </Text>
+          </GlassCard>
+        </FadeIn>
+      )}
+
       {notEnrolled && (
         <FadeIn delay={50}>
           <GlassCard glow glowColor={colors.warning}>
@@ -236,7 +301,7 @@ export default function Register() {
           <GradientButton
             title="Register now"
             icon="📝"
-            disabled={!division || division.phase !== 1}
+            disabled={!division || division.phase !== 1 || notEnrolledDevice}
             onPress={handleRegister}
           />
         </FadeIn>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { NextPage } from "next";
 import decodeQR from "qr/decode.js";
 import type { Abi } from "viem";
+import { createPublicClient, http } from "viem";
 import { useAccount } from "wagmi";
 import { getWalletClient } from "wagmi/actions";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
@@ -34,10 +35,18 @@ const VOTING_ABI = [
 ] as const;
 
 const NIC_REGISTRY_ABI = [
+  { name: "NicRegistry__AlreadyUsed", type: "error", inputs: [{ name: "nicHash", type: "bytes32" }] },
+  { name: "NicRegistry__AlreadyRegistered", type: "error", inputs: [{ name: "nicHash", type: "bytes32" }] },
+  { name: "NicRegistry__NotEnrolled", type: "error", inputs: [{ name: "nicHash", type: "bytes32" }] },
+  { name: "NicRegistry__DeviceInUse", type: "error", inputs: [{ name: "device", type: "address" }] },
+  { name: "NicRegistry__DeviceUnchanged", type: "error", inputs: [{ name: "device", type: "address" }] },
   {
-    name: "NicRegistry__AlreadyUsed",
+    name: "NicRegistry__ReissueLimitReached",
     type: "error",
-    inputs: [{ name: "nicHash", type: "bytes32" }],
+    inputs: [
+      { name: "nicHash", type: "bytes32" },
+      { name: "limit", type: "uint32" },
+    ],
   },
   {
     name: "reserveNicHash",
@@ -46,10 +55,50 @@ const NIC_REGISTRY_ABI = [
     inputs: [
       { name: "nicHash", type: "bytes32" },
       { name: "votingContract", type: "address" },
+      { name: "device", type: "address" },
     ],
     outputs: [{ type: "bool" }],
   },
+  {
+    name: "reissueDevice",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "nicHash", type: "bytes32" },
+      { name: "votingContract", type: "address" },
+      { name: "newDevice", type: "address" },
+    ],
+    outputs: [{ type: "address" }],
+  },
+  {
+    name: "getEnrolment",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "nicHash", type: "bytes32" }],
+    outputs: [
+      { name: "votingContract", type: "address" },
+      { name: "device", type: "address" },
+      { name: "committed", type: "bool" },
+      { name: "issueCount", type: "uint32" },
+    ],
+  },
 ] as const;
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * What the chain already knows about this NIC, translated into the one decision
+ * the officer has to make.
+ *
+ * Read *before* writing anything, rather than inferred from a revert, because
+ * "replace this voter's device" is a deliberate act with a consequence — the
+ * previous phone stops working forever — and an officer should be shown that
+ * and asked, not have it happen because a first attempt failed.
+ */
+type EnrolmentPlan =
+  | { kind: "new" }
+  | { kind: "reissue"; previousDevice: `0x${string}`; issueCount: number }
+  | { kind: "blocked"; reason: string };
 
 /** Optional override; normally the address comes from the deployment record. */
 const NIC_REGISTRY_ADDRESS_OVERRIDE = process.env.NEXT_PUBLIC_NIC_REGISTRY_ADDRESS;
@@ -105,6 +154,10 @@ const GNRegisterVoter: NextPage = () => {
   const [voterNIC, setVoterNIC] = useState("");
   const [voterAddress, setVoterAddress] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set when the chain says this NIC is already enrolled on a different, not yet
+  // registered device. Holds the officer at step 3 for an explicit confirmation.
+  const [pendingReissue, setPendingReissue] = useState<{ previousDevice: string; issueCount: number } | null>(null);
+  const [outcome, setOutcome] = useState<"enrolled" | "reissued">("enrolled");
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -118,6 +171,14 @@ const GNRegisterVoter: NextPage = () => {
   // Bound to the configured target network, not a hardcoded Hardhat endpoint —
   // this page must follow the chain the app is pointed at (MASTER §8).
   const { targetNetwork } = useTargetNetwork();
+
+  // Reads go direct to the target network's RPC, for the reason spelled out in
+  // `useDivisions`: wagmi's client follows the *wallet's* chain, and in custom
+  // mode there is no wallet at all.
+  const publicClient = useMemo(
+    () => createPublicClient({ chain: targetNetwork, transport: http(targetNetwork.rpcUrls.default.http[0]) }),
+    [targetNetwork],
+  );
 
   // NicRegistry lives at a different address on each chain, so it must be read
   // from the deployment record for the *current* target network. A single
@@ -251,6 +312,7 @@ const GNRegisterVoter: NextPage = () => {
       const parsed = JSON.parse(data);
       if (parsed.address?.startsWith("0x")) {
         setVoterAddress(parsed.address);
+        setPendingReissue(null);
         notification.success(`Address scanned: ${parsed.address.slice(0, 10)}...`);
         setStep(3);
         return;
@@ -258,6 +320,7 @@ const GNRegisterVoter: NextPage = () => {
     } catch {}
     if (data.startsWith("0x") && data.length === 42) {
       setVoterAddress(data);
+      setPendingReissue(null);
       notification.success(`Address scanned: ${data.slice(0, 10)}...`);
       setStep(3);
     } else {
@@ -270,6 +333,9 @@ const GNRegisterVoter: NextPage = () => {
       notification.error("Invalid address. Must be 0x... (42 chars)");
       return;
     }
+    // A confirmation belongs to the address it was raised for; changing the
+    // address must not carry it over to a different phone.
+    setPendingReissue(null);
     setStep(3);
   };
 
@@ -300,45 +366,161 @@ const GNRegisterVoter: NextPage = () => {
     };
   };
 
-  // Submit: reserve the NIC hash, then allowlist the voter on this GN's own
-  // division contract. Both writes go through the seam, so they are signed by
-  // MetaMask on Hardhat and by the relay on the custom chain.
-  const handleSubmit = async () => {
+  /** Ask the server for this NIC's pepper-keyed hash. */
+  const fetchNicHash = async (): Promise<`0x${string}`> => {
+    const canonicalNic = voterNIC.trim().toUpperCase();
+    const hashResponse = await fetch("/api/nic/hash", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: await nicHashHeaders(canonicalNic),
+      body: JSON.stringify({ nic: voterNIC }),
+    });
+    const hashResult = await hashResponse.json();
+    if (!hashResponse.ok) throw new Error(hashResult.error || "Unable to hash NIC");
+    return hashResult.nicHash as `0x${string}`;
+  };
+
+  /**
+   * Decide what this enrolment *is* before writing anything.
+   *
+   * Four outcomes, and three of them are refusals the officer needs stated in
+   * their own terms: "already registered in the app" and "enrolled in another
+   * division" are completely different instructions to give the person standing
+   * in front of them, and neither of them is "this NIC belongs to another voter".
+   *
+   * Read first rather than inferred from a revert, because replacing a device is
+   * a deliberate act with a consequence the officer should be shown and asked
+   * about - the previous phone stops working, permanently.
+   */
+  const planEnrolment = async (nicHash: `0x${string}`): Promise<EnrolmentPlan> => {
+    if (!myDivision || !nicRegistryAddress) return { kind: "blocked", reason: "Division not resolved." };
+
+    const [enrolledDivision, device, committed, issueCount] = (await publicClient.readContract({
+      address: nicRegistryAddress,
+      abi: NIC_REGISTRY_ABI,
+      functionName: "getEnrolment",
+      args: [nicHash],
+    })) as [`0x${string}`, `0x${string}`, boolean, number];
+
+    if (enrolledDivision === ZERO_ADDRESS) return { kind: "new" };
+
+    if (committed) {
+      // The line the whole design turns on. Their commitment is already an
+      // anonymous leaf; nothing on chain can find it in order to replace it.
+      return {
+        kind: "blocked",
+        reason:
+          "This voter has already completed registration on their device. A registration cannot be moved to a " +
+          "new phone - their commitment is already anonymous in the tree, so there is no way to identify and replace it.",
+      };
+    }
+
+    if (enrolledDivision.toLowerCase() !== myDivision.votingContract.toLowerCase()) {
+      return {
+        kind: "blocked",
+        reason:
+          "This NIC is enrolled in a different division. The officer who enrolled them must issue the replacement.",
+      };
+    }
+
+    if (device.toLowerCase() === voterAddress.toLowerCase()) {
+      return {
+        kind: "blocked",
+        reason: "This phone is already the one issued for this NIC. Nothing to do - the voter can register in the app.",
+      };
+    }
+
+    return { kind: "reissue", previousDevice: device, issueCount: Number(issueCount) };
+  };
+
+  // Submit: reserve the NIC hash (or replace the device bound to it), then
+  // allowlist the voter on this GN's own division contract. Both writes go
+  // through the seam, so they are signed by MetaMask on Hardhat and by the relay
+  // on the custom chain.
+  const handleSubmit = async (confirmedReissue = false) => {
     if (!voterAddress || !myDivision || !nicRegistryAddress) return;
 
     setIsSubmitting(true);
     try {
-      const canonicalNic = voterNIC.trim().toUpperCase();
-      const hashResponse = await fetch("/api/nic/hash", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: await nicHashHeaders(canonicalNic),
-        body: JSON.stringify({ nic: voterNIC }),
-      });
-      const hashResult = await hashResponse.json();
-      if (!hashResponse.ok) {
-        throw new Error(hashResult.error || "Unable to hash NIC");
+      const nicHash = await fetchNicHash();
+      const plan = confirmedReissue && pendingReissue ? null : await planEnrolment(nicHash);
+
+      if (plan?.kind === "blocked") {
+        setPendingReissue(null);
+        notification.error(plan.reason);
+        return;
+      }
+      if (plan?.kind === "reissue") {
+        // Stop and ask. Confirming re-enters this function with the flag set.
+        setPendingReissue({ previousDevice: plan.previousDevice, issueCount: plan.issueCount });
+        return;
       }
 
-      await write({
-        address: nicRegistryAddress,
-        abi: NIC_REGISTRY_ABI as unknown as Abi,
-        functionName: "reserveNicHash",
-        args: [hashResult.nicHash as `0x${string}`, myDivision.votingContract],
-      });
+      const isReissue = confirmedReissue && pendingReissue !== null;
+      const previousDevice = pendingReissue?.previousDevice;
+
+      if (isReissue) {
+        await write({
+          address: nicRegistryAddress,
+          abi: NIC_REGISTRY_ABI as unknown as Abi,
+          functionName: "reissueDevice",
+          args: [nicHash, myDivision.votingContract, voterAddress as `0x${string}`],
+        });
+      } else {
+        await write({
+          address: nicRegistryAddress,
+          abi: NIC_REGISTRY_ABI as unknown as Abi,
+          functionName: "reserveNicHash",
+          args: [nicHash, myDivision.votingContract, voterAddress as `0x${string}`],
+        });
+      }
+
+      // On a re-issue, drop the old address in the same call that adds the new
+      // one. This is hygiene, not the safety mechanism: `reissueDevice` has
+      // already marked the old device superseded and `register()` refuses it
+      // whether or not this call lands. Which is the point - if this transaction
+      // fails, the voter still cannot register twice.
+      const [addresses, statuses] =
+        isReissue && previousDevice
+          ? [
+              [previousDevice as `0x${string}`, voterAddress as `0x${string}`],
+              [false, true],
+            ]
+          : [[voterAddress as `0x${string}`], [true]];
 
       await write({
         address: myDivision.votingContract,
         abi: VOTING_ABI as unknown as Abi,
         functionName: "addVoters",
-        args: [[voterAddress as `0x${string}`], [true]],
+        args: [addresses, statuses],
       });
 
-      notification.success(`✅ Voter added to ${myDivision.name}!`);
+      setOutcome(isReissue ? "reissued" : "enrolled");
+      setPendingReissue(null);
+      notification.success(
+        isReissue ? `✅ Replacement device issued in ${myDivision.name}!` : `✅ Voter added to ${myDivision.name}!`,
+      );
       setStep(4);
     } catch (error: any) {
       const msg = error?.shortMessage || error?.message || "Transaction failed";
-      if (msg.includes("NicRegistry__AlreadyUsed")) {
+      if (msg.includes("NicRegistry__AlreadyRegistered")) {
+        notification.error(
+          "This voter registered in the app between the check and this transaction. Their registration stands, " +
+            "and it cannot be moved to a new phone.",
+        );
+      } else if (msg.includes("NicRegistry__DeviceUnchanged")) {
+        // Almost always a retry after the allowlist half failed: the re-issue
+        // itself already landed, so say so rather than reporting a failure.
+        notification.error("This phone is already the issued device. Re-scan the voter roll step to finish.");
+      } else if (msg.includes("NicRegistry__DeviceInUse")) {
+        notification.error("This phone is already enrolled under another NIC. Ask the voter to reinstall the app.");
+      } else if (msg.includes("NicRegistry__ReissueLimitReached")) {
+        notification.error(
+          "This NIC has reached the replacement limit. The Election Authority must issue any further device.",
+        );
+      } else if (msg.includes("NicRegistry__WrongDivision")) {
+        notification.error("This NIC belongs to another division.");
+      } else if (msg.includes("NicRegistry__AlreadyUsed")) {
         notification.error("This NIC is already registered to another voter");
       } else if (msg.includes("Unregistered division")) {
         // Not a permissions problem, and the raw revert string does not say so.
@@ -370,6 +552,8 @@ const GNRegisterVoter: NextPage = () => {
     setStep(1);
     setVoterNIC("");
     setVoterAddress("");
+    setPendingReissue(null);
+    setOutcome("enrolled");
   };
 
   useEffect(() => {
@@ -502,13 +686,61 @@ const GNRegisterVoter: NextPage = () => {
               <InfoRow label="NIC" value={voterNIC} />
               <InfoRow label="Address" value={`${voterAddress.slice(0, 10)}...${voterAddress.slice(-6)}`} />
             </div>
-            <button
-              className={`btn btn-primary w-full ${isSubmitting ? "loading" : ""}`}
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? "Adding to Blockchain..." : "Confirm & Add to Voter Roll →"}
-            </button>
+
+            {/*
+              The lost-phone confirmation. Shown only when the chain says this NIC
+              is enrolled on a different device that has not registered yet — the
+              one window in which a replacement is possible at all.
+            */}
+            {pendingReissue ? (
+              <div className="rounded-xl border border-warning/40 bg-warning/10 p-4 mb-4">
+                <p className="font-bold text-sm mb-2">⚠️ This voter is already enrolled on another phone</p>
+                <p className="text-xs opacity-80 mb-2">
+                  Issuing this phone will permanently disable{" "}
+                  <span className="font-mono">
+                    {pendingReissue.previousDevice.slice(0, 10)}...{pendingReissue.previousDevice.slice(-6)}
+                  </span>
+                  . That phone will never be able to register, even if it is found later. The voter will be able to
+                  register once, on this phone only.
+                </p>
+                <p className="text-xs opacity-80 mb-3">
+                  Do this only if you have satisfied yourself that the previous phone is genuinely lost or broken.
+                  {pendingReissue.issueCount > 0 && (
+                    <>
+                      {" "}
+                      <strong>
+                        This NIC has already been replaced {pendingReissue.issueCount}{" "}
+                        {pendingReissue.issueCount === 1 ? "time" : "times"}.
+                      </strong>
+                    </>
+                  )}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    className={`btn btn-warning btn-sm grow ${isSubmitting ? "loading" : ""}`}
+                    onClick={() => handleSubmit(true)}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? "Replacing…" : "Replace device"}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setPendingReissue(null)}
+                    disabled={isSubmitting}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className={`btn btn-primary w-full ${isSubmitting ? "loading" : ""}`}
+                onClick={() => handleSubmit()}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Adding to Blockchain..." : "Confirm & Add to Voter Roll →"}
+              </button>
+            )}
           </Card>
         )}
 
@@ -517,10 +749,15 @@ const GNRegisterVoter: NextPage = () => {
           <Card>
             <div className="text-center">
               <div className="text-5xl mb-4">✅</div>
-              <h3 className="font-bold text-xl mb-2">Voter Enrolled!</h3>
+              <h3 className="font-bold text-xl mb-2">
+                {outcome === "reissued" ? "Replacement Device Issued!" : "Voter Enrolled!"}
+              </h3>
               <p className="text-sm opacity-60 mb-1">
                 {voterAddress.slice(0, 14)}... added to <strong>{myDivision.name}</strong>
               </p>
+              {outcome === "reissued" && (
+                <p className="text-xs opacity-60 mb-1">The previous phone can no longer register.</p>
+              )}
               <p className="text-xs opacity-40 mb-6">NIC: {voterNIC}</p>
               <button className="btn btn-primary" onClick={resetForm}>
                 Register Next Voter →

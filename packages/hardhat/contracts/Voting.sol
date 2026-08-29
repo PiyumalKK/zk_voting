@@ -5,6 +5,11 @@ import {LeanIMT, LeanIMTData} from "@zk-kit/lean-imt.sol/LeanIMT.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IVerifier} from "./Verifier.sol";
 
+interface INicRegistry {
+    function commitDevice(address device, uint256 expectedEpoch) external returns (bytes32 nicHash);
+    function getCurrentEpoch() external view returns (uint256);
+}
+
 /**
  * @title Voting
  * @notice Phased ZK voting contract supporting up to MAX_CANDIDATES candidates.
@@ -38,6 +43,7 @@ contract Voting is Ownable {
     error Voting__TooManyCandidates(uint256 provided, uint256 max);
     error Voting__NoCandidates();
     error Voting__SetupOrRegistrationRequired(Phase actual);
+    error Voting__NoNicRegistry();
 
     //////////////////
     /// Types ////////
@@ -58,6 +64,11 @@ contract Voting is Ownable {
 
     IVerifier public immutable i_verifier;
 
+    /// @notice The shared identity ledger. `register()` cannot be reached without
+    ///         its consent, which is what makes "one citizen, one leaf" a
+    ///         property of the contracts rather than of the GN's diligence.
+    INicRegistry public immutable i_nicRegistry;
+
     // GN officer address — can call addVoters() for this division
     address public s_gnOfficer;
 
@@ -74,6 +85,11 @@ contract Voting is Ownable {
     Phase private s_phase;
     uint256 private s_registrationEndTime;
     uint256 private s_votingEndTime;
+
+    // The NicRegistry epoch this election's registration window opened under.
+    // Pinned so that a clearNicHashes() landing mid-registration halts this
+    // division instead of silently un-superseding every replaced device.
+    uint256 private s_nicEpoch;
 
     // electionId => voter => allowlisted / hasRegistered
     mapping(uint256 => mapping(address => bool)) private s_voters;
@@ -132,10 +148,16 @@ contract Voting is Ownable {
     constructor(
         address _owner,
         address _verifier,
+        address _nicRegistry,
         string memory _question,
         string[] memory _initialCandidates
     ) Ownable(_owner) {
+        // Required, not optional. A zero address here would silently downgrade
+        // every division to address-level enrolment, which is exactly the state
+        // this contract stopped relying on.
+        if (_nicRegistry == address(0)) revert Voting__NoNicRegistry();
         i_verifier = IVerifier(_verifier);
+        i_nicRegistry = INicRegistry(_nicRegistry);
         s_question = _question;
         s_phase = Phase.Setup;
         if (_initialCandidates.length > 0) {
@@ -205,6 +227,8 @@ contract Voting is Ownable {
         if (s_candidates.length == 0) revert Voting__NoCandidates();
         s_phase = Phase.Registration;
         s_registrationEndTime = block.timestamp + _durationSec;
+        // Pin the enrolment epoch the window opens under — see s_nicEpoch.
+        s_nicEpoch = i_nicRegistry.getCurrentEpoch();
         emit PhaseChanged(Phase.Registration, s_registrationEndTime);
     }
 
@@ -242,6 +266,7 @@ contract Voting is Ownable {
         s_question = "";
         s_registrationEndTime = 0;
         s_votingEndTime = 0;
+        s_nicEpoch = 0;
         s_phase = Phase.Setup;
         emit ElectionReset(s_electionId);
         emit PhaseChanged(Phase.Setup, 0);
@@ -251,7 +276,18 @@ contract Voting is Ownable {
     /// Voter API ////
     //////////////////
 
-    /// @notice Registers a commitment leaf for an allowlisted address.
+    /// @notice Registers a commitment leaf for an enrolled, allowlisted address.
+    ///
+    ///         Two gates, and both are load-bearing. The allowlist below answers
+    ///         "may this *address* insert a leaf". `commitDevice` answers "may
+    ///         this *citizen*" — it refuses a device no GN officer ever enrolled,
+    ///         refuses one that a later re-issue superseded, and refuses a NIC
+    ///         that already has a leaf, in this or any other division. The
+    ///         allowlist cannot express any of those, because it is keyed by
+    ///         address and a person is not an address.
+    ///
+    ///         So `addVoters` alone is not enough to make an address able to
+    ///         register: enrolment through a GN officer is mandatory.
     function register(uint256 _commitment) external inPhase(Phase.Registration) {
         uint256 electionId = s_electionId;
         if (!s_voters[electionId][msg.sender] || s_hasRegistered[electionId][msg.sender]) {
@@ -260,9 +296,20 @@ contract Voting is Ownable {
         if (s_commitments[electionId][_commitment]) {
             revert Voting__CommitmentAlreadyAdded(_commitment);
         }
+
         s_commitments[electionId][_commitment] = true;
         s_hasRegistered[electionId][msg.sender] = true;
         s_trees[electionId].insert(_commitment);
+
+        // Last, after every local effect: checks-effects-interactions. The
+        // registry is immutable and admin-deployed rather than attacker-supplied,
+        // and a reentrant call would arrive with the registry as `msg.sender` and
+        // fail the allowlist anyway — but ordering it this way costs nothing and
+        // removes the question. A revert here (superseded device, NIC already
+        // registered, epoch cleared mid-window) unwinds the writes above with it,
+        // and carries the reason the voter needs to be told.
+        i_nicRegistry.commitDevice(msg.sender, s_nicEpoch);
+
         emit NewLeaf(s_trees[electionId].size - 1, _commitment);
     }
 
@@ -385,6 +432,14 @@ contract Voting is Ownable {
         depth = s_trees[s_electionId].depth;
         root = s_trees[s_electionId].root();
         candidateCount = s_candidates.length;
+    }
+
+    /// @notice The NicRegistry epoch this registration window was opened under.
+    ///         Registration halts if the registry moves past it; a client seeing
+    ///         Voting__* / NicRegistry__EpochChanged can compare the two to say
+    ///         so plainly.
+    function getNicEpoch() external view returns (uint256) {
+        return s_nicEpoch;
     }
 
     /// @notice Returns the current election id. Bumped on every resetElection().

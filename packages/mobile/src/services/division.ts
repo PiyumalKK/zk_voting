@@ -1,4 +1,4 @@
-import { api, DivisionState } from "./api";
+import { api, DivisionState, VoterDeviceState } from "./api";
 import { getAddress, getSelectedDivision, setSelectedDivision } from "./keystore";
 
 /**
@@ -19,6 +19,30 @@ export interface VoterDivision {
   divisions: DivisionState[];
   /** True when the voter is not on any division's allowlist yet. */
   notEnrolled: boolean;
+  /** This device's standing in the NicRegistry, or null if the chain did not say. */
+  device: VoterDeviceState | null;
+  /**
+   * True when a GN officer has issued this citizen a replacement phone, so this
+   * one can never register.
+   *
+   * Kept separate from `notEnrolled` deliberately: a superseded device usually
+   * *is* still on the allowlist — nothing requires the officer to revoke it,
+   * because supersession is what actually stops it — so every "are you enrolled"
+   * check would otherwise report it as perfectly fine right up until the
+   * registration transaction reverts.
+   */
+  deviceSuperseded: boolean;
+  /**
+   * True when the chain says this device may register: a GN officer enrolled it
+   * and it has not been replaced.
+   *
+   * Defaults to true when the chain said nothing at all (`device` is null — no
+   * NicRegistry, or the read failed). Supplementary data must never present a
+   * working phone as a broken one; `register()` enforces the rule regardless, so
+   * the cost of being wrong this way is a clear on-chain error instead of a
+   * screen that refuses a voter who was in fact enrolled.
+   */
+  deviceEnrolled: boolean;
 }
 
 const sameAddress = (a?: string | null, b?: string | null) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
@@ -55,9 +79,13 @@ export async function loadVoterDivision(): Promise<VoterDivision> {
   const address = await getAddress();
   const election = await api.getElection(address);
   const division = await resolveVoterDivision(election.divisions);
+  const device = election.voterDevice ?? null;
   return {
     division,
     divisions: election.divisions,
     notEnrolled: !division && election.divisions.some(d => d.voterAllowlisted !== undefined),
+    device,
+    deviceSuperseded: device?.status === "superseded",
+    deviceEnrolled: device === null || device.status === "live",
   };
 }

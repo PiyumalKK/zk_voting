@@ -39,25 +39,40 @@ contract ElectionRegistry is Ownable {
     /// @notice The shared verifier contract used by all division Voting contracts.
     address public immutable i_verifier;
 
+    /// @notice The shared NicRegistry every division Voting contract defers to for
+    ///         person-level enrolment rules. Threaded through the constructor
+    ///         rather than set afterwards: `createDivision` deploys a `Voting`
+    ///         whose registry is immutable, so a division that could be created
+    ///         without one would be permanently unenforceable.
+    address public immutable i_nicRegistry;
+
     event DivisionAdded(uint256 indexed divisionId, string name, address votingContract, address gnOfficer);
     event DivisionUpdated(uint256 indexed divisionId, address votingContract, address gnOfficer);
     event DivisionCreated(uint256 indexed divisionId, string name, address votingContract);
     event DivisionsCleared(uint256 count);
 
-    constructor(address _owner, address _verifier) Ownable(_owner) {
+    constructor(address _owner, address _verifier, address _nicRegistry) Ownable(_owner) {
+        require(_nicRegistry != address(0), "NicRegistry required");
         i_verifier = _verifier;
+        i_nicRegistry = _nicRegistry;
     }
 
     /// @notice Deploy a new Voting contract and register it as a division.
     ///         The new contract is owned by this registry's owner (admin).
     ///         GN officer can be assigned later via the Voting contract's setGNOfficer().
+    ///
+    ///         The admin must still call `NicRegistry.setVotingContract(voting, true)`:
+    ///         that call is `onlyOwner` on a contract this registry does not own,
+    ///         so the factory cannot make it. Until it happens the division can
+    ///         neither enrol voters nor accept a registration from an enrolled
+    ///         device. See `test/DivisionEnrolment.ts`.
     function createDivision(
         string calldata _name
     ) external onlyOwner returns (uint256 divisionId, address votingContract) {
         // Deploy a fresh Voting contract with empty question and no candidates.
         // The admin can configure question + candidates via the admin UI later.
         string[] memory emptyCandidates = new string[](0);
-        Voting newVoting = new Voting(owner(), i_verifier, "", emptyCandidates);
+        Voting newVoting = new Voting(owner(), i_verifier, i_nicRegistry, "", emptyCandidates);
         votingContract = address(newVoting);
 
         divisionId = divisions.length;

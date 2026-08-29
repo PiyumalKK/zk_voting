@@ -241,8 +241,35 @@ const AdminBallotPage = () => {
         <Section
           title="Allowlist voters"
           disabled={!inSetup && !inRegistration}
-          hint="Editable during Setup and Registration phases."
+          hint="Editable during Setup and Registration phases. Puts an address on the roll — it does not enrol a voter."
         >
+          {/*
+            Said plainly, because the button below reports success either way.
+            `Voting.register()` calls `NicRegistry.commitDevice`, which refuses
+            any device no GN officer ever bound to a NIC, so an address added
+            here and nowhere else is on the roll and still cannot register. That
+            is deliberate — it is what stops one citizen obtaining two
+            registrations — but without saying so, this panel looks like a
+            complete enrolment and fails much later, on the voter's phone.
+          */}
+          <div className="alert alert-warning text-xs items-start">
+            <div>
+              <p className="font-semibold">Allowlisting alone does not let anyone register.</p>
+              <p className="opacity-80 mt-1">
+                Every voter must also be enrolled against their NIC by a Grama Niladhari officer in the{" "}
+                <Link href="/gn" className="link">
+                  GN portal
+                </Link>
+                , which reserves the NIC and binds the phone. Addresses added here without that step are on the roll but
+                will be refused when they try to register.
+              </p>
+              <p className="opacity-60 mt-1">
+                Use this to <strong>revoke</strong> an address, or for local testing where the GN portal has already
+                enrolled the device.
+              </p>
+            </div>
+          </div>
+
           <div className="space-y-2">
             {voterDrafts.map((v, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2 p-2 border border-base-300 rounded-lg">
