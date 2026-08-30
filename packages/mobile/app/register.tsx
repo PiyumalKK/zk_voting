@@ -11,16 +11,14 @@ import {
   StepIndicator,
 } from "../src/components/ui";
 import { submitRegister } from "../src/services/chain";
-import { deriveFromSecrets, generateCommitment } from "../src/services/crypto";
+import { deriveFromSecrets } from "../src/services/crypto";
 import { loadVoterDivision } from "../src/services/division";
 import {
-  authenticate,
   getAddress,
-  getPrivateKey,
-  getVoterSecrets,
   hasRegisteredLocally,
+  isAuthCancellation,
   markRegistered,
-  storeVoterSecrets,
+  unlockIdentity,
 } from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
 
@@ -79,24 +77,21 @@ export default function Register() {
     setStepStatus("active");
     let failedStep = "start";
     try {
-      // Step 0: Authenticate
+      // Step 0: Authenticate.
+      //
+      // The one and only prompt in this flow. It releases the commitment
+      // secrets AND the signing key together, so nothing below has to touch
+      // gated storage again — the OS prompts per protected item, and this used
+      // to cost the voter up to six fingerprints to register once.
       failedStep = "authenticate";
       setCurrentStep(0);
-      const ok = await authenticate("Authenticate to register");
-      if (!ok) throw new Error("Authentication cancelled");
+      const identity = await unlockIdentity("Authenticate to register");
 
-      // Step 1: Commitment
+      // Step 1: Commitment. Derived, never generated: the secrets are minted
+      // with the identity at onboarding, so registering only ever reads.
       failedStep = "prepare keys";
       setCurrentStep(1);
-      const existing = await getVoterSecrets();
-      let commitmentValue: string;
-      if (existing) {
-        commitmentValue = deriveFromSecrets(existing.nullifier, existing.secret).commitment;
-      } else {
-        const c = generateCommitment();
-        await storeVoterSecrets(c.nullifier, c.secret);
-        commitmentValue = c.commitment;
-      }
+      const commitmentValue = deriveFromSecrets(identity.nullifier, identity.secret).commitment;
 
       // Step 2: Submit on-chain, topping the wallet up on the way in.
       failedStep = "prepare wallet";
@@ -110,8 +105,7 @@ export default function Register() {
       await api.tryFundBurner(voterAddress);
 
       failedStep = "submit registration";
-      const pk = await getPrivateKey();
-      await submitRegister(division.votingContract, commitmentValue, pk);
+      await submitRegister(division.votingContract, commitmentValue, identity.privateKey);
 
       await markRegistered();
       setStepStatus("done");
@@ -119,6 +113,12 @@ export default function Register() {
     } catch (e: any) {
       setStatus("idle");
       setStepStatus("error");
+
+      // Dismissing the fingerprint prompt is a choice, not a failure. The form
+      // is already back on screen; an alert saying "Registration failed" would
+      // only be alarming.
+      if (failedStep === "authenticate" && isAuthCancellation(e)) return;
+
       const detail = e?.shortMessage ?? e?.message ?? String(e);
       const lowerDetail = detail.toLowerCase();
 

@@ -2,7 +2,7 @@
   "expo": {
     "name": "SL Vote",
     "slug": "sl-vote",
-    "version": "2.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "scheme": "slvote",
     "icon": "./assets/images/icon.png",
@@ -22,6 +22,7 @@
     },
     "android": {
       "package": "lk.gov.slvote",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon-foreground.png",
         "backgroundColor": "#0F1B2D"

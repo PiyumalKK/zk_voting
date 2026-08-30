@@ -29,18 +29,25 @@ export interface VoterCommitment {
   nullifierHash: string;
 }
 
-/** Generate a fresh voter commitment (called once, during registration). */
-export function generateCommitment(): VoterCommitment {
-  const nullifier = randomFieldElement();
-  const secret = randomFieldElement();
-  const commitment = poseidon2([nullifier, secret]);
-  const nullifierHash = poseidon1([nullifier]);
+/**
+ * The two random values a voter's identity is built from.
+ *
+ * Generated once, when the identity itself is created — nothing about them is
+ * specific to registration, and minting them at identity-creation time is what
+ * lets registration be a read-only operation on the keystore (one biometric
+ * prompt instead of two). See `keystore.createIdentity`.
+ */
+export function generateSecrets(): { nullifier: string; secret: string } {
   return {
-    nullifier: nullifier.toString(),
-    secret: secret.toString(),
-    commitment: commitment.toString(),
-    nullifierHash: nullifierHash.toString(),
+    nullifier: randomFieldElement().toString(),
+    secret: randomFieldElement().toString(),
   };
+}
+
+/** Generate a fresh voter commitment. */
+export function generateCommitment(): VoterCommitment {
+  const { nullifier, secret } = generateSecrets();
+  return { nullifier, secret, ...deriveFromSecrets(nullifier, secret) };
 }
 
 /** Recompute the commitment + nullifier hash from stored secrets (vote time). */

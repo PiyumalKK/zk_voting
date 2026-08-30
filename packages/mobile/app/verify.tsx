@@ -6,7 +6,11 @@ import { AnimatedResult, FadeIn, GlassCard, GradientButton } from "../src/compon
 import { api, DivisionState, VerifyVoteResponse } from "../src/services/api";
 import { deriveFromSecrets } from "../src/services/crypto";
 import { loadVoterDivision } from "../src/services/division";
-import { authenticate, getVoterSecrets } from "../src/services/keystore";
+import {
+  hasRegisteredLocally,
+  isAuthCancellation,
+  unlockIdentity,
+} from "../src/services/keystore";
 import { colors, styles } from "../src/theme";
 
 type Status = "idle" | "checking" | "done" | "error";
@@ -32,20 +36,17 @@ export default function Verify() {
     setResult(null);
     setErrorMsg("");
     try {
-      const ok = await authenticate("Authenticate to verify your vote");
-      if (!ok) {
-        setStatus("idle");
-        return;
-      }
-
-      const secrets = await getVoterSecrets();
-      if (!secrets) {
+      // Checked before unlocking, so an unregistered voter is told why instead
+      // of being asked for a fingerprint that could not have helped.
+      if (!(await hasRegisteredLocally())) {
         setErrorMsg(
           "No registration found on this device. You need to register before you can verify a vote.",
         );
         setStatus("error");
         return;
       }
+
+      const identity = await unlockIdentity("Authenticate to verify your vote");
 
       // The screen usually already has the division; re-resolve if the initial
       // election fetch failed, so a transient network blip is not reported as a
@@ -64,13 +65,18 @@ export default function Verify() {
         return;
       }
 
-      const { nullifierHash } = deriveFromSecrets(secrets.nullifier, secrets.secret);
+      const { nullifierHash } = deriveFromSecrets(identity.nullifier, identity.secret);
       const nhHex = toHex(BigInt(nullifierHash), { size: 32 });
 
       const res = await api.verifyVote(target.votingContract, nhHex);
       setResult(res);
       setStatus("done");
     } catch (e: any) {
+      // A dismissed prompt is not a verification failure — return to the button.
+      if (isAuthCancellation(e)) {
+        setStatus("idle");
+        return;
+      }
       setErrorMsg(e?.message ?? "Could not verify your vote. Please try again.");
       setStatus("error");
     }
