@@ -12,18 +12,32 @@ import {
 import { newBurnerAccount, submitVote } from "../src/services/chain";
 import { deriveFromSecrets } from "../src/services/crypto";
 import { loadVoterDivision } from "../src/services/division";
-import { authenticate, getVoterSecrets, markVoted } from "../src/services/keystore";
+import {
+  hasRegisteredLocally,
+  isAuthCancellation,
+  markVoted,
+  unlockIdentity,
+} from "../src/services/keystore";
 import { generateVoteCallData } from "../src/services/zkproof";
 import { colors, styles } from "../src/theme";
 
-type Stage = "auth" | "select" | "confirm" | "submitting" | "done";
+/**
+ * There is no "auth" stage any more.
+ *
+ * The screen used to fire a biometric prompt on entry, unprompted, to unlock a
+ * candidate list that is public data — so it protected nothing — and then the
+ * gated reads inside `castVote` prompted again. The single prompt now sits on
+ * the confirm tap, where the secrets are actually read and where the
+ * irreversible thing happens: the fingerprint authorises the ballot, not the
+ * screen.
+ */
+type Stage = "select" | "confirm" | "submitting" | "done";
 
-const STEPS = ["Authenticate", "Select", "Cast Vote"];
+const STEPS = ["Select", "Confirm", "Cast Vote"];
 
 function stageToStep(stage: Stage): number {
   switch (stage) {
-    case "auth": return 0;
-    case "select":
+    case "select": return 0;
     case "confirm": return 1;
     case "submitting":
     case "done": return 2;
@@ -32,8 +46,7 @@ function stageToStep(stage: Stage): number {
 
 export default function Vote() {
   const [division, setDivision] = useState<DivisionState | null>(null);
-  const [stage, setStage] = useState<Stage>("auth");
-  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<Stage>("select");
   const [candidate, setCandidate] = useState<number | null>(null);
   const [step, setStep] = useState("");
 
@@ -47,45 +60,29 @@ export default function Vote() {
     })();
   }, []);
 
-  const authenticateUser = async () => {
-    setBusy(true);
-    try {
-      const ok = await authenticate("Authenticate to vote");
-      if (!ok) throw new Error("Authentication cancelled");
-      setStage("select");
-    } catch (e: any) {
-      Alert.alert("Authentication failed", e?.message ?? "Try again");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Trigger auth automatically when the division loads
-  useEffect(() => {
-    if (stage === "auth" && division) {
-      // Small delay so the user sees the "Waiting for device authentication" state
-      const t = setTimeout(() => authenticateUser(), 300);
-      return () => clearTimeout(t);
-    }
-  }, [stage, division]);
-
   const castVote = async () => {
     if (!division || candidate === null) return;
     setStage("submitting");
     try {
-      setStep("Unlocking your secrets…");
-      const secrets = await getVoterSecrets();
-      if (!secrets) throw new Error("No registration found on this device");
+      // The secrets exist from onboarding onwards, so their presence no longer
+      // proves anything. The confirmed-on-chain flag is the only honest answer
+      // to "has this voter registered?".
+      if (!(await hasRegisteredLocally())) {
+        throw new Error("No registration found on this device");
+      }
 
-      const { commitment } = deriveFromSecrets(secrets.nullifier, secrets.secret);
+      setStep("Unlocking your secrets…");
+      const identity = await unlockIdentity("Confirm to cast your vote");
+
+      const { commitment } = deriveFromSecrets(identity.nullifier, identity.secret);
 
       setStep("Checking your registration…");
       const path = await api.getMerklePath(division.votingContract, commitment);
 
       setStep("Generating secure anonymous proof…");
       const callData = await generateVoteCallData({
-        nullifier: secrets.nullifier,
-        secret: secrets.secret,
+        nullifier: identity.nullifier,
+        secret: identity.secret,
         circuitIndex: path.circuitIndex,
         siblings: path.siblings,
         root: path.root,
@@ -107,7 +104,13 @@ export default function Vote() {
       await markVoted(division.votingContract);
       setStage("done");
     } catch (e: any) {
-      setStage("select");
+      // Back to the confirm card rather than the list: the selection is intact,
+      // and a voter who dismissed the prompt by mistake is one tap from retrying.
+      setStage("confirm");
+      if (isAuthCancellation(e)) {
+        Alert.alert("Vote not cast", "You did not confirm, so nothing was submitted.");
+        return;
+      }
       Alert.alert("Vote failed", e?.shortMessage ?? e?.message ?? "Please try again");
     }
   };
@@ -143,31 +146,14 @@ export default function Vote() {
         <StepIndicator steps={STEPS} currentStep={stageToStep(stage)} />
       </FadeIn>
 
-      {/* Auth */}
-      {stage === "auth" && (
+      {/* The auth card used to occupy this space while the division loaded. */}
+      {(stage === "select" || stage === "confirm") && !division && (
         <FadeIn>
           <GlassCard style={{ alignItems: "center", paddingVertical: 40 }}>
-            {busy ? (
-              <>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={[styles.cardText, { marginTop: 20, textAlign: "center", fontSize: 14 }]}>
-                  Waiting for device authentication…
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.cardTitle, { textAlign: "center" }]}>🔒 Authentication Required</Text>
-                <Text style={[styles.cardText, { marginTop: 8, textAlign: "center", marginBottom: 20 }]}>
-                  Please authenticate to access your voting key.
-                </Text>
-                <GradientButton
-                  title="Try Again"
-                  icon="🔐"
-                  onPress={authenticateUser}
-                  style={{ width: "100%" }}
-                />
-              </>
-            )}
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.cardText, { marginTop: 20, textAlign: "center", fontSize: 14 }]}>
+              Loading your ballot…
+            </Text>
           </GlassCard>
         </FadeIn>
       )}
@@ -250,6 +236,14 @@ export default function Vote() {
                     {division.candidates[candidate]}
                   </Text>
                   . This action is irreversible.
+                </Text>
+                <Text
+                  style={[
+                    styles.cardText,
+                    { textAlign: "center", marginTop: 8, fontSize: 12, opacity: 0.7 },
+                  ]}
+                >
+                  🔐 Your phone will ask for your fingerprint or Face ID to confirm.
                 </Text>
                 <GradientButton
                   title="Cast anonymous vote"

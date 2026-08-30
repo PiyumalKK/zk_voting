@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   9494: {
     ElectionRegistry: {
-      address: "0x2BB8B93F585B43b06F3d523bf30C203d3B6d4BD4",
+      address: "0x367761085BF3C12e5DA2Df99AC6E1a824612b8fb",
       abi: [
         {
           inputs: [
@@ -446,10 +446,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 390,
+      deployedOnBlock: 104,
     },
     HonkVerifier: {
-      address: "0xc6B407503dE64956Ad3cF5Ab112cA4f56AA13517",
+      address: "0xfbC22278A96299D91d41C453234d97b4F5Eb9B2d",
       abi: [
         {
           inputs: [],
@@ -497,10 +497,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 386,
+      deployedOnBlock: 100,
     },
     LeanIMT: {
-      address: "0xccA9728291bC98ff4F97EF57Be3466227b0eb06C",
+      address: "0x2B0d36FACD61B71CC05ab8F3D2355ec3631C0dd5",
       abi: [
         {
           inputs: [],
@@ -529,10 +529,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 385,
+      deployedOnBlock: 99,
     },
     NicRegistry: {
-      address: "0x3a622DB2db50f463dF562Dc5F341545A64C580fc",
+      address: "0x46b142DD1E924FAb83eCc3c08e4D46E82f005e0E",
       abi: [
         {
           inputs: [
@@ -1089,10 +1089,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 387,
+      deployedOnBlock: 101,
     },
     PoseidonT3: {
-      address: "0xDDa0648FA8c9cD593416EC37089C2a2E6060B45c",
+      address: "0xD84379CEae14AA33C123Af12424A37803F885889",
       abi: [
         {
           inputs: [
@@ -1115,10 +1115,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 384,
+      deployedOnBlock: 98,
     },
     Voting: {
-      address: "0x6A47346e722937B60Df7a1149168c0E76DD6520f",
+      address: "0xC9a43158891282A2B1475592D5719c001986Aaec",
       abi: [
         {
           inputs: [
@@ -1876,10 +1876,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 388,
+      deployedOnBlock: 102,
     },
     Voting_Colombo: {
-      address: "0xCa57C1d3c2c35E667745448Fef8407dd25487ff8",
+      address: "0x4631BCAbD6dF18D94796344963cB60d44a4136b6",
       abi: [
         {
           inputs: [
@@ -2633,10 +2633,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 394,
+      deployedOnBlock: 108,
     },
     Voting_Gampaha: {
-      address: "0xe044814c9eD1e6442Af956a817c161192cBaE98F",
+      address: "0xf953b3A269d80e3eB0F2947630Da976B896A8C5b",
       abi: [
         {
           inputs: [
@@ -3390,10 +3390,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 397,
+      deployedOnBlock: 111,
     },
     Voting_Kaduwela: {
-      address: "0xB7ca895F81F20e05A5eb11B05Cbaab3DAe5e23cd",
+      address: "0x4C2F7092C2aE51D986bEFEe378e50BD4dB99C901",
       abi: [
         {
           inputs: [
@@ -4147,7 +4147,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 391,
+      deployedOnBlock: 105,
     },
   },
 } as const;

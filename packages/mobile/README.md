@@ -7,9 +7,9 @@ React Native (Expo) app for **voters** in the ZK anonymous voting system. Offici
 
 | Screen | Purpose |
 |--------|---------|
-| Onboarding | Generates a key inside the phone's **secure hardware** (Keystore/Keychain), gated by biometric/passcode. Shows the address QR for the GN officer. |
-| Register | Generates a ZK **commitment**, stores the secrets locally (biometric-gated), submits `register()` on-chain. |
-| Vote | **OTP** → **biometric** → pick candidate → generate **ZK proof** → submit `vote()` from a fresh **burner wallet** (anonymous). |
+| Onboarding | Generates a key **and** the ZK commitment secrets inside the phone's **secure hardware** (Keystore/Keychain), gated by biometric/passcode. Shows the address QR for the GN officer. |
+| Register | **One biometric prompt** unlocks the identity, derives the ZK **commitment** from the stored secrets, submits `register()` on-chain. |
+| Vote | Pick candidate → confirm with **one biometric prompt** → generate **ZK proof** → submit `vote()` from a fresh **burner wallet** (anonymous). |
 | Settings | Show address, erase identity. |
 
 Nothing sensitive (keys, nullifier, secret) ever leaves the device.
@@ -19,7 +19,7 @@ Nothing sensitive (keys, nullifier, secret) ever leaves the device.
 ```
 Onboarding → hardware Keystore key
 Register   → poseidon commitment → register() [voter's key]
-Vote       → OTP + biometric → merkle path (API) → ZK proof → vote() [burner wallet]
+Vote       → biometric (at confirm) → merkle path (API) → ZK proof → vote() [burner wallet]
 ```
 
 Backend it talks to (the Next.js web app):
@@ -88,7 +88,15 @@ step except the final proof and surfaces a clear message.
 
 ## Security notes
 
-- Key + secrets in `expo-secure-store` with `requireAuthentication` (hardware-backed).
-- Biometric via `expo-local-authentication`.
+- Key + secrets in `expo-secure-store` with `requireAuthentication` (hardware-backed),
+  held as **one entry** (`slvote.identity`) rather than three. The OS prompts per
+  protected item, so separate entries meant a separate fingerprint each. Released
+  only through `keystore.unlockIdentity()` — the single gated read, one prompt per
+  flow, carrying its own prompt message.
+- Biometric via `expo-local-authentication`, used only where the store itself
+  cannot be gated (Expo Go, or no fingerprint enrolled when the identity was made).
+- Where the prompt sits: registering asks on **Register now**; voting asks on
+  **Cast anonymous vote**, at the confirm step — the candidate list is public data
+  and gating it protected nothing.
 - Vote submitted from a throwaway burner wallet → `msg.sender` is unlinkable to the voter.
 - In production, burner gas is sponsored by a relayer / ERC-4337 paymaster.
