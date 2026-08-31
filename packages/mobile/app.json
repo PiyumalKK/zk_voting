@@ -30,7 +30,9 @@
       "permissions": [
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
-        "INTERNET"
+        "INTERNET",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
       ]
     },
     "plugins": [
@@ -54,10 +56,11 @@
     "experiments": {
       "typedRoutes": true
     },
-    "owner": "piyumalkk",
+    "owner": "kavishkaravishan",
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "b6064d0f-12f9-45d0-9851-808bfc55a900"
+        "projectId": "db21d0c7-0dc1-4094-bda3-33895a6d74e6"
       }
     }
   }
