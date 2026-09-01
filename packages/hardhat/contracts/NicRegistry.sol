@@ -4,7 +4,7 @@ pragma solidity >=0.8.0 <0.9.0;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 interface IVotingGN {
-    function s_gnOfficer() external view returns (address);
+    function s_isGnOfficer(address account) external view returns (bool);
 }
 
 /**
@@ -165,7 +165,10 @@ contract NicRegistry is Ownable {
 
     modifier onlyOwnerOrGN(address votingContract) {
         require(s_votingContracts[votingContract], "Unregistered division");
-        require(msg.sender == owner() || msg.sender == IVotingGN(votingContract).s_gnOfficer(), "Not owner or GN");
+        require(
+            msg.sender == owner() || IVotingGN(votingContract).s_isGnOfficer(msg.sender),
+            "Not owner or GN"
+        );
         _;
     }
 

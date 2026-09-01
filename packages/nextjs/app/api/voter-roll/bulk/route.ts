@@ -4,6 +4,7 @@ import { requireSession } from "~~/services/auth/serverSession";
 import { isCustomChainMode } from "~~/services/auth/session";
 import { RowSourceError, buildRowSource } from "~~/services/bulkImport/rowSource";
 import type { BulkImportSourceInput, ImportRow } from "~~/services/bulkImport/rowSource";
+import { streamRowResults } from "~~/services/bulkImport/streamRows";
 import { canonicalizeNic, hashNic } from "~~/services/nic/nicHash";
 import { normalisePhone } from "~~/services/otp/otpService";
 import { isMockSmsProvider, sendSms } from "~~/services/sms/smsService";
@@ -113,58 +114,56 @@ export async function POST(req: NextRequest) {
   }
 
   const store = getEnrolmentInviteStore();
-  const results: RowResult[] = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNumber = i + 2;
-    const rawNic = rowNic(row);
-    const rawPhone = rowPhone(row);
-    const divisionName = rowDivisionName(row);
+  return streamRowResults<RowResult>(rows.length, async send => {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2;
+      const rawNic = rowNic(row);
+      const rawPhone = rowPhone(row);
+      const divisionName = rowDivisionName(row);
 
-    const canonicalNic = canonicalizeNic(rawNic);
-    if (!canonicalNic) {
-      results.push({ row: rowNumber, nic: rawNic, error: "Invalid NIC format." });
-      continue;
-    }
-    const phone = normalisePhone(rawPhone);
-    if (!phone) {
-      results.push({ row: rowNumber, nic: rawNic, error: "Invalid Sri Lankan phone number." });
-      continue;
-    }
-    const division = divisions.find(candidate => candidate.name.toLowerCase() === divisionName.trim().toLowerCase());
-    if (!division) {
-      results.push({ row: rowNumber, nic: rawNic, error: `No division named "${divisionName}".` });
-      continue;
-    }
+      const canonicalNic = canonicalizeNic(rawNic);
+      if (!canonicalNic) {
+        send({ row: rowNumber, nic: rawNic, error: "Invalid NIC format." });
+        continue;
+      }
+      const phone = normalisePhone(rawPhone);
+      if (!phone) {
+        send({ row: rowNumber, nic: rawNic, error: "Invalid Sri Lankan phone number." });
+        continue;
+      }
+      const division = divisions.find(candidate => candidate.name.toLowerCase() === divisionName.trim().toLowerCase());
+      if (!division) {
+        send({ row: rowNumber, nic: rawNic, error: `No division named "${divisionName}".` });
+        continue;
+      }
 
-    const nicHash = hashNic(canonicalNic, pepper);
-    try {
-      await store.upsertPending({ nicHash, phone, divisionId: division.id });
-      const token = signEnrolmentToken(nicHash, division.id);
-      const link = `${CLAIM_BASE_URL}${token}`;
-      await sendSms(
-        phone,
-        `SL Vote: you're eligible to register in ${division.name}. Open this link on your phone to finish: ${link}`,
-      );
-      results.push({
-        row: rowNumber,
-        nic: rawNic,
-        divisionName: division.name,
-        status: "sent",
-        devLink: isMockSmsProvider ? link : undefined,
-        testLink: isMockSmsProvider ? buildExpoGoTestLink(token) : undefined,
-      });
-    } catch (error) {
-      results.push({
-        row: rowNumber,
-        nic: rawNic,
-        divisionName: division.name,
-        error: error instanceof EnrolmentInviteStoreError ? error.message : "Could not send this invite.",
-      });
+      const nicHash = hashNic(canonicalNic, pepper);
+      try {
+        await store.upsertPending({ nicHash, phone, divisionId: division.id });
+        const token = signEnrolmentToken(nicHash, division.id);
+        const link = `${CLAIM_BASE_URL}${token}`;
+        await sendSms(
+          phone,
+          `SL Vote: you're eligible to register in ${division.name}. Open this link on your phone to finish: ${link}`,
+        );
+        send({
+          row: rowNumber,
+          nic: rawNic,
+          divisionName: division.name,
+          status: "sent",
+          devLink: isMockSmsProvider ? link : undefined,
+          testLink: isMockSmsProvider ? buildExpoGoTestLink(token) : undefined,
+        });
+      } catch (error) {
+        send({
+          row: rowNumber,
+          nic: rawNic,
+          divisionName: division.name,
+          error: error instanceof EnrolmentInviteStoreError ? error.message : "Could not send this invite.",
+        });
+      }
     }
-  }
-
-  const succeeded = results.filter(result => result.status === "sent").length;
-  return NextResponse.json({ results, succeeded, failed: results.length - succeeded });
+  });
 }

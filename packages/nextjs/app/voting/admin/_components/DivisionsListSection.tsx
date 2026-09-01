@@ -22,8 +22,6 @@ import { PHASE_LABELS } from "~~/utils/electionPhase";
  * of old test divisions without touching the chain.
  */
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-
 export const DivisionsListSection = () => {
   const { divisions, isLoading, error, toggleHidden } = useDivisions();
 
@@ -46,9 +44,9 @@ export const DivisionsListSection = () => {
       ) : divisions.length === 0 ? (
         <p className="text-sm opacity-60">No divisions yet — deploy one above.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className={`overflow-x-auto ${divisions.length > 15 ? "max-h-[32rem] overflow-y-auto" : ""}`}>
           <table className="table table-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-base-100">
               <tr>
                 <th>Name</th>
                 <th>Address</th>
@@ -70,9 +68,13 @@ export const DivisionsListSection = () => {
                     {division.votingContract.slice(0, 10)}…{division.votingContract.slice(-4)}
                   </td>
                   <td className="font-mono text-xs">
-                    {division.gnOfficer && division.gnOfficer !== ZERO_ADDRESS
-                      ? `${division.gnOfficer.slice(0, 10)}…${division.gnOfficer.slice(-4)}`
-                      : "—"}
+                    {division.gnOfficers.length === 0 ? (
+                      "—"
+                    ) : division.gnOfficers.length === 1 ? (
+                      `${division.gnOfficers[0].slice(0, 10)}…${division.gnOfficers[0].slice(-4)}`
+                    ) : (
+                      <span title={division.gnOfficers.join("\n")}>{division.gnOfficers.length} officers</span>
+                    )}
                   </td>
                   <td>{PHASE_LABELS[division.phase] ?? division.phase}</td>
                   <td>{division.treeSize}</td>

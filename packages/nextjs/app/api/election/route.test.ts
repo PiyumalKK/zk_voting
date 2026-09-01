@@ -70,8 +70,8 @@ const stubChain = ({ voterData = [true, false], deviceStatus, enrolment }: Chain
         return Promise.resolve(["Alice", "Bob"]);
       case "getVoteCounts":
         return Promise.resolve([1n, 2n]);
-      case "s_gnOfficer":
-        return Promise.resolve("0x0");
+      case "getGNOfficers":
+        return Promise.resolve(["0x0"]);
       case "getVoterData":
         return Promise.resolve(voterData);
       case "getDeviceStatus":

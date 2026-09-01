@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IdentityHub — API Configuration</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <span class="brand-title">Identity Management Server</span>
+    <nav class="navlinks">
+      <a href="/">Database</a>
+      <a href="/api.html" class="active">API Configuration</a>
+    </nav>
+  </div>
+</div>
+
+<div class="page">
+  <div class="page-head">
+    <h1>API Configuration</h1>
+    <p>
+      Each section below publishes independently. Publish divisions first — a GN officer or voter can only
+      be published once their own division is already published, so their checkboxes stay disabled until
+      then.
+    </p>
+  </div>
+
+  <div class="notice">
+    <span>⚠</span>
+    <span>
+      These endpoints have no authentication. Leave the API key field blank when pointing zk_voting's admin
+      bulk-import panel at one of the URLs below. Each endpoint keeps returning whatever that section last
+      published — an empty array if it never has been.
+    </span>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>Publish via API</h2>
+        <p class="desc">Live endpoint URLs — counts reflect what's currently published.</p>
+      </div>
+      <button class="btn btn-danger-ghost" id="clearBtn">Clear everything</button>
+    </div>
+    <div class="card-body">
+      <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="name">Divisions</span>
+        <input readonly id="url-divisions" />
+        <button class="btn btn-secondary" data-copy="url-divisions">Copy</button>
+        <span class="count" id="count-divisions">0 published</span>
+      </div>
+      <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="name">GN Officers</span>
+        <input readonly id="url-officers" />
+        <button class="btn btn-secondary" data-copy="url-officers">Copy</button>
+        <span class="count" id="count-officers">0 published</span>
+      </div>
+      <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="name">Voters</span>
+        <input readonly id="url-voters" />
+        <button class="btn btn-secondary" data-copy="url-voters">Copy</button>
+        <span class="count" id="count-voters">0 published</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>Divisions</h2>
+        <p class="desc">Select which divisions are in scope for the API, then publish them.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="badge" id="divisionsSelectedBadge">0 selected</span>
+        <button class="btn btn-primary" id="applyDivisionsBtn" disabled>Apply divisions</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="divisionsSelectAll" /></th>
+              <th>Name</th>
+              <th>GN officers</th>
+              <th>Voters</th>
+            </tr>
+          </thead>
+          <tbody id="divisionsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>GN Officers</h2>
+        <p class="desc">Only officers whose division has already been published can be chosen.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input class="search" id="officerSearch" placeholder="Filter…" />
+        <span class="badge" id="officersSelectedBadge">0 selected</span>
+        <button class="btn btn-primary" id="applyOfficersBtn" disabled>Apply officers</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="section-toolbar">
+        <label class="select-all-label"><input type="checkbox" id="officersSelectAll" /> Select all eligible officers</label>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="col-check"></th><th>Username</th><th>Full name</th><th>Division</th></tr></thead>
+          <tbody id="officersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>Voters</h2>
+        <p class="desc">Only voters whose division has already been published can be chosen.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input class="search" id="voterSearch" placeholder="Filter…" />
+        <span class="badge" id="votersSelectedBadge">0 selected</span>
+        <button class="btn btn-primary" id="applyVotersBtn" disabled>Apply voters</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="section-toolbar">
+        <label class="select-all-label"><input type="checkbox" id="votersSelectAll" /> Select all eligible voters</label>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th class="col-check"></th><th>NIC</th><th>Full name</th><th>Phone</th><th>Division</th></tr></thead>
+          <tbody id="votersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const el = id => document.getElementById(id);
+  let db = { divisions: [], officers: [], voters: [] };
+
+  // What's actually live on the three GET endpoints right now — each set
+  // updates only when that section's own Apply button succeeds.
+  const published = { divisionIds: new Set(), officerUsernames: new Set(), voterNics: new Set() };
+  // What's checked in the UI, not yet applied. Officer/voter eligibility is
+  // gated on `published.divisionIds`, not this — a division must actually be
+  // published before anything in it can be selected, matching the fact that
+  // the server itself validates officers/voters against the published scope.
+  const selected = { divisionIds: new Set(), officerUsernames: new Set(), voterNics: new Set() };
+
+  const emptyRow = (colspan, text) => `<tr><td colspan="${colspan}" class="empty-state">${text}</td></tr>`;
+
+  // ---------- URLs ----------
+  for (const [id, path] of Object.entries({ "url-divisions": "/api/divisions", "url-officers": "/api/gn-officers", "url-voters": "/api/voters" })) {
+    el(id).value = new URL(path, location.origin).toString();
+  }
+  document.querySelectorAll("button[data-copy]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const input = el(btn.dataset.copy);
+      try {
+        if (!navigator.clipboard || !window.isSecureContext) throw new Error("Clipboard API unavailable");
+        await navigator.clipboard.writeText(input.value);
+      } catch {
+        // Fallback for insecure contexts (e.g. opened via a LAN IP instead of
+        // localhost) where the async Clipboard API doesn't exist or throws.
+        input.removeAttribute("readonly");
+        input.focus();
+        input.select();
+        try {
+          document.execCommand("copy");
+        } catch {
+          toast("Could not copy — select and copy the URL manually.", true);
+          input.setAttribute("readonly", "");
+          return;
+        }
+        input.setAttribute("readonly", "");
+      }
+      const original = btn.textContent;
+      btn.textContent = "Copied";
+      setTimeout(() => (btn.textContent = original), 1400);
+    });
+  });
+
+  // ---------- Toast ----------
+  let toastTimer;
+  function toast(message, isError = false) {
+    const node = el("toast");
+    node.textContent = message;
+    node.className = "toast show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (node.className = "toast"), 2600);
+  }
+
+  // ---------- Counts / badges / apply-button enablement ----------
+  function updateCounts() {
+    el("count-divisions").textContent = `${published.divisionIds.size} published`;
+    el("count-officers").textContent = `${published.officerUsernames.size} published`;
+    el("count-voters").textContent = `${published.voterNics.size} published`;
+    el("divisionsSelectedBadge").textContent = `${selected.divisionIds.size} selected`;
+    el("officersSelectedBadge").textContent = `${selected.officerUsernames.size} selected`;
+    el("votersSelectedBadge").textContent = `${selected.voterNics.size} selected`;
+    el("applyDivisionsBtn").disabled = selected.divisionIds.size === 0;
+    el("applyOfficersBtn").disabled = selected.officerUsernames.size === 0;
+    el("applyVotersBtn").disabled = selected.voterNics.size === 0;
+  }
+
+  // ---------- Divisions ----------
+  function renderDivisions() {
+    el("divisionsBody").innerHTML = db.divisions.length
+      ? db.divisions
+          .map(d => {
+            const officerCount = db.officers.filter(o => o.divisionId === d.id).length;
+            const voterCount = db.voters.filter(v => v.divisionId === d.id).length;
+            const checked = selected.divisionIds.has(d.id) ? "checked" : "";
+            return `<tr>
+              <td class="col-check"><input type="checkbox" data-division="${d.id}" ${checked} /></td>
+              <td><strong>${d.name}</strong></td>
+              <td>${officerCount}</td>
+              <td>${voterCount}</td>
+            </tr>`;
+          })
+          .join("")
+      : emptyRow(4, "No divisions on record.");
+
+    el("divisionsBody").querySelectorAll("input[data-division]").forEach(input => {
+      input.addEventListener("change", () => {
+        const id = Number(input.dataset.division);
+        if (input.checked) selected.divisionIds.add(id);
+        else selected.divisionIds.delete(id);
+        syncDivisionsSelectAll();
+        updateCounts();
+      });
+    });
+    syncDivisionsSelectAll();
+  }
+
+  function syncDivisionsSelectAll() {
+    el("divisionsSelectAll").checked = db.divisions.length > 0 && selected.divisionIds.size === db.divisions.length;
+  }
+
+  el("divisionsSelectAll").addEventListener("change", e => {
+    for (const d of db.divisions) {
+      if (e.target.checked) selected.divisionIds.add(d.id);
+      else selected.divisionIds.delete(d.id);
+    }
+    renderDivisions();
+    updateCounts();
+  });
+
+  el("applyDivisionsBtn").addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/config/divisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ divisionIds: [...selected.divisionIds] }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Could not publish divisions.");
+      // The server prunes officers/voters whose division just left scope —
+      // adopt its answer as the new baseline for both published and staged.
+      published.divisionIds = new Set(payload.divisionIds);
+      published.officerUsernames = new Set(payload.officerUsernames);
+      published.voterNics = new Set(payload.voterNics);
+      selected.officerUsernames = new Set(payload.officerUsernames);
+      selected.voterNics = new Set(payload.voterNics);
+      renderOfficers(el("officerSearch").value);
+      renderVoters(el("voterSearch").value);
+      updateCounts();
+      toast("Divisions published.");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+
+  // ---------- Officers ----------
+  function renderOfficers(filter = "") {
+    const q = filter.trim().toLowerCase();
+    const rows = db.officers.filter(
+      o => !q || o.username.toLowerCase().includes(q) || o.fullName.toLowerCase().includes(q) || o.division.toLowerCase().includes(q),
+    );
+    el("officersBody").innerHTML = rows.length
+      ? rows
+          .map(o => {
+            const eligible = published.divisionIds.has(o.divisionId);
+            const checked = eligible && selected.officerUsernames.has(o.username) ? "checked" : "";
+            const disabled = eligible ? "" : "disabled";
+            return `<tr class="${eligible ? "" : "is-disabled"}">
+              <td class="col-check"><input type="checkbox" data-officer="${o.username}" ${checked} ${disabled} /></td>
+              <td class="mono">${o.username}</td>
+              <td>${o.fullName}</td>
+              <td>${o.division}</td>
+            </tr>`;
+          })
+          .join("")
+      : emptyRow(4, "No matching officers.");
+
+    el("officersBody").querySelectorAll("input[data-officer]").forEach(input => {
+      input.addEventListener("change", () => {
+        if (input.checked) selected.officerUsernames.add(input.dataset.officer);
+        else selected.officerUsernames.delete(input.dataset.officer);
+        syncOfficersSelectAll();
+        updateCounts();
+      });
+    });
+    syncOfficersSelectAll();
+  }
+
+  function syncOfficersSelectAll() {
+    const eligible = db.officers.filter(o => published.divisionIds.has(o.divisionId));
+    el("officersSelectAll").checked = eligible.length > 0 && eligible.every(o => selected.officerUsernames.has(o.username));
+    el("officersSelectAll").disabled = eligible.length === 0;
+  }
+
+  el("officersSelectAll").addEventListener("change", e => {
+    const eligible = db.officers.filter(o => published.divisionIds.has(o.divisionId));
+    for (const o of eligible) {
+      if (e.target.checked) selected.officerUsernames.add(o.username);
+      else selected.officerUsernames.delete(o.username);
+    }
+    renderOfficers(el("officerSearch").value);
+    updateCounts();
+  });
+
+  el("officerSearch").addEventListener("input", e => renderOfficers(e.target.value));
+
+  el("applyOfficersBtn").addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/config/officers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ officerUsernames: [...selected.officerUsernames] }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Could not publish GN officers.");
+      published.officerUsernames = new Set(payload.officerUsernames);
+      updateCounts();
+      toast("GN officers published.");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+
+  // ---------- Voters ----------
+  function renderVoters(filter = "") {
+    const q = filter.trim().toLowerCase();
+    const rows = db.voters.filter(
+      v => !q || v.nic.toLowerCase().includes(q) || v.fullName.toLowerCase().includes(q) || v.division.toLowerCase().includes(q),
+    );
+    el("votersBody").innerHTML = rows.length
+      ? rows
+          .map(v => {
+            const eligible = published.divisionIds.has(v.divisionId);
+            const checked = eligible && selected.voterNics.has(v.nic) ? "checked" : "";
+            const disabled = eligible ? "" : "disabled";
+            return `<tr class="${eligible ? "" : "is-disabled"}">
+              <td class="col-check"><input type="checkbox" data-voter="${v.nic}" ${checked} ${disabled} /></td>
+              <td class="mono">${v.nic}</td>
+              <td>${v.fullName}</td>
+              <td class="mono">${v.phone}</td>
+              <td>${v.division}</td>
+            </tr>`;
+          })
+          .join("")
+      : emptyRow(5, "No matching voters.");
+
+    el("votersBody").querySelectorAll("input[data-voter]").forEach(input => {
+      input.addEventListener("change", () => {
+        if (input.checked) selected.voterNics.add(input.dataset.voter);
+        else selected.voterNics.delete(input.dataset.voter);
+        syncVotersSelectAll();
+        updateCounts();
+      });
+    });
+    syncVotersSelectAll();
+  }
+
+  function syncVotersSelectAll() {
+    const eligible = db.voters.filter(v => published.divisionIds.has(v.divisionId));
+    el("votersSelectAll").checked = eligible.length > 0 && eligible.every(v => selected.voterNics.has(v.nic));
+    el("votersSelectAll").disabled = eligible.length === 0;
+  }
+
+  el("votersSelectAll").addEventListener("change", e => {
+    const eligible = db.voters.filter(v => published.divisionIds.has(v.divisionId));
+    for (const v of eligible) {
+      if (e.target.checked) selected.voterNics.add(v.nic);
+      else selected.voterNics.delete(v.nic);
+    }
+    renderVoters(el("voterSearch").value);
+    updateCounts();
+  });
+
+  el("voterSearch").addEventListener("input", e => renderVoters(e.target.value));
+
+  el("applyVotersBtn").addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/config/voters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voterNics: [...selected.voterNics] }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Could not publish voters.");
+      published.voterNics = new Set(payload.voterNics);
+      updateCounts();
+      toast("Voters published.");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+
+  // ---------- Clear everything ----------
+  el("clearBtn").addEventListener("click", async () => {
+    await fetch("/api/config/clear", { method: "POST" });
+    published.divisionIds.clear();
+    published.officerUsernames.clear();
+    published.voterNics.clear();
+    selected.divisionIds.clear();
+    selected.officerUsernames.clear();
+    selected.voterNics.clear();
+    renderDivisions();
+    renderOfficers(el("officerSearch").value);
+    renderVoters(el("voterSearch").value);
+    updateCounts();
+    toast("Cleared — all three endpoints now return an empty array.");
+  });
+
+  // ---------- Boot ----------
+  Promise.all([fetch("/api/db").then(r => r.json()), fetch("/api/config").then(r => r.json())]).then(([database, config]) => {
+    db = database;
+    published.divisionIds = new Set(config.divisionIds);
+    published.officerUsernames = new Set(config.officerUsernames);
+    published.voterNics = new Set(config.voterNics);
+    selected.divisionIds = new Set(config.divisionIds);
+    selected.officerUsernames = new Set(config.officerUsernames);
+    selected.voterNics = new Set(config.voterNics);
+    renderDivisions();
+    renderOfficers();
+    renderVoters();
+    updateCounts();
+  });
+</script>
+</body>
+</html>

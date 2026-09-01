@@ -22,7 +22,7 @@ const DIVISION = {
   id: 0,
   name: "Kaduwela",
   votingContract: "0x0000000000000000000000000000000000000aa1",
-  gnOfficer: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  gnOfficers: ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"],
   active: true,
   phase: 1,
   treeSize: 0,
@@ -106,11 +106,11 @@ beforeEach(() => {
     divisions: [DIVISION],
     isLoading: false,
     error: null,
-    identity: DIVISION.gnOfficer,
+    identity: DIVISION.gnOfficers[0],
     needsSignIn: false,
     refetch: vi.fn(),
   };
-  mocks.account = { address: DIVISION.gnOfficer };
+  mocks.account = { address: DIVISION.gnOfficers[0] };
   mocks.write.mockReset().mockResolvedValue("0xdeadbeef");
   mocks.signMessage.mockReset().mockResolvedValue("0xsignature");
   mocks.notifyError.mockClear();
@@ -132,7 +132,7 @@ describe("GN register — hardhat mode", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/nic/hash");
-    expect(init.headers["x-gn-address"]).toBe(DIVISION.gnOfficer);
+    expect(init.headers["x-gn-address"]).toBe(DIVISION.gnOfficers[0]);
     expect(init.headers["x-gn-signature"]).toBe("0xsignature");
     expect(init.headers["x-gn-timestamp"]).toMatch(/^\d+$/);
     expect(mocks.signMessage).toHaveBeenCalled();

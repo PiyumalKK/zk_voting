@@ -94,14 +94,16 @@ const deployDivisions: DeployFunction = async function (hre: HardhatRuntimeEnvir
     // is idempotent, but this call was not — it fired on every run.
     const votingContract = await hre.ethers.getContractAt("Voting", votingDeploy.address);
     if (isCustomChain) {
-      const current = await votingContract.s_gnOfficer();
+      const current = await votingContract.getGNOfficers();
       console.log(
-        current === ZERO_ADDRESS
+        current.length === 0
           ? `  ⏭  ${div.name}: GN officer left unassigned — create the officer's account in Admin → Divisions`
-          : `  ↺ ${div.name}: GN officer already bound to ${current}, left as-is`,
+          : `  ↺ ${div.name}: ${current.length} GN officer(s) already bound, left as-is`,
       );
+    } else if (await votingContract.s_isGnOfficer(div.gn)) {
+      console.log(`  ↺ ${div.name}: GN officer already set to ${div.gn}`);
     } else {
-      await votingContract.setGNOfficer(div.gn);
+      await votingContract.setGNOfficer(div.gn, true);
       console.log(`  ✅ ${div.name}: GN officer set to ${div.gn}`);
     }
 

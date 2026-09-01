@@ -28,7 +28,7 @@ const { DIVISION, OWNER, REGISTRY, VOTING_DATA, NIC_REGISTRY, NEW_DIVISION_ADDRE
       id: 0,
       name: "Kaduwela",
       votingContract: "0x0000000000000000000000000000000000000aa1",
-      gnOfficer: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      gnOfficers: ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"],
       active: true,
       phase: 0,
       treeSize: 0,
@@ -382,46 +382,18 @@ describe("admin area — write sites go through the seam", () => {
     expect(mocks.notifySuccess).not.toHaveBeenCalledWith(expect.stringContaining("authorised"));
   });
 
-  it("lists divisions that were never authorised, and can repair one", async () => {
-    // No VotingContractUpdated events at all: the state of any chain whose
-    // divisions were created by hand before this was wired up.
-    mocks.getLogs.mockResolvedValue([]);
-
-    const user = await renderAsAdmin(<AdminDivisionsPage />, /add new division/i);
-
-    await waitFor(() => expect(screen.getByText(/cannot be used for GN enrolment yet/i)).toBeDefined());
-    await user.click(screen.getByRole("button", { name: /^authorise$/i }));
-
-    await waitFor(() => expect(mocks.write).toHaveBeenCalled());
-    expect(mocks.write.mock.calls[0][0]).toMatchObject({
-      address: NIC_REGISTRY,
-      functionName: "setVotingContract",
-      args: [DIVISION.votingContract, true],
-    });
-  });
-
-  it("says nothing when every division is already authorised", async () => {
-    // The default stub authorises the sample division, so the warning must not
-    // appear — an indicator that cries wolf on a correctly deployed chain would
-    // be worse than none.
-    await renderAsAdmin(<AdminDivisionsPage />, /add new division/i);
-
-    await waitFor(() => expect(mocks.getLogs).toHaveBeenCalled());
-    expect(screen.queryByText(/cannot be used for GN enrolment yet/i)).toBeNull();
-  });
-
   it("assigns a GN officer on the chosen division contract", async () => {
     const user = await renderAsAdmin(<AdminDivisionsPage />, /gn officer management/i);
 
     const addressInputs = screen.getAllByPlaceholderText("0x...");
-    await user.type(addressInputs[addressInputs.length - 1], DIVISION.gnOfficer);
+    await user.type(addressInputs[addressInputs.length - 1], DIVISION.gnOfficers[0]);
     await user.click(screen.getByRole("button", { name: /assign GN to Kaduwela/i }));
 
     await waitFor(() => expect(mocks.write).toHaveBeenCalled());
     expect(mocks.write.mock.calls[0][0]).toMatchObject({
       address: DIVISION.votingContract,
       functionName: "setGNOfficer",
-      args: [DIVISION.gnOfficer],
+      args: [DIVISION.gnOfficers[0], true],
     });
   });
 
@@ -625,15 +597,15 @@ describe("admin area — an officer who cannot sign is not shown as staffed", ()
 
     await waitFor(() => expect(screen.getByText(/cannot enrol voters/i)).toBeDefined());
     expect(screen.getByText("No account")).toBeDefined();
-    expect(screen.queryByText("Assigned")).toBeNull();
+    expect(screen.queryByText(/\d+ assigned/)).toBeNull();
   });
 
   it("reports it as assigned once an account holds that address", async () => {
-    stubAccounts([{ address: DIVISION.gnOfficer }]);
+    stubAccounts([{ address: DIVISION.gnOfficers[0] }]);
 
     await renderDivisions();
 
-    await waitFor(() => expect(screen.getByText("Assigned")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("1 assigned")).toBeDefined());
     expect(screen.queryByText(/cannot enrol voters/i)).toBeNull();
     expect(screen.queryByText("No account")).toBeNull();
   });
@@ -643,7 +615,7 @@ describe("admin area — an officer who cannot sign is not shown as staffed", ()
     renderAdmin(<AdminDivisionsPage />);
     await screen.findByRole("heading", { name: /gn officer management/i });
 
-    await waitFor(() => expect(screen.getByText("Assigned")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("1 assigned")).toBeDefined());
     expect(screen.queryByText(/cannot enrol voters/i)).toBeNull();
   });
 });

@@ -26,7 +26,7 @@ export interface NicHashAuthInput {
   session: Pick<SessionData, "role" | "username" | "divisionId">;
   /** The stored account for `session.username`, or undefined if it has since been deleted. */
   account: Pick<GnAccountRecord, "address" | "divisionId" | "disabled"> | undefined;
-  divisions: readonly Pick<DivisionSummary, "id" | "gnOfficer">[];
+  divisions: readonly Pick<DivisionSummary, "id" | "gnOfficers">[];
 }
 
 export type NicHashAuthResult =
@@ -60,7 +60,7 @@ export const authoriseNicHashSession = ({ session, account, divisions }: NicHash
     return { ok: false, status: 403, error: `Division ${divisionId} is not registered on this chain.` };
   }
 
-  if (!sameAddress(division.gnOfficer, account.address)) {
+  if (!division.gnOfficers.some(gn => sameAddress(gn, account.address))) {
     return {
       ok: false,
       status: 403,

@@ -75,10 +75,16 @@ const LoginForm = () => {
       // it points at a page they cannot use yet.
       if (body?.mustChangePassword === true) {
         router.replace(CHANGE_PASSWORD_PATH);
+        router.refresh();
         return;
       }
 
       router.replace(safeNextPath(searchParams.get("next"), homePathForRole(role)));
+      // `replace` alone can reuse the client router's cached copy of the
+      // destination — the one it fetched (and got bounced to /login from)
+      // before this cookie existed. `refresh()` discards that and forces a
+      // real re-render against the session that's now on the client.
+      router.refresh();
     } catch {
       setError("Could not reach the sign-in service. Is the Next.js server running?");
     } finally {

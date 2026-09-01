@@ -79,7 +79,7 @@ describe("Runtime division enrolment", function () {
 
     it("starts with NO GN officer assigned", async function () {
       const voting = await createDivision("Kandy");
-      expect(await voting.s_gnOfficer()).to.equal(ethers.ZeroAddress);
+      expect(await voting.getGNOfficers()).to.have.length(0);
     });
 
     it("is NOT authorised in NicRegistry, so enrolment reverts", async function () {
@@ -96,7 +96,7 @@ describe("Runtime division enrolment", function () {
       // election authority is no help. Worth pinning: it means the admin cannot
       // work around a missing authorisation by enrolling the voter themselves.
       const voting = await createDivision("Kandy");
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
       await expect(
         nicRegistry.connect(owner).reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
       ).to.be.revertedWith("Unregistered division");
@@ -106,11 +106,11 @@ describe("Runtime division enrolment", function () {
   describe("once the admin finishes setting the division up", function () {
     it("authorising it in NicRegistry lets the assigned GN enrol a voter", async function () {
       // The two calls the admin panel must make after createDivision. Both are
-      // owner-only, and both are needed: authorisation alone leaves s_gnOfficer
-      // at the zero address, and a GN alone leaves the division unauthorised.
+      // owner-only, and both are needed: authorisation alone leaves the officer
+      // list empty, and a GN alone leaves the division unauthorised.
       const voting = await createDivision("Kandy");
       await nicRegistry.setVotingContract(await voting.getAddress(), true);
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
 
       await expect(
         nicRegistry.connect(gn).reserveNicHash(NIC_HASH, await voting.getAddress(), stranger.address),
@@ -143,7 +143,7 @@ describe("Runtime division enrolment", function () {
     it("authorisation can be revoked again", async function () {
       const voting = await createDivision("Kandy");
       await nicRegistry.setVotingContract(await voting.getAddress(), true);
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
       await nicRegistry.setVotingContract(await voting.getAddress(), false);
 
       await expect(

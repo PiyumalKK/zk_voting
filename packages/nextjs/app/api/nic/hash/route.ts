@@ -37,7 +37,7 @@ const REGISTRY_ABI = [
 ] as const;
 
 const VOTING_ABI = [
-  { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "getGNOfficers", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address[]" }] },
 ] as const;
 
 type RateLimitRecord = { count: number; windowStartedAt: number };
@@ -76,18 +76,20 @@ async function isAuthorizedGn(address: `0x${string}`): Promise<boolean> {
     functionName: "getAllDivisions",
   })) as readonly { votingContract: `0x${string}`; active: boolean }[];
 
-  const officers = await Promise.all(
+  const officerLists = await Promise.all(
     divisions
       .filter(division => division.active)
       .map(division =>
         client.readContract({
           address: division.votingContract,
           abi: VOTING_ABI,
-          functionName: "s_gnOfficer",
+          functionName: "getGNOfficers",
         }),
       ),
   );
-  return officers.some(officer => (officer as string).toLowerCase() === address.toLowerCase());
+  return officerLists.some(officers =>
+    (officers as string[]).some(officer => officer.toLowerCase() === address.toLowerCase()),
+  );
 }
 
 /**

@@ -4,6 +4,7 @@ import { requireSession } from "~~/services/auth/serverSession";
 import { isCustomChainMode } from "~~/services/auth/session";
 import { RowSourceError, buildRowSource } from "~~/services/bulkImport/rowSource";
 import type { BulkImportSourceInput, ImportRow } from "~~/services/bulkImport/rowSource";
+import { streamRowResults } from "~~/services/bulkImport/streamRows";
 import {
   CreateDivisionError,
   createDivisionOnChain,
@@ -83,31 +84,29 @@ export async function POST(req: NextRequest) {
   }
   const existingNames = new Set(divisions.map(division => normaliseDivisionName(division.name)));
 
-  const results: RowResult[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNumber = i + 2; // header is row 1, so the first data row is row 2 — matches what a spreadsheet shows
-    const name = rowName(row);
+  return streamRowResults<RowResult>(rows.length, async send => {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; // header is row 1, so the first data row is row 2 — matches what a spreadsheet shows
+      const name = rowName(row);
 
-    try {
-      const created = await createDivisionOnChain(name, auth.data, existingNames);
-      existingNames.add(normaliseDivisionName(created.name));
-      results.push({
-        row: rowNumber,
-        name: created.name,
-        votingContract: created.votingContract,
-        authorised: created.authorised,
-        error: created.assignError && `Created, but ${created.assignError}`,
-      });
-    } catch (error) {
-      results.push({
-        row: rowNumber,
-        name: name || undefined,
-        error: error instanceof CreateDivisionError ? error.message : "Could not create this division.",
-      });
+      try {
+        const created = await createDivisionOnChain(name, auth.data, existingNames);
+        existingNames.add(normaliseDivisionName(created.name));
+        send({
+          row: rowNumber,
+          name: created.name,
+          votingContract: created.votingContract,
+          authorised: created.authorised,
+          error: created.assignError && `Created, but ${created.assignError}`,
+        });
+      } catch (error) {
+        send({
+          row: rowNumber,
+          name: name || undefined,
+          error: error instanceof CreateDivisionError ? error.message : "Could not create this division.",
+        });
+      }
     }
-  }
-
-  const succeeded = results.filter(result => result.votingContract).length;
-  return NextResponse.json({ results, succeeded, failed: results.length - succeeded });
+  });
 }

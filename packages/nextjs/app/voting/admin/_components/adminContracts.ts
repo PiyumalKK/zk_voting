@@ -15,7 +15,10 @@ export const SET_GN_OFFICER_ABI = [
     name: "setGNOfficer",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [{ name: "_gnOfficer", type: "address" }],
+    inputs: [
+      { name: "_gnOfficer", type: "address" },
+      { name: "_isOfficer", type: "bool" },
+    ],
     outputs: [],
   },
 ] as const;

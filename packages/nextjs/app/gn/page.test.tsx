@@ -16,7 +16,7 @@ const DIVISION = {
   id: 0,
   name: "Kaduwela",
   votingContract: "0x0000000000000000000000000000000000000aa1",
-  gnOfficer: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  gnOfficers: ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"],
   active: true,
   phase: 1,
   treeSize: 3,
@@ -105,12 +105,18 @@ describe("GN portal — identity prompts", () => {
   });
 
   it("names the wallet address when a hardhat officer has no division", () => {
-    mocks.gn = { ...mocks.gn, mode: "hardhat", identity: DIVISION.gnOfficer, division: null, divisions: [DIVISION] };
+    mocks.gn = {
+      ...mocks.gn,
+      mode: "hardhat",
+      identity: DIVISION.gnOfficers[0],
+      division: null,
+      divisions: [DIVISION],
+    };
 
     render(<GNDashboard />);
 
     expect(screen.getByText(/not assigned as GN for any division/i)).toBeDefined();
-    expect(screen.getByText(DIVISION.gnOfficer)).toBeDefined();
+    expect(screen.getByText(DIVISION.gnOfficers[0])).toBeDefined();
   });
 });
 

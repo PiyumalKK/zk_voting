@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPublicClient, http } from "viem";
+import type { PublicClient } from "viem";
 import { useScaffoldReadContract } from "~~/hooks/scaffold-eth";
 import { useTargetNetwork } from "~~/hooks/scaffold-eth/useTargetNetwork";
 
@@ -20,7 +21,8 @@ export interface LiveDivision {
   id: number;
   name: string;
   votingContract: `0x${string}`;
-  gnOfficer: string;
+  /** Every address currently authorised as a GN officer for this division. */
+  gnOfficers: readonly string[];
   active: boolean;
   phase: number;
   treeSize: number;
@@ -46,7 +48,7 @@ const VOTING_READ_ABI = [
       { type: "uint256" }, // candidateCount
     ],
   },
-  { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "getGNOfficers", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address[]" }] },
 ] as const;
 
 interface RegistryDivision {
@@ -55,6 +57,161 @@ interface RegistryDivision {
   gnOfficer: `0x${string}`;
   active: boolean;
 }
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * How often the shared poller below re-reads every division's live data.
+ * Deliberately longer than a typical "instant" UI poll: this read is O(2 ×
+ * division count), and several admin panels are on screen (and therefore
+ * subscribed) at once — see the module doc on `enrichedListeners`.
+ */
+const POLL_INTERVAL_MS = 15_000;
+
+interface EnrichedState {
+  status: "idle" | "loading" | "ready" | "error";
+  divisions: LiveDivision[];
+  error: string | null;
+}
+
+const IDLE_ENRICHED: EnrichedState = { status: "idle", divisions: [], error: null };
+
+/**
+ * Shared, module-level cache for the expensive half of this hook: reading
+ * every division's live `getGNOfficers()` / `getVotingData()` from chain.
+ *
+ * Before this, each `useDivisions()` call ran its own independent
+ * `setInterval` and its own `Promise.all` over every division — and several
+ * admin panels call this hook on the same page at once (the provider, the
+ * divisions list, the GN account panels, both bulk-import panels). Five
+ * panels × N divisions × two reads, on a 4s timer, is exactly the load that
+ * overwhelmed the chain once an admin bulk-imported enough divisions
+ * (crashed at ~1,000). Sharing one poller across every caller turns that
+ * multiplication back into a single read pass, regardless of how many
+ * components are mounted.
+ *
+ * The registry list itself (`getAllDivisions`, via `useScaffoldReadContract`)
+ * doesn't need this treatment — wagmi's `useReadContract` is backed by
+ * TanStack Query, which already dedupes identical concurrent queries across
+ * every caller. It's only this manual per-division fan-out that wasn't.
+ */
+let enrichedState: EnrichedState = IDLE_ENRICHED;
+const enrichedListeners = new Set<() => void>();
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let inFlight: Promise<void> | null = null;
+let lastRegistryKey: string | null = null;
+let lastRpcUrl = "";
+let latestRegList: readonly RegistryDivision[] = [];
+let latestPublicClient: PublicClient | null = null;
+
+const setEnrichedState = (next: EnrichedState) => {
+  enrichedState = next;
+  for (const listener of enrichedListeners) listener();
+};
+
+const readDivision = async (publicClient: PublicClient, reg: RegistryDivision, id: number): Promise<LiveDivision> => {
+  try {
+    const [gnOfficers, votingData] = await Promise.all([
+      publicClient.readContract({ address: reg.votingContract, abi: VOTING_READ_ABI, functionName: "getGNOfficers" }),
+      publicClient.readContract({ address: reg.votingContract, abi: VOTING_READ_ABI, functionName: "getVotingData" }),
+    ]);
+    return {
+      id,
+      name: reg.name,
+      votingContract: reg.votingContract,
+      gnOfficers: gnOfficers as readonly string[],
+      active: reg.active,
+      phase: Number((votingData as readonly unknown[])[2]),
+      treeSize: Number((votingData as readonly unknown[])[5]),
+      root: (votingData as readonly unknown[])[7] as bigint,
+    };
+  } catch {
+    // Voting contract unreachable — fall back to registry's stored values.
+    return {
+      id,
+      name: reg.name,
+      votingContract: reg.votingContract,
+      gnOfficers: reg.gnOfficer !== ZERO_ADDRESS ? [reg.gnOfficer] : [],
+      active: reg.active,
+      phase: 0,
+      treeSize: 0,
+      root: 0n,
+    };
+  }
+};
+
+/** Joins the in-flight read if one is already running, rather than starting a second. */
+const loadEnriched = (regList: readonly RegistryDivision[], publicClient: PublicClient): Promise<void> => {
+  if (inFlight) return inFlight;
+
+  // Only show "loading" before the very first successful read; a background
+  // poll refreshes silently and keeps whatever was on screen.
+  setEnrichedState({
+    status: enrichedState.status === "ready" ? "ready" : "loading",
+    divisions: enrichedState.divisions,
+    error: null,
+  });
+
+  inFlight = Promise.all(regList.map((reg, id) => readDivision(publicClient, reg, id)))
+    .then(divisions => setEnrichedState({ status: "ready", divisions, error: null }))
+    .catch(() =>
+      setEnrichedState({
+        status: "error",
+        divisions: enrichedState.divisions,
+        error: "Failed to load division data from chain.",
+      }),
+    )
+    .finally(() => {
+      inFlight = null;
+    });
+
+  return inFlight;
+};
+
+/** Called from every `useDivisions()` render with its freshest inputs. */
+const syncEnriched = (
+  regList: readonly RegistryDivision[],
+  publicClient: PublicClient,
+  registryKey: string,
+  rpcUrl: string,
+) => {
+  latestRegList = regList;
+  latestPublicClient = publicClient;
+
+  const changed = lastRegistryKey === null || registryKey !== lastRegistryKey || rpcUrl !== lastRpcUrl;
+  lastRegistryKey = registryKey;
+  lastRpcUrl = rpcUrl;
+
+  if (changed) void loadEnriched(regList, publicClient);
+};
+
+const subscribeEnriched = (listener: () => void) => {
+  const wasUnwatched = enrichedListeners.size === 0;
+  enrichedListeners.add(listener);
+
+  if (wasUnwatched) {
+    // Coming back from "nobody watching" — the cache may be stale (or from a
+    // different chain by now). Invalidate so the next sync forces a reload
+    // instead of waiting out a full poll interval.
+    lastRegistryKey = null;
+    if (!pollTimer) {
+      pollTimer = setInterval(() => {
+        if (latestPublicClient) void loadEnriched(latestRegList, latestPublicClient);
+      }, POLL_INTERVAL_MS);
+    }
+  }
+
+  return () => {
+    enrichedListeners.delete(listener);
+    if (enrichedListeners.size === 0 && pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+};
+
+const getEnrichedSnapshot = () => enrichedState;
+const getEnrichedServerSnapshot = () => IDLE_ENRICHED;
 
 /**
  * Reads all divisions from the ElectionRegistry, then enriches each with live
@@ -82,104 +239,23 @@ export const useDivisions = () => {
     functionName: "getAllDivisions",
   });
 
-  const [divisions, setDivisions] = useState<LiveDivision[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
-  const hasLoadedRef = useRef(false);
-
   // Stabilise the dependency: only re-run when the set of contract addresses changes.
   const registryKey = useMemo(() => {
     if (!registryDivisions) return "";
     return (registryDivisions as readonly RegistryDivision[]).map(d => d.votingContract).join(",");
   }, [registryDivisions]);
 
+  const enrichedSnapshot = useSyncExternalStore(subscribeEnriched, getEnrichedSnapshot, getEnrichedServerSnapshot);
+
   useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      if (registryError) {
-        setError("Could not read the ElectionRegistry. Is the contract deployed and the node running?");
-        setIsLoading(false);
-        return;
-      }
-      if (!registryDivisions || !publicClient) {
-        return;
-      }
-
-      // Only show the spinner on the very first load; background polls refresh silently.
-      if (!hasLoadedRef.current) setIsLoading(true);
-      setError(null);
-
-      try {
-        const regList = registryDivisions as readonly RegistryDivision[];
-        const enriched = await Promise.all(
-          regList.map(async (reg, id): Promise<LiveDivision> => {
-            try {
-              const [gn, votingData] = await Promise.all([
-                publicClient.readContract({
-                  address: reg.votingContract,
-                  abi: VOTING_READ_ABI,
-                  functionName: "s_gnOfficer",
-                }),
-                publicClient.readContract({
-                  address: reg.votingContract,
-                  abi: VOTING_READ_ABI,
-                  functionName: "getVotingData",
-                }),
-              ]);
-              return {
-                id,
-                name: reg.name,
-                votingContract: reg.votingContract,
-                gnOfficer: gn as string,
-                active: reg.active,
-                phase: Number((votingData as readonly unknown[])[2]),
-                treeSize: Number((votingData as readonly unknown[])[5]),
-                root: (votingData as readonly unknown[])[7] as bigint,
-              };
-            } catch {
-              // Voting contract unreachable — fall back to registry's stored values.
-              return {
-                id,
-                name: reg.name,
-                votingContract: reg.votingContract,
-                gnOfficer: reg.gnOfficer,
-                active: reg.active,
-                phase: 0,
-                treeSize: 0,
-                root: 0n,
-              };
-            }
-          }),
-        );
-
-        if (!cancelled) {
-          setDivisions(enriched);
-          setIsLoading(false);
-          hasLoadedRef.current = true;
-        }
-      } catch {
-        if (!cancelled) {
-          setError("Failed to load division data from chain.");
-          setIsLoading(false);
-        }
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [registryKey, publicClient, registryError, refreshTick]);
-
-  // Poll the chain so GN assignments, phase changes and new votes appear live
-  // without a manual refresh. Silent (no spinner) after the first load.
-  useEffect(() => {
-    const interval = setInterval(() => setRefreshTick(t => t + 1), 4000);
-    return () => clearInterval(interval);
-  }, []);
+    if (registryError || !registryDivisions || !publicClient) return;
+    syncEnriched(
+      registryDivisions as readonly RegistryDivision[],
+      publicClient,
+      registryKey,
+      targetNetwork.rpcUrls.default.http[0],
+    );
+  }, [registryKey, publicClient, registryDivisions, registryError, targetNetwork]);
 
   const [hiddenIds, setHiddenIds] = useState<number[]>([]);
 
@@ -203,10 +279,16 @@ export const useDivisions = () => {
   };
 
   return {
-    divisions: divisions.map(d => ({ ...d, hidden: hiddenIds.includes(d.id) })),
-    isLoading: isLoading || registryLoading,
-    error,
-    refetch: () => setRefreshTick(t => t + 1),
+    divisions: enrichedSnapshot.divisions.map(d => ({ ...d, hidden: hiddenIds.includes(d.id) })),
+    isLoading: registryLoading || enrichedSnapshot.status === "idle" || enrichedSnapshot.status === "loading",
+    error: registryError
+      ? "Could not read the ElectionRegistry. Is the contract deployed and the node running?"
+      : enrichedSnapshot.error,
+    refetch: () => {
+      if (registryDivisions && publicClient) {
+        void loadEnriched(registryDivisions as readonly RegistryDivision[], publicClient);
+      }
+    },
     toggleHidden,
   };
 };

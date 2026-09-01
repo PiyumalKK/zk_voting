@@ -406,8 +406,8 @@ async function runAdminLifecycle(ctx, voting) {
   // assigns Kaduwela's GN seat to the deployer for demo convenience, which
   // would let this whole gate pass with the owner quietly doing the GN's job —
   // and the separation of those two roles is the point of 01-AUTH-DESIGN §4.
-  await write(OWNER, "setGNOfficer", [GN_OFFICER.address]);
-  check("admin assigns a GN officer", (await read("s_gnOfficer")) === GN_OFFICER.address, GN_OFFICER.address);
+  await write(OWNER, "setGNOfficer", [GN_OFFICER.address, true]);
+  check("admin assigns a GN officer", await read("s_isGnOfficer", [GN_OFFICER.address]), GN_OFFICER.address);
 
   await write(OWNER, "startRegistration", [REGISTRATION_SECONDS]);
   check("admin opens registration", Number(await read("currentPhase")) === 1);

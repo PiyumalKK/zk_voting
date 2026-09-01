@@ -5,6 +5,7 @@ import { requireSession } from "~~/services/auth/serverSession";
 import { isCustomChainMode } from "~~/services/auth/session";
 import { RowSourceError, buildRowSource } from "~~/services/bulkImport/rowSource";
 import type { BulkImportSourceInput, ImportRow } from "~~/services/bulkImport/rowSource";
+import { streamRowResults } from "~~/services/bulkImport/streamRows";
 
 /**
  * `POST /api/gn-accounts/bulk` — admin-only bulk creation of GN officer
@@ -75,44 +76,42 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const results: RowResult[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNumber = i + 2; // header is row 1, so the first data row is row 2 — matches what a spreadsheet shows
-    const username = rowUsername(row);
-    const divisionName = rowDivisionName(row);
+  return streamRowResults<RowResult>(rows.length, async send => {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; // header is row 1, so the first data row is row 2 — matches what a spreadsheet shows
+      const username = rowUsername(row);
+      const divisionName = rowDivisionName(row);
 
-    if (!divisionName) {
-      results.push({ row: rowNumber, username, error: "Missing `division` column." });
-      continue;
-    }
-    const division = divisions.find(candidate => candidate.name.toLowerCase() === divisionName.trim().toLowerCase());
-    if (!division) {
-      results.push({ row: rowNumber, username, divisionName, error: `No division named "${divisionName}".` });
-      continue;
-    }
+      if (!divisionName) {
+        send({ row: rowNumber, username, error: "Missing `division` column." });
+        continue;
+      }
+      const division = divisions.find(candidate => candidate.name.toLowerCase() === divisionName.trim().toLowerCase());
+      if (!division) {
+        send({ row: rowNumber, username, divisionName, error: `No division named "${divisionName}".` });
+        continue;
+      }
 
-    try {
-      const created = await createGnOfficerAccount({ username, divisionId: division.id }, auth.data, divisions);
-      results.push({
-        row: rowNumber,
-        username: created.username,
-        divisionName: created.divisionName,
-        password: created.password,
-        address: created.address,
-        assigned: created.assigned,
-        error: created.assignError && `Created, but on-chain assignment failed: ${created.assignError}`,
-      });
-    } catch (error) {
-      results.push({
-        row: rowNumber,
-        username,
-        divisionName,
-        error: error instanceof CreateOfficerError ? error.message : "Could not create this account.",
-      });
+      try {
+        const created = await createGnOfficerAccount({ username, divisionId: division.id }, auth.data, divisions);
+        send({
+          row: rowNumber,
+          username: created.username,
+          divisionName: created.divisionName,
+          password: created.password,
+          address: created.address,
+          assigned: created.assigned,
+          error: created.assignError && `Created, but on-chain assignment failed: ${created.assignError}`,
+        });
+      } catch (error) {
+        send({
+          row: rowNumber,
+          username,
+          divisionName,
+          error: error instanceof CreateOfficerError ? error.message : "Could not create this account.",
+        });
+      }
     }
-  }
-
-  const succeeded = results.filter(result => result.password).length;
-  return NextResponse.json({ results, succeeded, failed: results.length - succeeded });
+  });
 }
