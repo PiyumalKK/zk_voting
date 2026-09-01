@@ -33,6 +33,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ title: "🇱🇰 SL Vote" }} />
         <Stack.Screen name="onboarding" options={{ title: "Set up identity" }} />
+        <Stack.Screen name="claim/[token]" options={{ title: "Complete your enrolment" }} />
         <Stack.Screen name="register" options={{ title: "Register to vote" }} />
         <Stack.Screen name="vote" options={{ title: "Cast your vote" }} />
         <Stack.Screen name="verify" options={{ title: "Verify my vote" }} />
