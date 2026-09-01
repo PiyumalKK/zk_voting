@@ -79,13 +79,30 @@ export const createServerPublicClient = (): PublicClient =>
   createPublicClient({ transport: http(serverChainConfig.rpcUrl) }) as PublicClient;
 
 /**
- * Reads every division from the registry, with its live GN officer.
+ * `loadDivisions()` reads every division from the registry, then does one
+ * more on-chain read *per division* for its live GN officer list — O(N) reads
+ * for one call. `executeRelayCall` (the sole path behind `POST /api/relay`)
+ * calls it fresh on every request with no caching, and an "apply to all N
+ * divisions" admin action fires N sequential relay requests — so at scale
+ * that's O(N) calls each paying an O(N) cost, or O(N²) reads overall. At a
+ * few thousand divisions that's millions of reads in a tight sequential
+ * burst, which is what overwhelmed the chain (see the 2026-09 "apply ballot
+ * question to 1000+ divisions" incident).
  *
- * Inactive divisions are kept: an admin still needs to be able to act on one
- * (to reactivate it, for instance), and the whitelist — not this list — is
- * what decides which calls are permitted.
+ * The fix is this short cache, not a bigger rewrite: every caller already
+ * reads the list once per request and moves on (none of the seven call sites
+ * loop calling `loadDivisions()` per row), so a few-second cache changes
+ * nothing for a normal single call — it only collapses the redundant reads
+ * *within* a rapid-fire burst like the one above. `TTL_MS` is deliberately
+ * short: a division created or a GN officer reassigned during the window is
+ * invisible to the relay for at most that long, which is a smaller staleness
+ * window than the client's own 15s division poll already tolerates.
  */
-export const loadDivisions = async (client: PublicClient = createServerPublicClient()): Promise<DivisionSummary[]> => {
+const DIVISIONS_CACHE_TTL_MS = 5_000;
+let divisionsCache: { data: DivisionSummary[]; expiresAt: number } | null = null;
+let divisionsInFlight: Promise<DivisionSummary[]> | null = null;
+
+const readDivisionsFromChain = async (client: PublicClient): Promise<DivisionSummary[]> => {
   const registry = deployedEntry(serverChainConfig.chainId, "ElectionRegistry");
   if (!registry?.address) {
     throw new RelayContractsError(
@@ -116,6 +133,41 @@ export const loadDivisions = async (client: PublicClient = createServerPublicCli
       return { id, name: division.name, votingContract: division.votingContract, gnOfficers, active: division.active };
     }),
   );
+};
+
+/**
+ * Reads every division from the registry, with its live GN officer.
+ *
+ * Inactive divisions are kept: an admin still needs to be able to act on one
+ * (to reactivate it, for instance), and the whitelist — not this list — is
+ * what decides which calls are permitted.
+ */
+export const loadDivisions = async (client: PublicClient = createServerPublicClient()): Promise<DivisionSummary[]> => {
+  const now = Date.now();
+  if (divisionsCache && divisionsCache.expiresAt > now) return divisionsCache.data;
+  if (divisionsInFlight) return divisionsInFlight;
+
+  divisionsInFlight = readDivisionsFromChain(client)
+    .then(data => {
+      divisionsCache = { data, expiresAt: Date.now() + DIVISIONS_CACHE_TTL_MS };
+      return data;
+    })
+    .finally(() => {
+      divisionsInFlight = null;
+    });
+
+  return divisionsInFlight;
+};
+
+/**
+ * Drops the cached division list so the next `loadDivisions()` call re-reads
+ * the chain immediately. Exported for tests; production code relies on the
+ * short TTL rather than calling this, since invalidating it from every write
+ * path would be the larger, riskier change this fix deliberately avoids.
+ */
+export const clearDivisionsCache = () => {
+  divisionsCache = null;
+  divisionsInFlight = null;
 };
 
 /**

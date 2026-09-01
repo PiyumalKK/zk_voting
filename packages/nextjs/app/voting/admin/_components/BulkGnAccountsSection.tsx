@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BusyOverlay } from "~~/app/voting/admin/_components/BusyOverlay";
 import { Section } from "~~/app/voting/admin/_components/Section";
 import { useDivisions } from "~~/hooks/useDivisions";
+import { readNdjsonRows } from "~~/utils/readNdjsonRows";
 import { notification } from "~~/utils/scaffold-eth";
 
 /**
@@ -70,6 +71,13 @@ const downloadCsv = (results: RowResult[]) => {
  * pattern as `BulkVoterRollSection` — the operator's workflow spans other
  * admin tabs (assigning the officer, checking a division), so losing the
  * table on every page change would force a re-import to see it again.
+ *
+ * `sessionStorage`, not `localStorage`: it survives exactly the SPA tab
+ * navigation this exists for (same tab, same browser session), but not a
+ * fresh window or a server restart — a new session shouldn't show results
+ * from a chain that may no longer exist. "Start New Election" clears it
+ * explicitly too, in `AdminElectionProvider.handleResetElection`, since that
+ * can happen without leaving the tab.
  */
 const RESULTS_STORAGE_KEY = "bulkGnAccountsResults";
 
@@ -82,11 +90,12 @@ export const BulkGnAccountsSection = () => {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<RowResult[] | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Load whatever the last import left behind, once, on mount.
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(RESULTS_STORAGE_KEY);
+      const stored = sessionStorage.getItem(RESULTS_STORAGE_KEY);
       if (stored) setResults(JSON.parse(stored));
     } catch {}
   }, []);
@@ -94,8 +103,8 @@ export const BulkGnAccountsSection = () => {
   // Keep it in sync so the table is still there after navigating away and back.
   useEffect(() => {
     try {
-      if (results) localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(results));
-      else localStorage.removeItem(RESULTS_STORAGE_KEY);
+      if (results) sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(results));
+      else sessionStorage.removeItem(RESULTS_STORAGE_KEY);
     } catch {}
   }, [results]);
 
@@ -123,6 +132,7 @@ export const BulkGnAccountsSection = () => {
     }
 
     setBusy(true);
+    setProgress(null);
     try {
       const response = await fetch("/api/gn-accounts/bulk", {
         method: "POST",
@@ -130,13 +140,25 @@ export const BulkGnAccountsSection = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error ?? `Import failed (${response.status}).`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? `Import failed (${response.status}).`);
+      }
 
-      const rows: RowResult[] = payload.results ?? [];
+      const rows: RowResult[] = [];
+      await readNdjsonRows<RowResult>(
+        response,
+        total => setProgress({ done: 0, total }),
+        result => {
+          rows.push(result);
+          setProgress(prev => ({ done: rows.length, total: prev?.total ?? rows.length }));
+        },
+      );
+
       setResults(rows);
       refetchDivisions();
-      notification.success(`Imported ${payload.succeeded} account(s), ${payload.failed} failed.`);
+      const succeeded = rows.filter(result => result.password).length;
+      notification.success(`Imported ${succeeded} account(s), ${rows.length - succeeded} failed.`);
       // Passwords are shown exactly once and never recoverable afterwards — an
       // admin who forgets to click "Export CSV" loses them for good. Download
       // automatically so that can't happen; the button below stays for a
@@ -148,12 +170,13 @@ export const BulkGnAccountsSection = () => {
       notification.error(error instanceof Error ? error.message : "Bulk import failed.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
   return (
     <>
-      <BusyOverlay show={busy} label="Importing GN officer accounts…" />
+      <BusyOverlay show={busy} label="Importing GN officer accounts…" progress={progress ?? undefined} />
       <Section
         title="Bulk GN Officer Import"
         hint="Create many GN officer accounts at once, from a CSV or an identity-management API. Columns/fields: username, division."

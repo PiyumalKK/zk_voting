@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { BusyOverlay } from "~~/app/voting/admin/_components/BusyOverlay";
 import { Section } from "~~/app/voting/admin/_components/Section";
+import { readNdjsonRows } from "~~/utils/readNdjsonRows";
 import { notification } from "~~/utils/scaffold-eth";
 
 /**
@@ -44,10 +45,15 @@ interface RowResult {
  * Persists the last import's results across navigation — the operator's
  * workflow spans switching to the mobile app to test a claim link and coming
  * back, so losing the table (and its one-time-use links) on every page
- * change would defeat the point. Same `localStorage`-backed pattern as
- * `useDivisions`' hidden-division list. Only this table's own rows are
- * stored, never anything that isn't already returned by the bulk-import
- * response.
+ * change would defeat the point. Only this table's own rows are stored,
+ * never anything that isn't already returned by the bulk-import response.
+ *
+ * `sessionStorage`, not `localStorage`: it survives exactly the SPA tab
+ * navigation this exists for (same tab, same browser session), but not a
+ * fresh window or a server restart — a new session shouldn't show claim
+ * links from a chain that may no longer exist. "Start New Election" clears
+ * it explicitly too, in `AdminElectionProvider.handleResetElection`, since
+ * that can happen without leaving the tab.
  */
 const RESULTS_STORAGE_KEY = "bulkVoterRollResults";
 
@@ -59,6 +65,7 @@ export const BulkVoterRollSection = () => {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<RowResult[] | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   /** Keyed `${row}:${column}` so the claim link and the test link reveal independently. */
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -66,7 +73,7 @@ export const BulkVoterRollSection = () => {
   // Load whatever the last import left behind, once, on mount.
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(RESULTS_STORAGE_KEY);
+      const stored = sessionStorage.getItem(RESULTS_STORAGE_KEY);
       if (stored) setResults(JSON.parse(stored));
     } catch {}
   }, []);
@@ -74,8 +81,8 @@ export const BulkVoterRollSection = () => {
   // Keep it in sync so the table is still there after navigating away and back.
   useEffect(() => {
     try {
-      if (results) localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(results));
-      else localStorage.removeItem(RESULTS_STORAGE_KEY);
+      if (results) sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(results));
+      else sessionStorage.removeItem(RESULTS_STORAGE_KEY);
     } catch {}
   }, [results]);
 
@@ -107,6 +114,7 @@ export const BulkVoterRollSection = () => {
         : { source: "api" as const, url: apiUrl.trim(), apiKey: apiKey.trim() || undefined };
 
     setBusy(true);
+    setProgress(null);
     try {
       const response = await fetch("/api/voter-roll/bulk", {
         method: "POST",
@@ -114,17 +122,31 @@ export const BulkVoterRollSection = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error ?? `Import failed (${response.status}).`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? `Import failed (${response.status}).`);
+      }
 
-      setResults(payload.results ?? []);
+      const rows: RowResult[] = [];
+      await readNdjsonRows<RowResult>(
+        response,
+        total => setProgress({ done: 0, total }),
+        result => {
+          rows.push(result);
+          setProgress(prev => ({ done: rows.length, total: prev?.total ?? rows.length }));
+        },
+      );
+
+      setResults(rows);
       setRevealedKeys(new Set());
       setCopiedKey(null);
-      notification.success(`Sent ${payload.succeeded} invite(s), ${payload.failed} failed.`);
+      const succeeded = rows.filter(result => result.status === "sent").length;
+      notification.success(`Sent ${succeeded} invite(s), ${rows.length - succeeded} failed.`);
     } catch (error) {
       notification.error(error instanceof Error ? error.message : "Bulk import failed.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -169,7 +191,7 @@ export const BulkVoterRollSection = () => {
 
   return (
     <>
-      <BusyOverlay show={busy} label="Sending voter invites…" />
+      <BusyOverlay show={busy} label="Sending voter invites…" progress={progress ?? undefined} />
       <Section
         title="Bulk Voter Roll Import"
         hint="Import voter eligibility from a CSV or an identity-management API. Columns/fields: nic, phone, division. Each row gets an SMS with a link that finishes their enrolment on their own phone — no GN visit required."

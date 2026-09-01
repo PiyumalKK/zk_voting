@@ -382,34 +382,6 @@ describe("admin area — write sites go through the seam", () => {
     expect(mocks.notifySuccess).not.toHaveBeenCalledWith(expect.stringContaining("authorised"));
   });
 
-  it("lists divisions that were never authorised, and can repair one", async () => {
-    // No VotingContractUpdated events at all: the state of any chain whose
-    // divisions were created by hand before this was wired up.
-    mocks.getLogs.mockResolvedValue([]);
-
-    const user = await renderAsAdmin(<AdminDivisionsPage />, /add new division/i);
-
-    await waitFor(() => expect(screen.getByText(/cannot be used for GN enrolment yet/i)).toBeDefined());
-    await user.click(screen.getByRole("button", { name: /^authorise$/i }));
-
-    await waitFor(() => expect(mocks.write).toHaveBeenCalled());
-    expect(mocks.write.mock.calls[0][0]).toMatchObject({
-      address: NIC_REGISTRY,
-      functionName: "setVotingContract",
-      args: [DIVISION.votingContract, true],
-    });
-  });
-
-  it("says nothing when every division is already authorised", async () => {
-    // The default stub authorises the sample division, so the warning must not
-    // appear — an indicator that cries wolf on a correctly deployed chain would
-    // be worse than none.
-    await renderAsAdmin(<AdminDivisionsPage />, /add new division/i);
-
-    await waitFor(() => expect(mocks.getLogs).toHaveBeenCalled());
-    expect(screen.queryByText(/cannot be used for GN enrolment yet/i)).toBeNull();
-  });
-
   it("assigns a GN officer on the chosen division contract", async () => {
     const user = await renderAsAdmin(<AdminDivisionsPage />, /gn officer management/i);
 

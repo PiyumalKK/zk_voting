@@ -627,6 +627,18 @@ export const AdminElectionProvider = ({ children }: { children: React.ReactNode 
         localStorage.removeItem("hiddenDivisions");
       } catch {}
 
+      // Bulk-import results tables (divisions, GN officers, voter roll) name
+      // divisions and addresses that this reset just erased on-chain — keeping
+      // them around would show an operator stale rows for an election that no
+      // longer exists. These panels otherwise keep their results in
+      // sessionStorage across ordinary tab navigation; a reset is the one
+      // in-tab action deliberate enough to clear them anyway.
+      try {
+        sessionStorage.removeItem("bulkDivisionsResults");
+        sessionStorage.removeItem("bulkGnAccountsResults");
+        sessionStorage.removeItem("bulkVoterRollResults");
+      } catch {}
+
       setSelectedIdx(0);
       setQuestionDraft("");
       setCandidateDrafts(["", ""]);

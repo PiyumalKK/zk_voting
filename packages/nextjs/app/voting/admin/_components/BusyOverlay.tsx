@@ -10,7 +10,13 @@
  * it can't block a real navigation, it just makes "this is still working"
  * impossible to miss.
  */
-export const BusyOverlay = ({ show, label }: { show: boolean; label: string }) => {
+export interface BusyProgress {
+  /** Rows the server has finished, in order — not necessarily "succeeded". */
+  done: number;
+  total: number;
+}
+
+export const BusyOverlay = ({ show, label, progress }: { show: boolean; label: string; progress?: BusyProgress }) => {
   if (!show) return null;
   return (
     <div
@@ -21,6 +27,14 @@ export const BusyOverlay = ({ show, label }: { show: boolean; label: string }) =
       <div className="bg-base-100 rounded-2xl shadow-2xl p-8 flex flex-col items-center gap-3 max-w-xs mx-4 text-center animate-modal-pop">
         <span className="loading loading-spinner loading-lg text-primary" />
         <p className="font-semibold">{label}</p>
+        {progress && progress.total > 0 && (
+          <div className="w-full">
+            <progress className="progress progress-primary w-full" value={progress.done} max={progress.total} />
+            <p className="text-xs opacity-70 mt-1 tabular-nums">
+              {progress.done} / {progress.total}
+            </p>
+          </div>
+        )}
         <p className="text-xs opacity-60">Stay on this page until it finishes.</p>
       </div>
     </div>

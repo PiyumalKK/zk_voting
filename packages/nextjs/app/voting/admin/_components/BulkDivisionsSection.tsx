@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BusyOverlay } from "~~/app/voting/admin/_components/BusyOverlay";
 import { Section } from "~~/app/voting/admin/_components/Section";
 import { useDivisions } from "~~/hooks/useDivisions";
+import { readNdjsonRows } from "~~/utils/readNdjsonRows";
 import { notification } from "~~/utils/scaffold-eth";
 
 /**
@@ -62,6 +63,13 @@ const downloadCsv = (results: RowResult[]) => {
  * admin tabs (assigning a GN officer, checking the division list), so
  * losing the table on every page change would force a re-import to see it
  * again.
+ *
+ * `sessionStorage`, not `localStorage`: it survives exactly the SPA tab
+ * navigation this exists for (same tab, same browser session), but not a
+ * fresh window or a server restart — a new session shouldn't show results
+ * from a chain that may no longer exist. "Start New Election" clears it
+ * explicitly too, in `AdminElectionProvider.handleResetElection`, since that
+ * can happen without leaving the tab.
  */
 const RESULTS_STORAGE_KEY = "bulkDivisionsResults";
 
@@ -74,11 +82,12 @@ export const BulkDivisionsSection = () => {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<RowResult[] | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Load whatever the last import left behind, once, on mount.
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(RESULTS_STORAGE_KEY);
+      const stored = sessionStorage.getItem(RESULTS_STORAGE_KEY);
       if (stored) setResults(JSON.parse(stored));
     } catch {}
   }, []);
@@ -86,8 +95,8 @@ export const BulkDivisionsSection = () => {
   // Keep it in sync so the table is still there after navigating away and back.
   useEffect(() => {
     try {
-      if (results) localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(results));
-      else localStorage.removeItem(RESULTS_STORAGE_KEY);
+      if (results) sessionStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify(results));
+      else sessionStorage.removeItem(RESULTS_STORAGE_KEY);
     } catch {}
   }, [results]);
 
@@ -115,6 +124,7 @@ export const BulkDivisionsSection = () => {
     }
 
     setBusy(true);
+    setProgress(null);
     try {
       const response = await fetch("/api/divisions/bulk", {
         method: "POST",
@@ -122,22 +132,36 @@ export const BulkDivisionsSection = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error ?? `Import failed (${response.status}).`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? `Import failed (${response.status}).`);
+      }
 
-      setResults(payload.results ?? []);
+      const collected: RowResult[] = [];
+      await readNdjsonRows<RowResult>(
+        response,
+        total => setProgress({ done: 0, total }),
+        result => {
+          collected.push(result);
+          setProgress(prev => ({ done: collected.length, total: prev?.total ?? collected.length }));
+        },
+      );
+
+      setResults(collected);
       refetchDivisions();
-      notification.success(`Created ${payload.succeeded} division(s), ${payload.failed} failed.`);
+      const succeeded = collected.filter(result => result.votingContract).length;
+      notification.success(`Created ${succeeded} division(s), ${collected.length - succeeded} failed.`);
     } catch (error) {
       notification.error(error instanceof Error ? error.message : "Bulk import failed.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
   return (
     <>
-      <BusyOverlay show={busy} label="Importing divisions…" />
+      <BusyOverlay show={busy} label="Importing divisions…" progress={progress ?? undefined} />
       <Section
         title="Bulk Division Import"
         hint="Deploy many divisions at once, from a CSV or an identity-management API. Column/field: name (division / division name also accepted). Each row runs the same deploy-register-authorise sequence as the manual form above."
