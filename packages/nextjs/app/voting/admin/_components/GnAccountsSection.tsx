@@ -280,9 +280,9 @@ export const GnAccountsSection = () => {
       ) : accounts.length === 0 ? (
         <p className="text-sm opacity-60">No GN accounts yet.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className={`overflow-x-auto ${accounts.length > 15 ? "max-h-[32rem] overflow-y-auto" : ""}`}>
           <table className="table table-sm">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-base-100">
               <tr>
                 <th>Username</th>
                 <th>Division</th>

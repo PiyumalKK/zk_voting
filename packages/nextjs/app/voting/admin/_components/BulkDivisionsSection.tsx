@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { BusyOverlay } from "~~/app/voting/admin/_components/BusyOverlay";
 import { Section } from "~~/app/voting/admin/_components/Section";
 import { useDivisions } from "~~/hooks/useDivisions";
 import { notification } from "~~/utils/scaffold-eth";
@@ -135,137 +136,140 @@ export const BulkDivisionsSection = () => {
   };
 
   return (
-    <Section
-      title="Bulk Division Import"
-      hint="Deploy many divisions at once, from a CSV or an identity-management API. Column/field: name (division / division name also accepted). Each row runs the same deploy-register-authorise sequence as the manual form above."
-    >
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={`btn btn-sm ${source === "csv" ? "btn-primary" : "btn-outline"}`}
-          onClick={() => setSource("csv")}
-          disabled={busy}
-        >
-          CSV upload
-        </button>
-        <button
-          type="button"
-          className={`btn btn-sm ${source === "api" ? "btn-primary" : "btn-outline"}`}
-          onClick={() => setSource("api")}
-          disabled={busy}
-        >
-          Identity-management API
-        </button>
-      </div>
-
-      {source === "csv" ? (
-        <div className="form-control">
-          <label className="label" htmlFor="bulk-division-csv">
-            <span className="label-text text-sm font-bold">CSV file</span>
-          </label>
-          <input
-            id="bulk-division-csv"
-            type="file"
-            accept=".csv,text/csv"
-            className="file-input file-input-bordered w-full"
-            onChange={event => void handleFile(event.target.files?.[0])}
+    <>
+      <BusyOverlay show={busy} label="Importing divisions…" />
+      <Section
+        title="Bulk Division Import"
+        hint="Deploy many divisions at once, from a CSV or an identity-management API. Column/field: name (division / division name also accepted). Each row runs the same deploy-register-authorise sequence as the manual form above."
+      >
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={`btn btn-sm ${source === "csv" ? "btn-primary" : "btn-outline"}`}
+            onClick={() => setSource("csv")}
             disabled={busy}
-          />
-          {csvFileName && <p className="text-xs opacity-60 mt-1">Loaded: {csvFileName}</p>}
+          >
+            CSV upload
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${source === "api" ? "btn-primary" : "btn-outline"}`}
+            onClick={() => setSource("api")}
+            disabled={busy}
+          >
+            Identity-management API
+          </button>
         </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+
+        {source === "csv" ? (
           <div className="form-control">
-            <label className="label" htmlFor="bulk-division-api-url">
-              <span className="label-text text-sm font-bold">API URL</span>
+            <label className="label" htmlFor="bulk-division-csv">
+              <span className="label-text text-sm font-bold">CSV file</span>
             </label>
             <input
-              id="bulk-division-api-url"
-              type="text"
-              className="input input-bordered w-full"
-              placeholder="https://identity.example.gov.lk/divisions"
-              value={apiUrl}
-              onChange={event => setApiUrl(event.target.value)}
+              id="bulk-division-csv"
+              type="file"
+              accept=".csv,text/csv"
+              className="file-input file-input-bordered w-full"
+              onChange={event => void handleFile(event.target.files?.[0])}
               disabled={busy}
             />
+            {csvFileName && <p className="text-xs opacity-60 mt-1">Loaded: {csvFileName}</p>}
           </div>
-          <div className="form-control">
-            <label className="label" htmlFor="bulk-division-api-key">
-              <span className="label-text text-sm font-bold">API key (optional)</span>
-            </label>
-            <input
-              id="bulk-division-api-key"
-              type="password"
-              className="input input-bordered w-full"
-              value={apiKey}
-              onChange={event => setApiKey(event.target.value)}
-              disabled={busy}
-              autoComplete="off"
-            />
-          </div>
-        </div>
-      )}
-
-      <button className="btn btn-primary btn-sm" onClick={handleImport} disabled={busy}>
-        {busy ? "Importing…" : "Import divisions"}
-      </button>
-
-      {results && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm opacity-70">
-              {results.filter(result => result.votingContract).length} succeeded,{" "}
-              {results.filter(result => result.error).length} failed.
-            </p>
-            <div className="flex gap-2">
-              <button className="btn btn-xs" onClick={() => downloadCsv(results)}>
-                Export CSV
-              </button>
-              <button type="button" className="btn btn-xs" onClick={handleClear}>
-                Clear
-              </button>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="form-control">
+              <label className="label" htmlFor="bulk-division-api-url">
+                <span className="label-text text-sm font-bold">API URL</span>
+              </label>
+              <input
+                id="bulk-division-api-url"
+                type="text"
+                className="input input-bordered w-full"
+                placeholder="https://identity.example.gov.lk/divisions"
+                value={apiUrl}
+                onChange={event => setApiUrl(event.target.value)}
+                disabled={busy}
+              />
+            </div>
+            <div className="form-control">
+              <label className="label" htmlFor="bulk-division-api-key">
+                <span className="label-text text-sm font-bold">API key (optional)</span>
+              </label>
+              <input
+                id="bulk-division-api-key"
+                type="password"
+                className="input input-bordered w-full"
+                value={apiKey}
+                onChange={event => setApiKey(event.target.value)}
+                disabled={busy}
+                autoComplete="off"
+              />
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="table table-sm">
-              <thead>
-                <tr>
-                  <th>Row</th>
-                  <th>Name</th>
-                  <th>Voting Contract</th>
-                  <th>Authorised</th>
-                  <th>Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map(result => (
-                  <tr key={result.row}>
-                    <td>{result.row}</td>
-                    <td className="font-bold">{result.name}</td>
-                    <td className="font-mono text-xs">
-                      {result.votingContract
-                        ? `${result.votingContract.slice(0, 10)}…${result.votingContract.slice(-4)}`
-                        : ""}
-                    </td>
-                    <td>
-                      {result.votingContract ? (
-                        result.authorised ? (
-                          <span className="badge badge-success badge-xs">Yes</span>
-                        ) : (
-                          <span className="badge badge-warning badge-xs">No</span>
-                        )
-                      ) : (
-                        ""
-                      )}
-                    </td>
-                    <td className="text-error text-xs">{result.error}</td>
+        )}
+
+        <button className="btn btn-primary btn-sm" onClick={handleImport} disabled={busy}>
+          {busy ? "Importing…" : "Import divisions"}
+        </button>
+
+        {results && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm opacity-70">
+                {results.filter(result => result.votingContract).length} succeeded,{" "}
+                {results.filter(result => result.error).length} failed.
+              </p>
+              <div className="flex gap-2">
+                <button className="btn btn-xs" onClick={() => downloadCsv(results)}>
+                  Export CSV
+                </button>
+                <button type="button" className="btn btn-xs" onClick={handleClear}>
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className={`overflow-x-auto ${results.length > 15 ? "max-h-[32rem] overflow-y-auto" : ""}`}>
+              <table className="table table-sm">
+                <thead className="sticky top-0 z-10 bg-base-100">
+                  <tr>
+                    <th>Row</th>
+                    <th>Name</th>
+                    <th>Voting Contract</th>
+                    <th>Authorised</th>
+                    <th>Error</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {results.map(result => (
+                    <tr key={result.row}>
+                      <td>{result.row}</td>
+                      <td className="font-bold">{result.name}</td>
+                      <td className="font-mono text-xs">
+                        {result.votingContract
+                          ? `${result.votingContract.slice(0, 10)}…${result.votingContract.slice(-4)}`
+                          : ""}
+                      </td>
+                      <td>
+                        {result.votingContract ? (
+                          result.authorised ? (
+                            <span className="badge badge-success badge-xs">Yes</span>
+                          ) : (
+                            <span className="badge badge-warning badge-xs">No</span>
+                          )
+                        ) : (
+                          ""
+                        )}
+                      </td>
+                      <td className="text-error text-xs">{result.error}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
-    </Section>
+        )}
+      </Section>
+    </>
   );
 };
