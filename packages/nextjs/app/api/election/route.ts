@@ -91,7 +91,7 @@ const VOTING_ABI = [
   },
   { name: "getCandidates", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string[]" }] },
   { name: "getVoteCounts", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256[]" }] },
-  { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "getGNOfficers", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address[]" }] },
   {
     name: "getVoterData",
     type: "function",
@@ -107,7 +107,10 @@ const VOTING_ABI = [
 interface DivisionState {
   name: string;
   votingContract: string;
+  /** @deprecated kept for existing clients; use `gnOfficers`. First assigned officer, or the zero address. */
   gnOfficer: string;
+  /** Every address currently authorised as a GN officer for this division. */
+  gnOfficers: string[];
   active: boolean;
   phase: number;
   phaseLabel: string;
@@ -191,11 +194,11 @@ export async function GET(req: NextRequest) {
         .filter(d => !filter || d.votingContract.toLowerCase() === filter)
         .map(async (d): Promise<DivisionState> => {
           try {
-            const [votingData, candidates, voteCounts, gn, voterData] = await Promise.all([
+            const [votingData, candidates, voteCounts, gnOfficers, voterData] = await Promise.all([
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getVotingData" }),
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getCandidates" }),
               client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getVoteCounts" }),
-              client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "s_gnOfficer" }),
+              client.readContract({ address: d.votingContract, abi: VOTING_ABI, functionName: "getGNOfficers" }),
               voter
                 ? client.readContract({
                     address: d.votingContract,
@@ -207,10 +210,12 @@ export async function GET(req: NextRequest) {
             ]);
             const vd = votingData as readonly unknown[];
             const counts = (voteCounts as bigint[]).map(Number);
+            const officers = gnOfficers as string[];
             return {
               name: d.name,
               votingContract: d.votingContract,
-              gnOfficer: gn as string,
+              gnOfficer: officers[0] ?? "0x0000000000000000000000000000000000000000",
+              gnOfficers: officers,
               active: d.active,
               phase: Number(vd[2]),
               phaseLabel: PHASE_LABELS[Number(vd[2])] ?? "Unknown",
@@ -229,6 +234,7 @@ export async function GET(req: NextRequest) {
               name: d.name,
               votingContract: d.votingContract,
               gnOfficer: d.gnOfficer,
+              gnOfficers: d.gnOfficer !== "0x0000000000000000000000000000000000000000" ? [d.gnOfficer] : [],
               active: d.active,
               phase: 0,
               phaseLabel: "Unreachable",

@@ -52,26 +52,48 @@ describe("GN Officer & ElectionRegistry", function () {
 
   describe("GN Officer Management", function () {
     it("owner can set GN officer", async function () {
-      await expect(voting.setGNOfficer(gn.address)).to.emit(voting, "GNOfficerUpdated").withArgs(gn.address);
-      expect(await voting.s_gnOfficer()).to.equal(gn.address);
+      await expect(voting.setGNOfficer(gn.address, true))
+        .to.emit(voting, "GNOfficerUpdated")
+        .withArgs(gn.address, true);
+      expect(await voting.s_isGnOfficer(gn.address)).to.equal(true);
+      expect(await voting.getGNOfficers()).to.deep.equal([gn.address]);
+    });
+
+    it("owner can have more than one GN officer for a division", async function () {
+      await voting.setGNOfficer(gn.address, true);
+      await voting.setGNOfficer(nonGN.address, true);
+      expect(await voting.s_isGnOfficer(gn.address)).to.equal(true);
+      expect(await voting.s_isGnOfficer(nonGN.address)).to.equal(true);
+      expect(Array.from(await voting.getGNOfficers())).to.have.members([gn.address, nonGN.address]);
+    });
+
+    it("owner can remove a GN officer without affecting the others", async function () {
+      await voting.setGNOfficer(gn.address, true);
+      await voting.setGNOfficer(nonGN.address, true);
+      await expect(voting.setGNOfficer(gn.address, false))
+        .to.emit(voting, "GNOfficerUpdated")
+        .withArgs(gn.address, false);
+      expect(await voting.s_isGnOfficer(gn.address)).to.equal(false);
+      expect(await voting.s_isGnOfficer(nonGN.address)).to.equal(true);
+      expect(await voting.getGNOfficers()).to.deep.equal([nonGN.address]);
     });
 
     it("non-owner cannot set GN officer", async function () {
-      await expect(voting.connect(gn).setGNOfficer(gn.address)).to.be.revertedWithCustomError(
+      await expect(voting.connect(gn).setGNOfficer(gn.address, true)).to.be.revertedWithCustomError(
         voting,
         "OwnableUnauthorizedAccount",
       );
     });
 
     it("GN can add voters during Setup phase", async function () {
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
       await expect(voting.connect(gn).addVoters([voter1.address], [true]))
         .to.emit(voting, "VoterAdded")
         .withArgs(voter1.address);
     });
 
     it("GN can add voters during Registration phase", async function () {
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
       // Move to Registration
       await voting.startRegistration(3600);
       await expect(voting.connect(gn).addVoters([voter2.address], [true]))
@@ -80,12 +102,12 @@ describe("GN Officer & ElectionRegistry", function () {
     });
 
     it("non-GN cannot add voters", async function () {
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
       await expect(voting.connect(nonGN).addVoters([voter1.address], [true])).to.be.revertedWith("Not owner or GN");
     });
 
     it("GN cannot add voters during Voting phase", async function () {
-      await voting.setGNOfficer(gn.address);
+      await voting.setGNOfficer(gn.address, true);
       await voting.addVoters([voter1.address], [true]);
       await voting.startRegistration(3600);
       await voting.startVoting(3600);

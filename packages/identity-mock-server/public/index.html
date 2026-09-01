@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IdentityHub — Database</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <span class="brand-title">Identity Management Server</span>
+    <nav class="navlinks">
+      <a href="/" class="active">Database</a>
+      <a href="/api.html">API Configuration</a>
+    </nav>
+  </div>
+</div>
+
+<div class="page">
+  <div class="page-head">
+    <h1>Database</h1>
+    <p>
+      A read-only view of every record held by this registry: polling divisions, the GN officers assigned
+      to them, and the registered voters within each. Nothing here is generated on demand — this is the
+      full system of record. To expose a subset of it through the API, go to
+      <a href="/api.html">API Configuration</a>.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>Divisions</h2>
+        <p class="desc">Every polling division on record.</p>
+      </div>
+      <span class="badge" id="divisionsCount">0</span>
+    </div>
+    <div class="card-body">
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>GN officers</th><th>Voters</th></tr></thead>
+          <tbody id="divisionsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>GN Officers</h2>
+        <p class="desc">Grama Niladhari officers, one registry entry per division assignment.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input class="search" id="officerSearch" placeholder="Filter by name, username, division…" />
+        <span class="badge" id="officersCount">0</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Username</th><th>Full name</th><th>Division</th></tr></thead>
+          <tbody id="officersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h2>Voters</h2>
+        <p class="desc">Registered citizens eligible to vote, by division.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input class="search" id="voterSearch" placeholder="Filter by NIC, name, division…" />
+        <span class="badge" id="votersCount">0</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>NIC</th><th>Full name</th><th>Phone</th><th>Division</th></tr></thead>
+          <tbody id="votersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const el = id => document.getElementById(id);
+  let db = { divisions: [], officers: [], voters: [] };
+
+  const emptyRow = (colspan, text) => `<tr><td colspan="${colspan}" class="empty-state">${text}</td></tr>`;
+
+  function renderDivisions() {
+    el("divisionsCount").textContent = db.divisions.length;
+    el("divisionsBody").innerHTML = db.divisions.length
+      ? db.divisions
+          .map(d => {
+            const officerCount = db.officers.filter(o => o.divisionId === d.id).length;
+            const voterCount = db.voters.filter(v => v.divisionId === d.id).length;
+            return `<tr><td class="mono">${d.id}</td><td><strong>${d.name}</strong></td><td>${officerCount}</td><td>${voterCount}</td></tr>`;
+          })
+          .join("")
+      : emptyRow(4, "No divisions on record.");
+  }
+
+  function renderOfficers(filter = "") {
+    const q = filter.trim().toLowerCase();
+    const rows = db.officers.filter(
+      o => !q || o.username.toLowerCase().includes(q) || o.fullName.toLowerCase().includes(q) || o.division.toLowerCase().includes(q),
+    );
+    el("officersCount").textContent = `${rows.length} / ${db.officers.length}`;
+    el("officersBody").innerHTML = rows.length
+      ? rows.map(o => `<tr><td class="mono">${o.username}</td><td>${o.fullName}</td><td>${o.division}</td></tr>`).join("")
+      : emptyRow(3, "No matching officers.");
+  }
+
+  function renderVoters(filter = "") {
+    const q = filter.trim().toLowerCase();
+    const rows = db.voters.filter(
+      v => !q || v.nic.toLowerCase().includes(q) || v.fullName.toLowerCase().includes(q) || v.division.toLowerCase().includes(q),
+    );
+    el("votersCount").textContent = `${rows.length} / ${db.voters.length}`;
+    el("votersBody").innerHTML = rows.length
+      ? rows.map(v => `<tr><td class="mono">${v.nic}</td><td>${v.fullName}</td><td class="mono">${v.phone}</td><td>${v.division}</td></tr>`).join("")
+      : emptyRow(4, "No matching voters.");
+  }
+
+  el("officerSearch").addEventListener("input", e => renderOfficers(e.target.value));
+  el("voterSearch").addEventListener("input", e => renderVoters(e.target.value));
+
+  fetch("/api/db")
+    .then(r => r.json())
+    .then(payload => {
+      db = payload;
+      renderDivisions();
+      renderOfficers();
+      renderVoters();
+    });
+</script>
+</body>
+</html>

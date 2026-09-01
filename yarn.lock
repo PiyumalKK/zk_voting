@@ -16310,6 +16310,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"identity-mock-server@workspace:packages/identity-mock-server":
+  version: 0.0.0-use.local
+  resolution: "identity-mock-server@workspace:packages/identity-mock-server"
+  languageName: unknown
+  linkType: soft
+
 "ieee754@npm:^1.1.13, ieee754@npm:^1.2.1":
   version: 1.2.1
   resolution: "ieee754@npm:1.2.1"

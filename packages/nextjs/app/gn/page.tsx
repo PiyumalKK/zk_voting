@@ -18,7 +18,7 @@ const GNDashboard: NextPage = () => {
   const isAuthorized = !!myDivision;
   const phase = myDivision?.phase ?? 0;
   const treeSize = myDivision?.treeSize ?? 0;
-  const onChainGN = myDivision?.gnOfficer ?? "";
+  const onChainGN = myDivision?.gnOfficers[0] ?? "";
   const phaseColor = { 1: "text-info", 2: "text-success" }[phase] ?? "";
 
   // Voter roll for this division: addresses added to the allowlist (VoterAdded events),
@@ -155,7 +155,9 @@ const GNDashboard: NextPage = () => {
               <div key={d.votingContract} className="flex justify-between gap-2 text-xs py-0.5">
                 <span className="opacity-60">{d.name}</span>
                 <code className="opacity-80">
-                  {d.gnOfficer.slice(0, 8)}…{d.gnOfficer.slice(-6)}
+                  {d.gnOfficers.length === 0
+                    ? "—"
+                    : d.gnOfficers.map(gn => `${gn.slice(0, 8)}…${gn.slice(-6)}`).join(", ")}
                 </code>
               </div>
             ))}

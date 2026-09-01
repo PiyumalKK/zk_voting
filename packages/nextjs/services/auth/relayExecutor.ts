@@ -177,7 +177,7 @@ export const executeRelayCall = async ({ session, request }: ExecuteRelayCallOpt
     // The relay holds the GN's key, but authority comes from the chain: if the
     // admin has not run `setGNOfficer` for this account, the transaction would
     // revert anyway. Failing here says so plainly instead.
-    if (gnAccount.address.toLowerCase() !== division.gnOfficer.toLowerCase()) {
+    if (!division.gnOfficers.some(gn => gn.toLowerCase() === gnAccount!.address.toLowerCase())) {
       return reject(403, `Your account is not the on-chain GN officer for ${division.name}.`);
     }
   }

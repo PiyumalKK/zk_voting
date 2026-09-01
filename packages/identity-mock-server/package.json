@@ -1,0 +1,10 @@
+{
+  "name": "identity-mock-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Zero-dependency mock identity-management server for testing zk_voting's bulk-import 'Identity-management API' option.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

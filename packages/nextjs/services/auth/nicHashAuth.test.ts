@@ -1,7 +1,7 @@
 import { authoriseNicHashSession } from "./nicHashAuth";
 import { describe, expect, it } from "vitest";
 
-// `as const` matters: `DivisionSummary.gnOfficer` is typed `0x${string}`, and a
+// `as const` matters: `DivisionSummary.gnOfficers` is typed `0x${string}`[], and a
 // plain `string` constant is not assignable to it.
 const GN_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
 const OTHER_ADDRESS = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const;
@@ -9,8 +9,8 @@ const OTHER_ADDRESS = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const;
 const gnSession = { role: "gn" as const, username: "gn.kaduwela", divisionId: 0 };
 const account = { address: GN_ADDRESS, divisionId: 0, disabled: false };
 const divisions = [
-  { id: 0, gnOfficer: GN_ADDRESS },
-  { id: 1, gnOfficer: OTHER_ADDRESS },
+  { id: 0, gnOfficers: [GN_ADDRESS] },
+  { id: 1, gnOfficers: [OTHER_ADDRESS] },
 ];
 
 describe("authoriseNicHashSession", () => {
@@ -24,7 +24,7 @@ describe("authoriseNicHashSession", () => {
     const result = authoriseNicHashSession({
       session: gnSession,
       account,
-      divisions: [{ id: 0, gnOfficer: GN_ADDRESS.toLowerCase() as `0x${string}` }],
+      divisions: [{ id: 0, gnOfficers: [GN_ADDRESS.toLowerCase() as `0x${string}`] }],
     });
 
     expect(result.ok).toBe(true);
@@ -82,7 +82,7 @@ describe("authoriseNicHashSession", () => {
     const result = authoriseNicHashSession({
       session: gnSession,
       account,
-      divisions: [{ id: 0, gnOfficer: OTHER_ADDRESS }],
+      divisions: [{ id: 0, gnOfficers: [OTHER_ADDRESS] }],
     });
 
     expect(result).toMatchObject({ ok: false, status: 403, error: expect.stringContaining("no longer") });
@@ -92,9 +92,19 @@ describe("authoriseNicHashSession", () => {
     const result = authoriseNicHashSession({
       session: gnSession,
       account,
-      divisions: [{ id: 0, gnOfficer: "0x0000000000000000000000000000000000000000" }],
+      divisions: [{ id: 0, gnOfficers: [] }],
     });
 
     expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it("admits an officer who is one of several assigned to the same division", () => {
+    const result = authoriseNicHashSession({
+      session: gnSession,
+      account,
+      divisions: [{ id: 0, gnOfficers: [OTHER_ADDRESS, GN_ADDRESS] }],
+    });
+
+    expect(result).toEqual({ ok: true, gnAddress: GN_ADDRESS, divisionId: 0 });
   });
 });

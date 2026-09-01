@@ -72,14 +72,17 @@ export const GNManagementSection = () => {
     return accountAddresses.has(address.toLowerCase());
   };
 
+  // "Cannot enrol voters" — has officers, but not one of them has a usable
+  // credential account. A division with at least one usable officer is fine
+  // even if another assigned address is orphaned.
   const orphaned = divisions.filter(
     division =>
-      !division.hidden && isUsableOfficer(division.gnOfficer) === false && division.gnOfficer !== ZERO_ADDRESS,
+      !division.hidden &&
+      division.gnOfficers.length > 0 &&
+      !division.gnOfficers.some(gn => isUsableOfficer(gn) === true),
   );
 
-  const unassigned = divisions.filter(
-    division => !division.hidden && (!division.gnOfficer || division.gnOfficer === ZERO_ADDRESS),
-  );
+  const unassigned = divisions.filter(division => !division.hidden && division.gnOfficers.length === 0);
 
   // Keep selection valid as divisions load in.
   useEffect(() => {
@@ -107,10 +110,10 @@ export const GNManagementSection = () => {
         address: div.votingContract,
         abi: SET_GN_OFFICER_ABI,
         functionName: "setGNOfficer",
-        args: [gnAddress as `0x${string}`],
+        args: [gnAddress as `0x${string}`, true],
       });
 
-      notification.success(`✅ GN assigned to ${div.name}!`);
+      notification.success(`✅ GN added to ${div.name}!`);
       setGnAddress("");
       refetch();
       loadAccounts();
@@ -119,9 +122,25 @@ export const GNManagementSection = () => {
     }
   };
 
+  const handleRemoveGN = async (address: string) => {
+    const div = divisions[selectedDivision];
+    if (!div) return;
+    try {
+      await write({
+        address: div.votingContract,
+        abi: SET_GN_OFFICER_ABI,
+        functionName: "setGNOfficer",
+        args: [address as `0x${string}`, false],
+      });
+      notification.success(`Removed GN officer from ${div.name}.`);
+      refetch();
+      loadAccounts();
+    } catch (e: any) {
+      notification.error(e?.shortMessage || e?.message || "Failed to remove GN officer");
+    }
+  };
+
   const selected = divisions[selectedDivision];
-  const currentDivGN = selected?.gnOfficer || "";
-  const isZeroAddr = !currentDivGN || currentDivGN === "0x0000000000000000000000000000000000000000";
 
   return (
     <Section title="GN Officer Management" hint="Assign GN officers to specific polling divisions.">
@@ -187,33 +206,34 @@ export const GNManagementSection = () => {
             </select>
           </div>
 
-          {/* Current GN for selected division */}
+          {/* Current GN officer(s) for selected division */}
           <div className="p-3 bg-base-200/50 rounded-lg mb-4">
             <div className="text-xs opacity-60 mb-1">
-              Current GN for <strong>{selected?.name}</strong>
+              Current GN officer{selected && selected.gnOfficers.length !== 1 ? "s" : ""} for{" "}
+              <strong>{selected?.name}</strong>
             </div>
-            <div className="font-mono text-sm flex items-center gap-2">
-              {!isZeroAddr ? (
-                <>
-                  <span
-                    className={
-                      isUsableOfficer(currentDivGN) === false ? "text-warning line-through opacity-70" : "text-success"
-                    }
-                  >
-                    {currentDivGN}
-                  </span>
-                  {isUsableOfficer(currentDivGN) === false && (
-                    <span className="badge badge-error badge-outline badge-xs font-sans">No Account</span>
-                  )}
-                </>
-              ) : (
-                <span className="opacity-40">None assigned</span>
-              )}
-            </div>
-            {isUsableOfficer(currentDivGN) === false && !isZeroAddr && (
-              <div className="text-xs text-warning mt-1">
-                No credential account holds this address — this officer cannot sign in.
+            {selected && selected.gnOfficers.length > 0 ? (
+              <div className="space-y-1">
+                {selected.gnOfficers.map(gn => (
+                  <div key={gn} className="font-mono text-sm flex items-center gap-2">
+                    <span
+                      className={
+                        isUsableOfficer(gn) === false ? "text-warning line-through opacity-70" : "text-success"
+                      }
+                    >
+                      {gn}
+                    </span>
+                    {isUsableOfficer(gn) === false && (
+                      <span className="badge badge-error badge-outline badge-xs font-sans">No Account</span>
+                    )}
+                    <button className="btn btn-ghost btn-xs text-error" onClick={() => handleRemoveGN(gn)}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
               </div>
+            ) : (
+              <span className="opacity-40 text-sm">None assigned</span>
             )}
           </div>
 
@@ -230,9 +250,8 @@ export const GNManagementSection = () => {
               </thead>
               <tbody>
                 {divisions.map((div, idx) => {
-                  const gn = div.gnOfficer || "";
-                  const assigned = gn && gn !== ZERO_ADDRESS;
-                  const usable = isUsableOfficer(gn);
+                  const officers = div.gnOfficers;
+                  const anyUsable = officers.some(gn => isUsableOfficer(gn) === true);
                   return (
                     <tr
                       key={div.votingContract}
@@ -243,22 +262,26 @@ export const GNManagementSection = () => {
                         {div.hidden && <span className="text-xs font-normal text-base-content/60 ml-1">(Hidden)</span>}
                       </td>
                       <td className="font-mono text-xs">
-                        <span className={assigned && usable === false ? "line-through opacity-70" : ""}>
-                          {assigned ? `${gn.slice(0, 10)}...${gn.slice(-4)}` : "—"}
-                        </span>
+                        {officers.length === 0
+                          ? "—"
+                          : officers.map(gn => (
+                              <div key={gn} className={isUsableOfficer(gn) === false ? "line-through opacity-70" : ""}>
+                                {gn.slice(0, 10)}...{gn.slice(-4)}
+                              </div>
+                            ))}
                       </td>
                       <td>
-                        {!assigned ? (
+                        {officers.length === 0 ? (
                           <span className="badge badge-ghost badge-xs">Empty</span>
-                        ) : usable === false ? (
+                        ) : !anyUsable ? (
                           <span
                             className="badge badge-warning badge-xs"
-                            title="No credential account holds this address, so this officer cannot sign."
+                            title="No credential account holds any of these addresses, so nobody assigned here can sign."
                           >
                             No account
                           </span>
                         ) : (
-                          <span className="badge badge-success badge-xs">Assigned</span>
+                          <span className="badge badge-success badge-xs">{officers.length} assigned</span>
                         )}
                       </td>
                       <td>

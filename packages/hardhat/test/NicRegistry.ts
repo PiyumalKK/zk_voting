@@ -58,7 +58,7 @@ describe("NicRegistry", function () {
     votingAddr = await voting.getAddress();
 
     await registry.setVotingContract(votingAddr, true);
-    await voting.setGNOfficer(gn.address);
+    await voting.setGNOfficer(gn.address, true);
   });
 
   /** The full enrolment a GN performs: reserve the NIC, allowlist the device. */

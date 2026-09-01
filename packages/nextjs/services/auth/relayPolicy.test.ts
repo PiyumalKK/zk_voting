@@ -66,7 +66,10 @@ const VOTING_ABI = [
     type: "function",
     name: "setGNOfficer",
     stateMutability: "nonpayable",
-    inputs: [{ name: "_gn", type: "address" }],
+    inputs: [
+      { name: "_gn", type: "address" },
+      { name: "_isOfficer", type: "bool" },
+    ],
     outputs: [],
   },
   {
@@ -167,7 +170,7 @@ describe("admin whitelist", () => {
     ["startVoting", [3600]],
     ["endElection", []],
     ["resetElection", []],
-    ["setGNOfficer", [VOTER]],
+    ["setGNOfficer", [VOTER, true]],
   ])("permits %s on a division", (fn, args) => {
     expect(asAdmin(DIVISION_0, fn, args).ok).toBe(true);
   });
@@ -266,7 +269,7 @@ describe("GN scoping", () => {
 
   it("refuses admin-only functions even on the officer's own division", () => {
     expect(statusOf(asGn(DIVISION_0, "startVoting", [3600]))).toBe(403);
-    expect(statusOf(asGn(DIVISION_0, "setGNOfficer", [VOTER]))).toBe(403);
+    expect(statusOf(asGn(DIVISION_0, "setGNOfficer", [VOTER, true]))).toBe(403);
     expect(statusOf(asGn(REGISTRY, "createDivision", ["Kandy"]))).toBe(403);
     // An officer must not be able to delete the election they staff.
     expect(statusOf(asGn(REGISTRY, "clearDivisions"))).toBe(403);

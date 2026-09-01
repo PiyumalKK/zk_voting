@@ -69,8 +69,12 @@ contract Voting is Ownable {
     ///         property of the contracts rather than of the GN's diligence.
     INicRegistry public immutable i_nicRegistry;
 
-    // GN officer address — can call addVoters() for this division
-    address public s_gnOfficer;
+    // GN officers for this division — can call addVoters(). A division may
+    // have more than one (shift coverage, backup officers), so membership is
+    // tracked by mapping rather than a single slot; s_gnOfficerList exists
+    // only because a mapping cannot be enumerated for the admin UI.
+    mapping(address => bool) public s_isGnOfficer;
+    address[] private s_gnOfficerList;
 
     // Monotonic election counter. All per-election state is keyed by this id so
     // that resetElection() can start a brand-new election by simply bumping it,
@@ -107,7 +111,7 @@ contract Voting is Ownable {
     //////////////
 
     event VoterAdded(address indexed voter);
-    event GNOfficerUpdated(address indexed gnOfficer);
+    event GNOfficerUpdated(address indexed gnOfficer, bool isOfficer);
     event NewLeaf(uint256 index, uint256 value);
     event QuestionUpdated(string question);
     event CandidatesUpdated(string[] candidates);
@@ -135,9 +139,9 @@ contract Voting is Ownable {
         _;
     }
 
-    /// @dev Allows both owner and assigned GN officer.
+    /// @dev Allows both owner and any assigned GN officer.
     modifier onlyOwnerOrGN() {
-        require(msg.sender == owner() || msg.sender == s_gnOfficer, "Not owner or GN");
+        require(msg.sender == owner() || s_isGnOfficer[msg.sender], "Not owner or GN");
         _;
     }
 
@@ -194,10 +198,30 @@ contract Voting is Ownable {
         emit CandidatesUpdated(_candidates);
     }
 
-    /// @notice Assigns a GN officer who can add voters. Only owner.
-    function setGNOfficer(address _gnOfficer) external onlyOwner {
-        s_gnOfficer = _gnOfficer;
-        emit GNOfficerUpdated(_gnOfficer);
+    /// @notice Adds or removes a GN officer who can add voters. Only owner.
+    ///         A division may have more than one officer at once; this does
+    ///         not replace whoever is already assigned.
+    function setGNOfficer(address _gnOfficer, bool _isOfficer) external onlyOwner {
+        if (s_isGnOfficer[_gnOfficer] == _isOfficer) return;
+        s_isGnOfficer[_gnOfficer] = _isOfficer;
+        if (_isOfficer) {
+            s_gnOfficerList.push(_gnOfficer);
+        } else {
+            uint256 len = s_gnOfficerList.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (s_gnOfficerList[i] == _gnOfficer) {
+                    s_gnOfficerList[i] = s_gnOfficerList[len - 1];
+                    s_gnOfficerList.pop();
+                    break;
+                }
+            }
+        }
+        emit GNOfficerUpdated(_gnOfficer, _isOfficer);
+    }
+
+    /// @notice All addresses currently authorised as GN officers for this division.
+    function getGNOfficers() external view returns (address[] memory) {
+        return s_gnOfficerList;
     }
 
     /// @notice Batch updates the allowlist of voter EOAs. Allowed during Setup and Registration.

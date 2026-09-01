@@ -22,13 +22,16 @@ export interface DivisionSummary {
   name: string;
   votingContract: `0x${string}`;
   /**
-   * Authoritative GN officer, read from the Voting contract rather than the
+   * Authoritative GN officers, read from the Voting contract rather than the
    * registry's stored copy: `setGNOfficer` updates the Voting contract only, so
    * the registry's field goes stale. Same reasoning as `hooks/useDivisions.ts`.
+   * A division may have more than one officer at once.
    */
-  gnOfficer: `0x${string}`;
+  gnOfficers: readonly `0x${string}`[];
   active: boolean;
 }
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export class RelayContractsError extends Error {
   constructor(message: string) {
@@ -58,7 +61,13 @@ const REGISTRY_DIVISIONS_ABI = [
 ] as const;
 
 const VOTING_GN_ABI = [
-  { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    name: "getGNOfficers",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address[]" }],
+  },
 ] as const;
 
 type DeployedEntry = { address: `0x${string}`; abi: Abi };
@@ -92,19 +101,19 @@ export const loadDivisions = async (client: PublicClient = createServerPublicCli
 
   return Promise.all(
     divisions.map(async (division, id) => {
-      let gnOfficer = division.gnOfficer;
+      let gnOfficers: readonly `0x${string}`[] = division.gnOfficer !== ZERO_ADDRESS ? [division.gnOfficer] : [];
       try {
-        gnOfficer = (await client.readContract({
+        gnOfficers = (await client.readContract({
           address: division.votingContract,
           abi: VOTING_GN_ABI,
-          functionName: "s_gnOfficer",
-        })) as `0x${string}`;
+          functionName: "getGNOfficers",
+        })) as readonly `0x${string}`[];
       } catch {
-        // Fall back to the registry's copy: a division whose Voting contract is
-        // unreachable should not take the whole relay down, and the whitelist
-        // still refuses anything the caller is not scoped to.
+        // Fall back to the registry's stale copy: a division whose Voting
+        // contract is unreachable should not take the whole relay down, and
+        // the whitelist still refuses anything the caller is not scoped to.
       }
-      return { id, name: division.name, votingContract: division.votingContract, gnOfficer, active: division.active };
+      return { id, name: division.name, votingContract: division.votingContract, gnOfficers, active: division.active };
     }),
   );
 };

@@ -68,9 +68,11 @@ export const createGnOfficerAccount = async (
   let assigned = false;
   let assignError: string | undefined;
   if (input.assign !== false) {
+    // Adds this address to the division's GN officer set — a division may
+    // have more than one, so this never displaces an existing officer.
     const outcome = await executeRelayCall({
       session,
-      request: { target: division.votingContract, fn: "setGNOfficer", args: [address] },
+      request: { target: division.votingContract, fn: "setGNOfficer", args: [address, true] },
     });
     assigned = outcome.ok;
     // The account is kept even if assignment fails: the credentials have

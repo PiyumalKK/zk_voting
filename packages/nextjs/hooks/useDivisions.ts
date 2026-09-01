@@ -20,7 +20,8 @@ export interface LiveDivision {
   id: number;
   name: string;
   votingContract: `0x${string}`;
-  gnOfficer: string;
+  /** Every address currently authorised as a GN officer for this division. */
+  gnOfficers: readonly string[];
   active: boolean;
   phase: number;
   treeSize: number;
@@ -46,7 +47,7 @@ const VOTING_READ_ABI = [
       { type: "uint256" }, // candidateCount
     ],
   },
-  { name: "s_gnOfficer", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "getGNOfficers", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address[]" }] },
 ] as const;
 
 interface RegistryDivision {
@@ -55,6 +56,8 @@ interface RegistryDivision {
   gnOfficer: `0x${string}`;
   active: boolean;
 }
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 /**
  * Reads all divisions from the ElectionRegistry, then enriches each with live
@@ -116,11 +119,11 @@ export const useDivisions = () => {
         const enriched = await Promise.all(
           regList.map(async (reg, id): Promise<LiveDivision> => {
             try {
-              const [gn, votingData] = await Promise.all([
+              const [gnOfficers, votingData] = await Promise.all([
                 publicClient.readContract({
                   address: reg.votingContract,
                   abi: VOTING_READ_ABI,
-                  functionName: "s_gnOfficer",
+                  functionName: "getGNOfficers",
                 }),
                 publicClient.readContract({
                   address: reg.votingContract,
@@ -132,7 +135,7 @@ export const useDivisions = () => {
                 id,
                 name: reg.name,
                 votingContract: reg.votingContract,
-                gnOfficer: gn as string,
+                gnOfficers: gnOfficers as readonly string[],
                 active: reg.active,
                 phase: Number((votingData as readonly unknown[])[2]),
                 treeSize: Number((votingData as readonly unknown[])[5]),
@@ -144,7 +147,7 @@ export const useDivisions = () => {
                 id,
                 name: reg.name,
                 votingContract: reg.votingContract,
-                gnOfficer: reg.gnOfficer,
+                gnOfficers: reg.gnOfficer !== ZERO_ADDRESS ? [reg.gnOfficer] : [],
                 active: reg.active,
                 phase: 0,
                 treeSize: 0,
