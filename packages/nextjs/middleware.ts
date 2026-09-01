@@ -22,8 +22,8 @@ import { homePathForRole } from "~~/utils/chainMode";
  * `node:fs` or bcrypt belongs in a route handler.
  *
  * This layer is convenience, not the security boundary: it produces friendly
- * redirects instead of raw 401s. `/api/relay` and `/api/gn-accounts` re-check
- * the session and the role themselves.
+ * redirects instead of raw 401s. `/api/relay`, `/api/gn-accounts` and
+ * `/api/voter-roll` re-check the session and the role themselves.
  */
 
 /** API prefixes answer with JSON; everything else is a page and gets a redirect. */
@@ -97,6 +97,7 @@ export const config = {
     "/gn/:path*",
     "/api/relay/:path*",
     "/api/gn-accounts/:path*",
+    "/api/voter-roll/:path*",
     // Matched so an unauthenticated visitor is bounced to /login rather than
     // shown a password form with no session behind it.
     "/change-password",

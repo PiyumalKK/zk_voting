@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AddressInput } from "@scaffold-ui/components";
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useAdminElection } from "~~/app/voting/admin/_components/AdminElectionProvider";
+import { BulkVoterRollSection } from "~~/app/voting/admin/_components/BulkVoterRollSection";
 import { DivisionPicker, PhaseBadge } from "~~/app/voting/admin/_components/DivisionStatusPanel";
 import { GroupHeading, Section } from "~~/app/voting/admin/_components/Section";
 
@@ -342,6 +343,12 @@ const AdminBallotPage = () => {
           </div>
         </Section>
       )}
+
+      {/* Custom chain only: bulk-loads eligibility for the voter roll above,
+          via an SMS claim link instead of a GN visit. Placed last — it acts
+          on whichever division each CSV row names, not the one selected up
+          top. */}
+      {isCustom && <BulkVoterRollSection />}
     </>
   );
 };

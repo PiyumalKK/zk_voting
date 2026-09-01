@@ -100,7 +100,9 @@ export const describeRevert = (error: unknown, abi: Abi): { errorName?: string; 
  * the on-chain officer check — re-reading the store would mean three file reads
  * per relay call and a window in which the account could change between them.
  */
-const resolveAdminKey = (): { ok: true; privateKey: `0x${string}` } | { ok: false; status: number; error: string } => {
+export const resolveAdminKey = ():
+  | { ok: true; privateKey: `0x${string}` }
+  | { ok: false; status: number; error: string } => {
   const key = process.env.ADMIN_RELAY_PRIVATE_KEY?.trim();
   if (!key || !PRIVATE_KEY_PATTERN.test(key)) {
     return {

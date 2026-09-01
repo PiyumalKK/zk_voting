@@ -155,5 +155,17 @@ export const api = {
   /** Verify whether a vote (identified by nullifier hash) was counted on-chain. */
   verifyVote: (division: string, nullifierHash: string) =>
     req<VerifyVoteResponse>(`/api/verify-vote?division=${division}&nullifierHash=${nullifierHash}`),
+
+  /**
+   * Completes a bulk-imported voter's enrolment using an SMS claim link's
+   * token, in place of a GN officer scanning this device's QR code. `address`
+   * is this device's own voting address — the token proves eligibility, this
+   * device supplies the key it already generated locally.
+   */
+  selfEnrol: (token: string, address: string) =>
+    req<{ ok: boolean; divisionName?: string; error?: string }>("/api/self-enrol", {
+      method: "POST",
+      body: JSON.stringify({ token, address }),
+    }),
 };
 

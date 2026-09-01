@@ -178,6 +178,14 @@ export const AddDivisionSection = () => {
       notification.error("Enter a division name.");
       return;
     }
+    // Case-insensitive: `ElectionRegistry.createDivision` has no uniqueness
+    // check of its own, so nothing on-chain stops "Kaduwela" and "kaduwela"
+    // from both existing. Same rule the bulk import applies server-side
+    // (`normaliseDivisionName` in `services/divisions/divisionCreation.ts`).
+    if (divisions.some(d => d.name.trim().toLowerCase() === name.toLowerCase())) {
+      notification.error(`A division named "${name}" already exists.`);
+      return;
+    }
     if (!REGISTRY_ADDRESS) {
       notification.error("ElectionRegistry contract not found.");
       return;
