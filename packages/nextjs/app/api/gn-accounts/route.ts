@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { AccountStoreError, getAccountStore, isValidUsername, normaliseUsername } from "~~/services/auth/accounts";
-import { generatePassword } from "~~/services/auth/crypto";
+import { AccountStoreError, getAccountStore, normaliseUsername } from "~~/services/auth/accounts";
+import { CreateOfficerError, createGnOfficerAccount } from "~~/services/auth/gnAccountCreation";
 import { loadDivisions } from "~~/services/auth/relayContracts";
-import { executeRelayCall } from "~~/services/auth/relayExecutor";
 import { requireSession } from "~~/services/auth/serverSession";
 import { isCustomChainMode } from "~~/services/auth/session";
 
@@ -50,17 +48,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const username = typeof body.username === "string" ? normaliseUsername(body.username) : "";
-  if (!isValidUsername(username)) {
-    return NextResponse.json(
-      { error: "Username must be 3–32 characters: letters, digits, dot, underscore or hyphen." },
-      { status: 400 },
-    );
-  }
+  const username = typeof body.username === "string" ? body.username : "";
   const divisionId = Number(body.divisionId);
-  if (!Number.isInteger(divisionId) || divisionId < 0) {
-    return NextResponse.json({ error: "divisionId must be a non-negative integer." }, { status: 400 });
-  }
   const assign = body.assign !== false;
 
   let divisions;
@@ -72,49 +61,17 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-  const division = divisions.find(candidate => candidate.id === divisionId);
-  if (!division) {
-    return NextResponse.json({ error: `No division with id ${divisionId}.` }, { status: 400 });
-  }
-
-  const privateKey = generatePrivateKey();
-  const address = privateKeyToAccount(privateKey).address;
-  const password = generatePassword();
 
   try {
-    await getAccountStore().create({ username, password, divisionId, address, privateKey });
+    const result = await createGnOfficerAccount({ username, divisionId, assign }, auth.data, divisions);
+    return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof AccountStoreError) {
+    if (error instanceof CreateOfficerError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     console.error("[gn-accounts] create failed", error);
     return NextResponse.json({ error: "Could not save the new account." }, { status: 503 });
   }
-
-  let assigned = false;
-  let assignError: string | undefined;
-  if (assign) {
-    const outcome = await executeRelayCall({
-      session: auth.data,
-      request: { target: division.votingContract, fn: "setGNOfficer", args: [address] },
-    });
-    assigned = outcome.ok;
-    // The account is kept even if assignment fails: the credentials have
-    // already been generated, and the admin can retry `setGNOfficer` from the
-    // GN Officer Management panel rather than starting over.
-    if (!outcome.ok) assignError = outcome.errorName ?? outcome.error;
-  }
-
-  return NextResponse.json({
-    username,
-    // Shown once. Not stored anywhere in plaintext — only its bcrypt hash is.
-    password,
-    address,
-    divisionId,
-    divisionName: division.name,
-    assigned,
-    assignError,
-  });
 }
 
 /**

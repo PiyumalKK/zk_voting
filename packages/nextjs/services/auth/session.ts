@@ -134,7 +134,13 @@ export const isPathAllowedWhilePasswordPending = (pathname: string): boolean =>
   pathname === "/api/auth/logout";
 
 export const isPathAllowedForRole = (pathname: string, role: AuthRole): boolean => {
-  if (pathname.startsWith("/voting/admin") || pathname.startsWith("/api/gn-accounts")) return role === "admin";
+  if (
+    pathname.startsWith("/voting/admin") ||
+    pathname.startsWith("/api/gn-accounts") ||
+    pathname.startsWith("/api/voter-roll")
+  ) {
+    return role === "admin";
+  }
   // The GN portal reads its division from the session, which admins do not have.
   if (pathname.startsWith("/gn")) return role === "gn";
   // /api/relay serves both roles; the relay itself enforces the per-role whitelist.

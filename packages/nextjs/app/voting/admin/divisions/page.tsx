@@ -2,6 +2,9 @@
 
 import { AddDivisionSection } from "~~/app/voting/admin/_components/AddDivisionSection";
 import { useAdminElection } from "~~/app/voting/admin/_components/AdminElectionProvider";
+import { BulkDivisionsSection } from "~~/app/voting/admin/_components/BulkDivisionsSection";
+import { BulkGnAccountsSection } from "~~/app/voting/admin/_components/BulkGnAccountsSection";
+import { DivisionsListSection } from "~~/app/voting/admin/_components/DivisionsListSection";
 import { GNManagementSection } from "~~/app/voting/admin/_components/GNManagementSection";
 import { GnAccountsSection } from "~~/app/voting/admin/_components/GnAccountsSection";
 import { GroupHeading } from "~~/app/voting/admin/_components/Section";
@@ -31,9 +34,21 @@ const AdminDivisionsPage = () => {
 
       <AddDivisionSection />
 
+      {/* Custom chain only: bulk creation goes through the server relay
+          (`createDivisionOnChain`), which needs the admin's server-held
+          signing key — hardhat mode has none, so its single-division form
+          above (MetaMask) is the only option there. */}
+      {isCustom && <BulkDivisionsSection />}
+
+      {/* Custom mode only: GNManagementSection above already gives hardhat mode
+          its own division table (with the same Hide/Show), so this would be a
+          redundant second one there. */}
+      {isCustom && <DivisionsListSection />}
+
       {/* Custom chain only: GN officers have credentials instead of wallets, so
           the Election Authority creates their accounts here. */}
       {isCustom && <GnAccountsSection />}
+      {isCustom && <BulkGnAccountsSection />}
     </>
   );
 };
