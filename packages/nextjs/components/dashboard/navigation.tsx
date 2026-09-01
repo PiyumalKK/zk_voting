@@ -5,6 +5,7 @@ import {
   // ArrowDownTrayIcon, // restore with the "Download App" link below
   // BugAntIcon, // restore with the "Debug" link below
   ChartBarIcon,
+  ClockIcon,
   Cog6ToothIcon,
   HomeIcon,
   MagnifyingGlassIcon,
@@ -61,6 +62,12 @@ export const baseMenuLinks: HeaderMenuLink[] = [
     href: "/results",
     icon: <ChartBarIcon className={ICON_CLASS} />,
     description: "Live on-chain tally",
+  },
+  {
+    label: "History",
+    href: "/history",
+    icon: <ClockIcon className={ICON_CLASS} />,
+    description: "Past election results",
   },
   {
     label: "Audit",
@@ -129,6 +136,7 @@ const ROUTE_LABELS: Record<string, string> = {
   "/gn": "GN Portal",
   "/gn/register": "Register Voter",
   "/results": "Results",
+  "/history": "Past Elections",
   "/audit": "Election Audit",
   "/debug": "Debug Contracts",
   "/blockexplorer": "Block Explorer",
