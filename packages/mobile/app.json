@@ -15,13 +15,13 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "lk.gov.slvote",
+      "bundleIdentifier": "lk.package.slvote",
       "infoPlist": {
         "NSFaceIDUsageDescription": "SL Vote uses Face ID to protect your voting key."
       }
     },
     "android": {
-      "package": "lk.gov.slvote",
+      "package": "lk.package.slvote",
       "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon-foreground.png",
